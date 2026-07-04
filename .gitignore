@@ -81,3 +81,6 @@ tools/BUILD
 tools/run_editor_tasks/user_config.yaml
 
 tools/tmp
+.superpowers/
+assets/textures/animal_fur/*.jpg
+tmp/animated_dog/*.glb
