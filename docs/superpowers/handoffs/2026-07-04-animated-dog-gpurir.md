@@ -184,6 +184,27 @@ DISPLAY=:99 VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json \
 - Saves/restores `np.random.get_state()` internally with an explicit `seed` param — does NOT depend on caller's global RNG state
 - Sub-samples the full-resolution 200-point trajectory to `n_frames` at video-generation time — critical: audio should ALWAYS use `traj_pts_full=200`, video uses whatever `n_frames` is chosen, they land on the same underlying spline.
 
+## Diagnostic tool — always run this when in doubt
+
+[tools/diag_animated_dog.py](../../tools/diag_animated_dog.py) is the canonical "does the anim actually tick" test. Whenever a future change touches the anim / material / cook pipeline and you're not sure whether the dog is really animating, run this instead of eyeballing the full V1/V2 scene:
+
+```bash
+DISPLAY=:99 VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json \
+  /data/jzy/miniconda3/envs/spear-env/bin/python \
+  /data/jzy/code/SPEAR/tools/diag_animated_dog.py --n-frames 40 --per-frame-warmup 4
+```
+
+What it does that V1/V2 don't:
+
+- Dog is **stationary at origin** — any per-frame pixel change comes strictly from the anim clock (no translation, no camera pan).
+- Camera is **close-in side-on** — leg cycles are visible per-pixel, not hidden by a 30-m long shot.
+- Background is **empty sky + gradient** — no wooden-floor lighting jitter to confuse the diff.
+- Prints a **silhouette-flip metric** — mean flip < 1000 px = frozen; mean flip > 1500 px = real anim (verified empirically against pre/post `SetGamePaused(False)` runs).
+
+This is what caught the "iter 4 said done, actually frozen" regression. If a future change makes the silhouette flip drop back below 1000, treat that as "anim broke" without needing to re-render V1/V2.
+
+You can also drive it in "UV debug" mode by re-baking with `assets/textures/animal_fur/uv_checkerboard.jpg` as the diffuse and re-cooking with `SPEAR_DOG_TINT_WHITE=1` — the dog will show colored polygon patches proving whether UV mapping survived the pipeline.
+
 ## Key files
 
 | Path | Purpose |
@@ -214,6 +235,55 @@ DISPLAY=:99 VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json \
 | 2026-07-04 | Pale-beige dog after Iter 3 | Procedural diffuse mean is light tan; texture bound but ambient washed it out | Force `baseColorFactor = LinearColor(0.35, 0.20, 0.11, 1.0)` |
 | 2026-07-04 | **Legs STILL frozen after iter 4** — REAL root cause | SPEAR starts the world **paused**; no SMC tick advances while paused; PlayAnimation succeeds but anim clock doesn't move | Call `UGameplayStatics.SetGamePaused(bPaused=False)` right after actor spawn (see `examples/control_character/run.py:142` for the reference pattern) |
 | 2026-07-04 | Fur looks flat / no visible hair strands | Smart UV Project produces low-density UV islands; each polygon reads a large region of the diffuse texture, averaging out procedural voronoi details. Verified with UV checkerboard: mapping IS working but at "one color per polygon face" granularity | **Known limitation.** For real fur detail, either (a) use a much higher-detail actual dog-fur photo texture, (b) increase UV density (per-triangle or higher), or (c) use fur shells / hair grooming |
+
+## Texture strategy for future breeds (design notes for follow-up spec)
+
+The current pipeline uses a **single-material, single-diffuse-texture-with-uniform-tint** approach: `baseColorFactor` on the fur material multiplies whatever's in the diffuse. This works cleanly for **solid-color breeds** but hits a wall for multi-region breeds. Three tiers of increasing effort:
+
+### Tier 1 — Solid-color breeds (Golden Retriever, Labrador, Beagle, etc.)
+
+**Only step needed**: change `baseColorFactor` in [tools/import_animated_dog_editor.py:187](../../tools/import_animated_dog_editor.py#L187). No re-bake, no re-import — just re-cook (~2 min).
+
+Suggested values (linear-space, will be gamma-encoded on output):
+
+| Breed | `LinearColor(r, g, b, 1)` |
+|---|---|
+| Golden Retriever | `(0.85, 0.55, 0.20, 1)` |
+| Yellow Labrador | `(0.90, 0.70, 0.35, 1)` |
+| Chocolate Labrador | `(0.20, 0.10, 0.05, 1)` |
+| Black Labrador | `(0.02, 0.02, 0.02, 1)` |
+| Beagle (base tan) | `(0.55, 0.35, 0.20, 1)` |
+| Current warm brown | `(0.35, 0.20, 0.11, 1)` |
+
+Better UX would be: add a `--breed golden` CLI arg to `render_animated_dog_gpurir.py` that maps to the right tint via a small preset table, and pipes it into the cook step. That's ~30 lines of code.
+
+### Tier 2 — Multi-region breeds (Border Collie, Bernese, Husky, Dalmatian, Corgi)
+
+Border Collie has a **black-and-white pattern** with specific placement: black back + head, white chest + belly + feet + tail tip. A single `baseColorFactor` cannot express this — you need the color to vary **across the mesh surface**. This requires **an actual texture**, not just a tint. Two viable routes:
+
+**2a. Paint the diffuse in Blender (cheap, controllable, ~1 h per breed)**
+
+The pipeline already writes UVs via Smart UV Project. Open `Dog_textured.glb` in Blender, jump to Texture Paint mode, and paint the black/white regions directly on the mesh. Export the painted diffuse as `assets/textures/dogs/border_collie_diffuse.png`, then re-bake + re-cook. This is what a game artist would do; it takes about an hour per breed and gives you exactly the pattern you want. Because Smart UV was seams-per-part, the paint layout is intuitive (back, sides, belly, legs are all separate UV islands).
+
+**2b. AI-generate a diffuse (fast, less controllable)**
+
+Feed a reference photo of the target breed + the mesh's UV layout image (Blender can export this) to something like ControlNet-conditioned SDXL or Material Anything (already deferred in Q5=c of the original spec). This gives you a passable diffuse in seconds, but you'll need iteration to get the regions to line up right. Best for filling out a *variety* of breeds cheaply once the pipeline is set up.
+
+**2c. Photogrammetry / library** (best quality, most expensive)
+
+Buy or download a photogrammetry-scanned real dog with baked PBR textures (Quixel Megascans, Sketchfab paid, Turbosquid). This bypasses UV painting entirely but costs $ and often needs mesh re-rigging to match the Quaternius skeleton.
+
+### Tier 3 — Photorealistic fur (out of scope for MVP dataset)
+
+Real hair / fur strands need one of: (a) UE 5's built-in Groom / Alembic hair, (b) fur shells (multiple offset mesh layers with alpha-tested strand cards), or (c) shader-based fake fur (parallax + noise). Each adds significant asset-pipeline complexity (Groom is by far the highest quality and highest cost). Only worth doing if downstream users need to *distinguish breed by fur texture* rather than just color+silhouette.
+
+### Recommended path for the AV-S2L dataset
+
+Given the audio-side goal is spatial localization (S2L), the visual just needs to be **discriminable and non-uniform** so the model doesn't shortcut on "detect brown blob = dog". For that:
+
+1. Ship **Tier 1** now with 4-6 solid-color breed presets — enough visual variety for MVP.
+2. Add **Tier 2a** (painted diffuse) for 2-3 iconic multi-region breeds (Border Collie, Dalmatian, Bernese) — probably ~4 h of work per breed including UV cleanup.
+3. Skip Tier 2b/2c unless you find the dataset actually needs breed-level fidelity.
 
 ## What's next (follow-up specs, OUT OF SCOPE here)
 
