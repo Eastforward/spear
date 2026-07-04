@@ -277,6 +277,12 @@ def _spawn_animated_dog(game, x_cm, y_cm, z_cm, scale=0.12):
 
     scale: uniform actor scale to correct the Quaternius Dog.glb native
     ~6.9m extent down to something dog-sized.
+
+    Tick fix: SkeletalMeshActor + SkeletalMeshComponent don't tick every
+    frame in cooked/game builds by default, so the anim clock never
+    advances (legs freeze in T-pose/first-frame). We explicitly enable
+    Tick on both, and additionally call SetPlayRate + SetPosition so the
+    animation cursor is guaranteed to move.
     """
     bp = game.unreal_service.load_class(uclass="AActor", name=ANIMATED_DOG_BP)
     actor = game.unreal_service.spawn_actor(
@@ -287,9 +293,35 @@ def _spawn_animated_dog(game, x_cm, y_cm, z_cm, scale=0.12):
     actor.SetActorScale3D(
         NewScale3D={"X": float(scale), "Y": float(scale), "Z": float(scale)}
     )
+    # Force actor + component ticking (cooked builds default the SkeletalMeshActor
+    # to a slow update mode that freezes anim after the first frame).
+    try:
+        actor.SetActorTickEnabled(bEnabled=True)
+    except Exception as e:
+        print(f"[render_animated_dog] SetActorTickEnabled warn: {e}", flush=True)
+
     smc = game.unreal_service.get_component_by_class(actor=actor, uclass="USkeletalMeshComponent")
+    try:
+        smc.SetComponentTickEnabled(bEnabled=True)
+    except Exception as e:
+        print(f"[render_animated_dog] SetComponentTickEnabled warn: {e}", flush=True)
+    # Make sure the SkeletalMesh update mode is 'Always Tick Pose and Refresh Bones'
+    # so the pose evaluates every frame (cooked default is often
+    # OnlyTickPoseWhenRendered which can skip if we're between frames).
+    try:
+        smc.SetVisibilityBasedAnimTickOption(
+            NewVisibilityBasedAnimTickOption="AlwaysTickPoseAndRefreshBones"
+        )
+    except Exception as e:
+        print(f"[render_animated_dog] SetVisibilityBasedAnimTickOption warn: {e}", flush=True)
+
     anim = game.unreal_service.load_object(uclass="UAnimationAsset", name=ANIMATED_DOG_WALKING_ANIM)
     smc.PlayAnimation(NewAnimToPlay=anim, bLooping=True)
+    # Belt-and-suspenders: ensure the anim clock actually advances.
+    try:
+        smc.SetPlayRate(Rate=1.0)
+    except Exception:
+        pass
     return actor, smc
 
 
@@ -369,11 +401,15 @@ def render_animated_dog(args):
             )
             print(f"[render_animated_dog] camera at ({cam_x:.0f},{cam_y:.0f},{cam_z:.0f}) "
                   f"yaw={cam_yaw_deg:.1f} pitch={cam_pitch_deg:.1f}, spawning BP_dog_animated...", flush=True)
+            # Actor spawns AT FLOOR (z=0) — positions_m[:,2] is the
+            # audio-side source height (dog mouth ~0.45m), NOT the actor
+            # transform Z. Using source height for actor Z made the dog
+            # visually float 45cm above the floor.
             dog_actor, _dog_smc = _spawn_animated_dog(
                 game,
                 x_cm=positions_m[0, 0] * M2CM,
                 y_cm=positions_m[0, 1] * M2CM,
-                z_cm=positions_m[0, 2] * M2CM,
+                z_cm=args.z_offset_m * M2CM,
                 scale=args.dog_scale,
             )
             print("[render_animated_dog] dog spawned OK", flush=True)
@@ -391,7 +427,9 @@ def render_animated_dog(args):
                     NewLocation={
                         "X": float(positions_m[i, 0] * M2CM),
                         "Y": float(positions_m[i, 1] * M2CM),
-                        "Z": float(positions_m[i, 2] * M2CM),
+                        # actor stays on the floor (z_offset_m default 0);
+                        # audio-side height is metadata-only, not the actor Z
+                        "Z": float(args.z_offset_m * M2CM),
                     },
                     NewRotation={"Roll": 0.0, "Pitch": 0.0, "Yaw": float(yaw_deg[i])},
                     bSweep=False,
