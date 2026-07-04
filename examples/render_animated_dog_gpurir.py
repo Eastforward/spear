@@ -413,6 +413,17 @@ def render_animated_dog(args):
                 scale=args.dog_scale,
             )
             print("[render_animated_dog] dog spawned OK", flush=True)
+
+            # THE ACTUAL FIX for the frozen-legs bug (previous 4 iterations
+            # of T8 chased phantom fixes because I missed this):
+            # SPEAR starts the world PAUSED. No SkeletalMeshComponent tick
+            # advances while paused, so PlayAnimation appears to succeed but
+            # the anim clock never moves. examples/control_character/run.py
+            # calls SetGamePaused(False) explicitly (run.py:142). We do the
+            # same here right before the frame loop starts.
+            gameplay_statics = game.get_unreal_object(uclass="UGameplayStatics")
+            gameplay_statics.SetGamePaused(bPaused=False)
+            print("[render_animated_dog] SetGamePaused(False) — world tick now advances", flush=True)
         with instance.end_frame():
             pass
 
