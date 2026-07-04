@@ -1,8 +1,16 @@
 # Import animated dog into SpearSim (Stage 2)
 
-> One-time human step. After T2 has produced `tmp/animated_dog/Dog_textured.glb`,
-> follow these steps in UE 5.5 Editor. After that, `tools/cook_animated_dog.sh`
-> cooks the assets into the pak (Task 5 Step 6).
+> **PRIMARY (headless, no GUI)** — this whole step is automated:
+> ```bash
+> /data/jzy/code/SPEAR/tools/build_animated_dog.sh
+> ```
+> That script runs `tools/import_animated_dog_editor.py` inside a UE 5.5
+> Editor commandlet (`-run=pythonscript`), then cooks the new content into
+> the pak. No GUI, no display, safe on a Linux server.
+>
+> **FALLBACK (manual GUI)** — the step-by-step below is kept only for when
+> the commandlet path breaks (UE version bump, API rename, missing plugin).
+> On this box the headless path is the tested route.
 >
 > Cross-refs: spec `docs/superpowers/specs/2026-07-04-animated-dog-gpurir-design.md`
 > §Component B. Plan `docs/superpowers/plans/2026-07-04-animated-dog-gpurir.md` §Task 5.
