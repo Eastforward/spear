@@ -30,6 +30,7 @@ SPEAR/
 │   ├── superpowers/specs/2026-07-05-animated-dog-hunyuan-paint-design.md
 │   └── superpowers/handoffs/2026-07-05-animated-dog-hunyuan-paint.md   T9  writes
 ├── tools/
+│   ├── prefetch_t2i_models.py                  T0 writes  (background HF download; hunyuan3d env)
 │   ├── hy3d_bake_diffuse.py                    T2 writes  (Hunyuan wrapper; hunyuan3d env)
 │   ├── verify_hy3d_remesh.py                   T3 writes  (Gate 1; hunyuan3d env)
 │   ├── transfer_uv_texture.py                  T4 writes  (UV transfer; hunyuan3d env)
@@ -52,6 +53,10 @@ SPEAR/
 ## Task dependency graph
 
 ```
+T0 (background)  prefetch Flux+SDXL weights (nohup &) ── runs in parallel with T1-T6
+                    │
+                    ▼ (by the time T7 starts, weights are cached)
+
 T1 (Gate 0)  Hunyuan env sanity ─────────┐
                                           │
 T2 (Stage 1) hy3d_bake_diffuse.py ───────┤
@@ -78,11 +83,183 @@ T9  Handoff doc + final commit
 ```
 
 **Ordering rules:**
-- T1 blocks EVERYTHING. Do not start T2 until Gate 0 passes.
+- T0 must be launched in the background (`nohup ... &`) BEFORE T1. Do not wait for it; T1-T6 run while it downloads.
+- T1 blocks the rest of the *foreground* work. Do not start T2 until Gate 0 passes.
 - T2 and T4 are independent; T4 uses fixture data (checked in under `tests/fixtures/`), so it does not need T2 to have run.
 - T6 assembles T2–T5 into one CLI + adds Gates 3/4/5 as shell-out steps. It's the acceptance criterion for the primary path.
-- T7 only exists if we want the `--prompt` interface; it's an add-on that plugs into T6.
+- T7 requires T0 to have completed for at least one model. Check `grep PREFETCH_OK /tmp/prefetch_t2i.log` before starting T7.
 - T8 is dormant unless Gate 2 fails in T5/T6. Documented so a future run knows how to invoke it, but not part of the happy-path acceptance.
+
+---
+
+## Environment prep appendix (compact-survival notes)
+
+This section documents session-state that already exists on the target machine but is not in git — if a fresh session comes in after context compaction, do THIS FIRST before Task 1 so nothing is left to spelunking.
+
+**Env vars for every Hunyuan-side subprocess:**
+```
+HY3DGEN_MODELS=/data/jzy/code/Hunyuan3D-2.1/pretrained_models
+LD_LIBRARY_PATH=/data/jzy/miniconda3/envs/hunyuan3d/lib/python3.10/site-packages/torch/lib
+CUDA_VISIBLE_DEVICES=0
+```
+
+**hunyuan3d conda env fixes already applied (do NOT redo unless verify_hy3d_env.py fails):**
+
+1. `basicsr` + `realesrgan` installed with `--no-build-isolation --no-deps`:
+   ```bash
+   /data/jzy/miniconda3/envs/hunyuan3d/bin/pip install --no-build-isolation --no-deps basicsr realesrgan
+   ```
+2. `pytorch_lightning` + lightning deps:
+   ```bash
+   /data/jzy/miniconda3/envs/hunyuan3d/bin/pip install --no-deps pytorch_lightning
+   /data/jzy/miniconda3/envs/hunyuan3d/bin/pip install lightning_utilities lightning_fabric torchmetrics
+   ```
+3. torchvision `functional_tensor` import patch:
+   ```bash
+   sed -i 's|from torchvision.transforms.functional_tensor import rgb_to_grayscale|from torchvision.transforms.functional import rgb_to_grayscale|' /data/jzy/miniconda3/envs/hunyuan3d/lib/python3.10/site-packages/basicsr/data/degradations.py
+   ```
+4. `custom_rasterizer` C extension built in-place:
+   ```bash
+   cd /data/jzy/code/Hunyuan3D-2.1/hy3dpaint/custom_rasterizer
+   /data/jzy/miniconda3/envs/hunyuan3d/bin/pip install --no-build-isolation -e .
+   ```
+5. RealESRGAN checkpoint symlink (the pipeline hardcodes `hy3dpaint/ckpt/RealESRGAN_x4plus.pth`):
+   ```bash
+   mkdir -p /data/jzy/code/Hunyuan3D-2.1/hy3dpaint/ckpt
+   ln -sf /data/jzy/code/Hunyuan3D-2.1/ckpt/RealESRGAN_x4plus.pth \
+          /data/jzy/code/Hunyuan3D-2.1/hy3dpaint/ckpt/RealESRGAN_x4plus.pth
+   ```
+6. Weights symlink at the path pattern the pipeline searches (`$HY3DGEN_MODELS/tencent/Hunyuan3D-2.1/hunyuan3d-paintpbr-v2-1`):
+   ```bash
+   mkdir -p /data/jzy/code/Hunyuan3D-2.1/pretrained_models/tencent/Hunyuan3D-2.1
+   ln -sfn /data/jzy/code/Hunyuan3D-2.1/pretrained_models/hunyuan3d-2.1/hunyuan3d-paintpbr-v2-1 \
+           /data/jzy/code/Hunyuan3D-2.1/pretrained_models/tencent/Hunyuan3D-2.1/hunyuan3d-paintpbr-v2-1
+   ```
+
+**HF endpoint:** `HF_ENDPOINT=https://hf-mirror.com` is already set globally on this box (via user's shell profile). Confirm with `env | grep HF_ENDPOINT` — if empty, prepend to any HF download command.
+
+**Baseline glb state:** `tmp/animated_dog/Dog_textured.glb` should contain the warm-brown baseline from the predecessor spec. If it does not, restore from `.bak.warm_brown` before T2.
+
+If `verify_hy3d_env.py` in T1 prints `HY3D_ENV_OK`, all six fixes above are still valid — skip this appendix.
+
+---
+
+## Task 0: Background — kick off model downloads before Task 1
+
+**Purpose:** Flux and SDXL weights are 15–24 GB each and download in the background from Hugging Face. Kick them off FIRST so T1–T6 run in parallel with the download. When we reach T7, the models are already local.
+
+**Files:**
+- Create: `/data/jzy/code/SPEAR/tools/prefetch_t2i_models.py`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: pulls `black-forest-labs/FLUX.1-dev` and `stabilityai/stable-diffusion-xl-base-1.0` into the HF cache. Prints `PREFETCH_OK <model>` per model. Idempotent (skipped if already cached).
+
+**Which model do we pick as default?**
+- **Flux.1 dev** — best quality photorealistic generation; ~24 GB. Requires HF login for gated repo (`huggingface-cli login` with a token that has accepted the FLUX.1-dev license). Recommended default.
+- **SDXL base 1.0** — universally available (no gate); ~14 GB; slightly lower quality on animals but perfectly usable. Fallback if Flux is blocked.
+- **NOT Flux.1 schnell** — 4-step distilled, loses fur detail; poor Hunyuan reference material.
+
+We download BOTH so `flux_generate_reference.py --model` can switch between them; default is `flux_dev` when weights present, `sdxl_base` otherwise.
+
+- [ ] **Step 1: Write the prefetch script**
+
+```python
+# /data/jzy/code/SPEAR/tools/prefetch_t2i_models.py
+"""Task 0: prefetch Flux.1 dev + SDXL base 1.0 weights into HF cache.
+
+Runs in the hunyuan3d env (has huggingface_hub already). Designed to be
+launched in the background BEFORE Task 1 so weights download while the
+early tasks run. Idempotent: skips models already cached.
+
+Usage (in background):
+  HF_ENDPOINT=https://hf-mirror.com \\
+    /data/jzy/miniconda3/envs/hunyuan3d/bin/python \\
+    /data/jzy/code/SPEAR/tools/prefetch_t2i_models.py \\
+    > /tmp/prefetch_t2i.log 2>&1 &
+"""
+import os
+import sys
+
+MODELS = [
+    ("black-forest-labs/FLUX.1-dev",
+        # Flux uses safetensors + config + transformer + vae + 2 text encoders
+        None),                    # None = allow all files
+    ("stabilityai/stable-diffusion-xl-base-1.0",
+        None),
+]
+
+
+def main():
+    from huggingface_hub import snapshot_download
+
+    for repo_id, allow in MODELS:
+        try:
+            print(f"[prefetch] downloading {repo_id}...", flush=True)
+            path = snapshot_download(
+                repo_id=repo_id,
+                allow_patterns=allow,
+                # Prefer .safetensors over .bin to save space
+                ignore_patterns=["*.bin", "*.msgpack", "*.h5"],
+            )
+            print(f"PREFETCH_OK {repo_id} -> {path}", flush=True)
+        except Exception as e:
+            print(f"PREFETCH_FAIL {repo_id}: {e}", flush=True)
+            # continue with the next model instead of aborting
+
+    print("PREFETCH_DONE", flush=True)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 2: Kick off the download in the background (BEFORE Task 1)**
+
+```bash
+# 1. Confirm HF token for Flux.1 dev (gated repo). If not set:
+#    huggingface-cli login    # paste token from https://huggingface.co/settings/tokens
+# The token must be attached to a user that has accepted the FLUX.1 license.
+[ -f ~/.cache/huggingface/token ] || echo "MISSING HF token — Flux download will fail; SDXL still works"
+
+# 2. Launch the prefetch in the background
+mkdir -p /tmp
+HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com} \
+  nohup /data/jzy/miniconda3/envs/hunyuan3d/bin/python \
+  /data/jzy/code/SPEAR/tools/prefetch_t2i_models.py \
+  > /tmp/prefetch_t2i.log 2>&1 &
+echo "prefetch pid: $!"
+
+# 3. IMMEDIATELY continue with Task 1 — do NOT wait here.
+```
+
+- [ ] **Step 3: Continue with Task 1 without blocking**
+
+Do NOT poll or wait; move straight to Task 1. When you reach Task 7, check with:
+
+```bash
+tail -20 /tmp/prefetch_t2i.log
+grep -c "PREFETCH_OK" /tmp/prefetch_t2i.log
+```
+
+Expected by Task 7 start: `PREFETCH_OK` for at least one of {FLUX.1-dev, SDXL base}. If BOTH failed, T7 gracefully degrades (either the user provides `--reference-image` for all tests, or T7 is deferred to a follow-up).
+
+- [ ] **Step 4: Commit**
+
+```bash
+cd /data/jzy/code/SPEAR
+git add tools/prefetch_t2i_models.py
+git commit -m "T0: prefetch_t2i_models.py — background download Flux+SDXL
+
+Kicked off in background BEFORE Task 1 so ~38 GB of weights land
+during T1-T6 wall-clock. Downloads Flux.1 dev (gated, needs HF token)
+and SDXL base 1.0 (open). Idempotent: skips if already cached.
+
+Downstream T7 (flux_generate_reference.py) will use flux_dev by default
+and fall back to sdxl_base if Flux missing.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
 
 ---
 
@@ -1454,19 +1631,16 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - Consumes: nothing from earlier tasks (invoked by Task 6 as a subprocess when the user passes `--prompt` instead of `--reference-image`).
 - Produces: `--output` PNG path filled with a Flux/SDXL-generated dog image conforming to the Hunyuan-friendly template `"<prompt>, full body, standing side view, plain white background, studio photo"`. Also runs rembg on the output to guarantee a clean background. Prints `FLUX_GEN_OK output=<path>`.
 
-- [ ] **Step 1: Verify a suitable local checkpoint exists**
+- [ ] **Step 1: Verify Task 0's downloads finished**
 
 ```bash
-ls /data/jzy/code/comfy/ComfyUI/models/checkpoints/ /data/jzy/code/comfy/tmp_models/ 2>/dev/null | grep -iE "flux|sdxl|sd_xl"
+tail -5 /tmp/prefetch_t2i.log
+grep PREFETCH_OK /tmp/prefetch_t2i.log
 ```
 
-Expected: some `.safetensors` for Flux or SDXL. If none:
-
-- Ask the user which model to use, OR
-- Follow the ComfyUI docs to place a Flux.1 dev checkpoint at `/data/jzy/code/comfy/ComfyUI/models/diffusion_models/flux1-dev.safetensors` (see [https://huggingface.co/black-forest-labs/FLUX.1-dev](https://huggingface.co/black-forest-labs/FLUX.1-dev)).
-- Alternatively, install `diffusers` Flux pipeline directly in the `hunyuan3d` env (diffusers 0.31 supports Flux; simplest path, no ComfyUI needed).
-
-For this task the simplest strategy is the `diffusers` pipeline in the `hunyuan3d` env. Try `diffusers` first — no ComfyUI daemon needed.
+Expected: at least one `PREFETCH_OK` line. Prefer Flux.1-dev (best quality), fall back to SDXL base 1.0 if only that one landed. If BOTH failed, either:
+- User needs to `huggingface-cli login` and re-run T0, OR
+- User will always pass `--reference-image` (bypassing this task entirely).
 
 - [ ] **Step 2: Write the generator**
 
@@ -1498,8 +1672,9 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--prompt", required=True)
     p.add_argument("--output", required=True)
-    p.add_argument("--model", default="flux_dev",
-                   choices=["flux_dev", "flux_schnell", "sdxl_base"])
+    p.add_argument("--model", default="auto",
+                   choices=["auto", "flux_dev", "sdxl_base"],
+                   help="auto = use flux_dev if cached else sdxl_base; explicit choice forces one")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--width", type=int, default=1024)
     p.add_argument("--height", type=int, default=1024)
@@ -1509,16 +1684,34 @@ def parse_args():
     return p.parse_args()
 
 
+def _is_cached(repo_id):
+    """Return True if the HF snapshot is already fully downloaded."""
+    import huggingface_hub
+    try:
+        # If the snapshot dir exists and has a config.json, treat as cached
+        # (huggingface_hub.snapshot_download will be a no-op then).
+        path = huggingface_hub.snapshot_download(repo_id, local_files_only=True)
+        return os.path.isdir(path)
+    except Exception:
+        return False
+
+
+def resolve_model(model):
+    """Turn 'auto' into a concrete choice based on what's cached locally."""
+    if model != "auto":
+        return model
+    if _is_cached("black-forest-labs/FLUX.1-dev"):
+        return "flux_dev"
+    if _is_cached("stabilityai/stable-diffusion-xl-base-1.0"):
+        return "sdxl_base"
+    raise SystemExit("FLUX_GEN_FAIL neither flux_dev nor sdxl_base cached; run Task 0 first")
+
+
 def load_pipeline(model):
     from diffusers import FluxPipeline, StableDiffusionXLPipeline
     if model == "flux_dev":
         return FluxPipeline.from_pretrained(
             "black-forest-labs/FLUX.1-dev",
-            torch_dtype=torch.bfloat16,
-        )
-    if model == "flux_schnell":
-        return FluxPipeline.from_pretrained(
-            "black-forest-labs/FLUX.1-schnell",
             torch_dtype=torch.bfloat16,
         )
     if model == "sdxl_base":
@@ -1533,13 +1726,14 @@ def main():
     args = parse_args()
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
 
+    model = resolve_model(args.model)
     prompt = TEMPLATE.format(prompt=args.prompt)
-    print(f"[flux_gen] prompt: {prompt!r}", flush=True)
+    print(f"[flux_gen] model={model} prompt={prompt!r}", flush=True)
 
-    pipe = load_pipeline(args.model).to("cuda")
+    pipe = load_pipeline(model).to("cuda")
     pipe.set_progress_bar_config(disable=False)
 
-    steps = args.steps or (28 if args.model == "flux_dev" else 4 if args.model == "flux_schnell" else 30)
+    steps = args.steps or (28 if model == "flux_dev" else 30)
     gen = None
     if args.seed is not None:
         gen = torch.Generator("cuda").manual_seed(args.seed)
@@ -1559,7 +1753,7 @@ def main():
             print("[flux_gen] rembg not installed; skipping bg removal", flush=True)
 
     image.save(args.output)
-    print(f"FLUX_GEN_OK output={args.output} model={args.model} steps={steps} "
+    print(f"FLUX_GEN_OK output={args.output} model={model} steps={steps} "
           f"seed={args.seed if args.seed is not None else 'random'}")
 
 
@@ -1567,34 +1761,36 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 3: Smoke-test with a small prompt (only if a Flux checkpoint is available)**
+- [ ] **Step 3: Smoke-test the generator directly (--model auto uses whichever T0 landed)**
 
 ```bash
+HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com} \
 HY3DGEN_MODELS=/data/jzy/code/Hunyuan3D-2.1/pretrained_models \
 LD_LIBRARY_PATH=/data/jzy/miniconda3/envs/hunyuan3d/lib/python3.10/site-packages/torch/lib \
 CUDA_VISIBLE_DEVICES=0 \
   /data/jzy/miniconda3/envs/hunyuan3d/bin/python /data/jzy/code/SPEAR/tools/flux_generate_reference.py \
     --prompt "golden retriever" \
     --output /tmp/task7_golden.png \
-    --model flux_schnell \
+    --model auto \
     --seed 42
 ```
 
-Expected: `FLUX_GEN_OK output=/tmp/task7_golden.png ...`. Read `/tmp/task7_golden.png` — should look like a photorealistic golden retriever, standing, plain background. If the Flux weights aren't downloaded yet, the first run will pull them from HF (~24 GB for FLUX.1-dev) — this may fail without network; the user needs to prime the HF cache separately. If missing model is the blocker, DOCUMENT it and skip this task's smoke test.
+Expected: `FLUX_GEN_OK output=/tmp/task7_golden.png model=flux_dev ...` (or `model=sdxl_base` if Flux failed to download in T0). Read `/tmp/task7_golden.png` — should look like a photorealistic golden retriever standing on a plain background. If it looks nothing like a dog, the prompt template needs tweaking (F5 in spec).
 
 - [ ] **Step 4: End-to-end run with --prompt through the orchestrator**
 
 ```bash
 cd /data/jzy/code/SPEAR
-/data/jzy/miniconda3/envs/spear-env/bin/python tools/generate_hy3d_dog_diffuse.py \
+HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com} \
+  /data/jzy/miniconda3/envs/spear-env/bin/python tools/generate_hy3d_dog_diffuse.py \
   --prompt "golden retriever" \
   --breed golden_hy3d \
-  --flux-model flux_schnell \
+  --flux-model auto \
   --flux-seed 42 \
   --install
 ```
 
-Expected: same success line as Task 6 Step 3, but for a golden retriever coat. Metadata should have `source=prompt`, `prompt="golden retriever"`, `flux_model=flux_schnell`.
+Expected: same success line as Task 6 Step 3, but for a golden retriever coat. Metadata should have `source=prompt`, `prompt="golden retriever"`, `flux_model=auto` (the resolved concrete choice is inside `flux_generate_reference.py`'s stdout, captured by the orchestrator's `run()` helper).
 
 - [ ] **Step 5: Gate 5 for golden**
 
@@ -1605,16 +1801,15 @@ Same as Task 6 Step 5-6, but with `/tmp/diag_golden_hy3d/` and the assertion sho
 ```bash
 cd /data/jzy/code/SPEAR
 git add tools/flux_generate_reference.py
-git commit -m "T7 (optional): flux_generate_reference.py — text-to-image path
+git commit -m "T7: flux_generate_reference.py — text-to-image path with auto model select
 
-Diffusers-based Flux/SDXL generator that emits a Hunyuan-friendly
-reference image (standing side view, white background) from a user
-prompt. Called by generate_hy3d_dog_diffuse.py when --prompt is used.
+Diffusers-based generator; --model auto picks flux_dev if Task 0's
+prefetch cached it, else falls back to sdxl_base. Fixed Hunyuan-friendly
+prompt template (standing side view, white background). Optional rembg.
 
-Fixed prompt template biases toward Hunyuan-friendly reference photos.
-Optionally runs rembg on the output.
-
-Verified end-to-end golden retriever run through the orchestrator.
+Prints FLUX_GEN_OK with the resolved model name in the output line so
+generate_hy3d_dog_diffuse.py can log it. Verified with a golden
+retriever prompt end-to-end.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>" 
 ```
@@ -1822,7 +2017,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ## Self-review (agent notes, not part of exec)
 
 **Spec coverage:**
-- §3 pipeline overview → covered by T2 (Hunyuan), T4 (UV transfer), T6 (orchestrator wiring)
+- §3 pipeline overview → covered by T0 (weights prefetch), T2 (Hunyuan), T4 (UV transfer), T6 (orchestrator wiring), T7 (Flux/SDXL text-to-image branch)
 - §4.1 CLI on generate_hy3d_dog_diffuse.py → T6 Step 1
 - §4.2 Hunyuan wrapper → T2
 - §4.3 UV-transfer algorithm → T4 Step 4 (barycentric, KD-tree, dilate)
