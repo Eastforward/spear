@@ -3,9 +3,15 @@
 > Spec: [docs/superpowers/specs/2026-07-04-animated-dog-gpurir-design.md](../specs/2026-07-04-animated-dog-gpurir-design.md)
 > Plan: [docs/superpowers/plans/2026-07-04-animated-dog-gpurir.md](../plans/2026-07-04-animated-dog-gpurir.md)
 > Progress ledger: `.superpowers/sdd/progress.md`
-> Final commit: `a737d26d`
+> Final commit: `8ed55bff`
 
-## Status: ✅ COMPLETE
+## Status: ✅ COMPLETE (real fix in iter 5)
+
+> **⚠️ Amendment to earlier version of this doc**: I originally claimed T8 was
+> complete at iter 4 with legs animating. **That was wrong.** The user
+> re-reviewed the videos and correctly pointed out the dog was frozen. The
+> real fix is `SetGamePaused(bPaused=False)` documented in "T8 iter 5 —
+> the actual fix" below. Iters 1-4 all chased phantom problems.
 
 All 9 tasks passed all gates. Two MVP videos delivered.
 
@@ -21,18 +27,20 @@ All 9 tasks passed all gates. Two MVP videos delivered.
 | T8 | Render both videos + iterate on user feedback | 3/3 issues fixed | ✅ |
 | T9 | This handoff doc | — | ✅ |
 
-## The two videos
+## The two videos (FINAL — with real walking animation)
 
 Both re-runnable from scratch in ~10 minutes (see Reproducibility below).
 
 - **V1 — GPURIR trajectory (seed=42, speed bucket B)**:
-  `tmp/render_animated_dog_gpurir/animated_dog_gpurir_seed42_iter4/turntable.mp4`
+  `tmp/render_animated_dog_gpurir/animated_dog_gpurir_seed42_FINAL/turntable.mp4`
   - 36 frames at 12 fps, 3 seconds
   - Trajectory is byte-identical to `Spatial/v77_4ch_S2L/gen_rir_multiscene_v77.get_pos_traj(seed=42)` — same seed will produce the same audio & video positions.
 - **V2 — Waypoint L-shape**:
-  `tmp/render_animated_dog_gpurir/animated_dog_waypoint_Lshape_iter4/turntable.mp4`
+  `tmp/render_animated_dog_gpurir/animated_dog_waypoint_Lshape_FINAL/turntable.mp4`
   - Same 36-frame length
   - Cubic-spline through `(0.5,0.5) → (2.6,0.5) → (2.6,4.0)` metres
+
+**Older iter1..iter5 outputs are kept in `tmp/` for regression comparison; use `_FINAL` suffix for the current-truth deliverables.**
 
 Each video is accompanied by a sibling `trajectory.json` with the full per-frame positions, yaw, room size, material choices, mic position, and speed bucket — cross-modal alignment metadata for future RIR audio integration.
 
@@ -65,6 +73,27 @@ smc.set_editor_property(
 ```
 
 This is baked into the BP's SMC default subobject at import time, survives cook + package, and doesn't need any runtime call.
+
+**Iter 5 (commit `6a2f84bb`) — the actual fix for frozen legs**:
+
+After iter 4 the user re-reviewed both videos and correctly reported that the dog was **not actually animating** — it was translating as a rigid mesh, exactly like the original bug from iter 1. I had been fooled by:
+
+- Per-frame pixel diff which mostly measures translation + AA/lighting jitter
+- Small thumbnail rendering that hides sub-pixel pose changes
+- Absence of a controlled test (stationary dog + close-up camera + clean background)
+
+**Root cause**: SPEAR starts the world in a **paused state**. `USkeletalMeshComponent` ticks don't advance while the game is paused, so `PlayAnimation()` succeeds but the anim clock never moves. Note that `examples/control_character/run.py:142` calls `SetGamePaused(bPaused=False)` explicitly right before its per-frame loop — I missed this reference the first time.
+
+The correct fix is a single line right after spawning the actor:
+
+```python
+gameplay_statics = game.get_unreal_object(uclass="UGameplayStatics")
+gameplay_statics.SetGamePaused(bPaused=False)
+```
+
+Verified with `tools/diag_animated_dog.py`: 40-frame close-up of a *stationary* dog (no translation, so any per-frame change comes strictly from the anim clock). Before fix: silhouette flip mean ~672 px (pure AA/lighting jitter, no visible pose change across 40 frames). After fix: silhouette flip mean ~2018 px (3×), and 6 frames spanning the sequence show clearly distinct leg positions.
+
+All the iter 2/3/4 fixes (`AlwaysTickPoseAndRefreshBones`, `SetActorTickEnabled`, `SetComponentTickEnabled`, `SetPlayRate`) are kept because they are harmless and reasonable safety nets, but the *actual* fix is just `SetGamePaused(False)`.
 
 **Iter 4 (commit `a737d26d`, second half)** — Fixed pale-beige color regression:
 
@@ -127,7 +156,7 @@ DISPLAY=:99 VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json \
   /data/jzy/miniconda3/envs/spear-env/bin/python \
   /data/jzy/code/SPEAR/examples/render_animated_dog_gpurir.py \
   --trajectory-mode gpurir --trajectory-seed 42 --speed-bucket B \
-  --run-name animated_dog_gpurir_seed42_iter4
+  --run-name animated_dog_gpurir_seed42_FINAL
 
 # 8. V2 render (waypoint L-shape)
 DISPLAY=:99 VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json \
@@ -135,7 +164,15 @@ DISPLAY=:99 VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json \
   /data/jzy/code/SPEAR/examples/render_animated_dog_gpurir.py \
   --trajectory-mode waypoints \
   --waypoints "0.5,0.5;2.6,0.5;2.6,4.0" \
-  --run-name animated_dog_waypoint_Lshape_iter4
+  --run-name animated_dog_waypoint_Lshape_FINAL
+
+# 9. Optional: diag scene (stationary dog, close-up side-on view)
+#    Use this whenever you need to verify anim/UV without conflating with
+#    room + trajectory noise.
+DISPLAY=:99 VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json \
+  /data/jzy/miniconda3/envs/spear-env/bin/python \
+  /data/jzy/code/SPEAR/tools/diag_animated_dog.py \
+  --n-frames 40 --per-frame-warmup 4
 ```
 
 ## Cross-modal alignment contract (unchanged from spec)
@@ -173,8 +210,10 @@ DISPLAY=:99 VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json \
 | 2026-07-04 | Local variable shadowing (`yaw_deg` scalar vs array) | Camera scope shadowed per-frame array | Renamed to `cam_yaw_deg` |
 | 2026-07-04 | Editor commandlet exits nonzero even on success | Nonzero on any warning (Interchange ensure is non-fatal) | `build_animated_dog.sh` verifies via BP uasset presence |
 | 2026-07-04 | Dog float 45cm off floor | Used `source_height_m` (audio metadata) as actor Z | Actor Z = `args.z_offset_m` (default 0) |
-| 2026-07-04 | Legs frozen | Cooked-build SMC default `OnlyTickPoseWhenRendered` + SceneCaptureComponent2D doesn't update `LastRenderTime` | Bake `AlwaysTickPoseAndRefreshBones` into BP via editor-time `set_editor_property` (runtime setter is not a UFUNCTION) |
-| 2026-07-04 | Pale-beige dog after Iter 3 | Procedural diffuse mean is light tan; unlit texture bind was correct but ambient washed it out | Force `baseColorFactor = LinearColor(0.35, 0.20, 0.11, 1.0)` via `MaterialEditingLibrary.set_material_instance_vector_parameter_value` |
+| 2026-07-04 | Legs frozen (misdiagnosed as tick-visibility) | Wrong hypothesis: `OnlyTickPoseWhenRendered` + SceneCaptureComponent2D | Bake `AlwaysTickPoseAndRefreshBones` (kept as belt-and-suspenders) |
+| 2026-07-04 | Pale-beige dog after Iter 3 | Procedural diffuse mean is light tan; texture bound but ambient washed it out | Force `baseColorFactor = LinearColor(0.35, 0.20, 0.11, 1.0)` |
+| 2026-07-04 | **Legs STILL frozen after iter 4** — REAL root cause | SPEAR starts the world **paused**; no SMC tick advances while paused; PlayAnimation succeeds but anim clock doesn't move | Call `UGameplayStatics.SetGamePaused(bPaused=False)` right after actor spawn (see `examples/control_character/run.py:142` for the reference pattern) |
+| 2026-07-04 | Fur looks flat / no visible hair strands | Smart UV Project produces low-density UV islands; each polygon reads a large region of the diffuse texture, averaging out procedural voronoi details. Verified with UV checkerboard: mapping IS working but at "one color per polygon face" granularity | **Known limitation.** For real fur detail, either (a) use a much higher-detail actual dog-fur photo texture, (b) increase UV density (per-triangle or higher), or (c) use fur shells / hair grooming |
 
 ## What's next (follow-up specs, OUT OF SCOPE here)
 
