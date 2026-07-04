@@ -61,29 +61,25 @@ def main():
                 mesh = game.unreal_service.load_object(uclass="USkeletalMesh", name=MANNEQUIN_MESH)
                 smc.SetSkeletalMeshAsset(NewMesh=mesh)
 
-                # THE PROBE — three-call sequence T7 will replicate
-                # Load animation asset first before animation mode calls
+                # THE PROBE — single PlayAnimation UFUNCTION call. UE 5.5
+                # native param names are `NewAnimToPlay` (UAnimationAsset*)
+                # and `bLooping` (bool); see SkeletalMeshComponent.h:1126.
+                # This is preferable to the SetAnimationMode+SetAnimation+Play
+                # trio because SetAnimationMode's actual UFUNCTION param is
+                # `InAnimationMode`, and passing a wrong kwarg silently drives
+                # the SPEAR RPC layer into an error state (the C-side asserts
+                # and returns default null on subsequent calls, so a naive
+                # `except Exception` won't see it — the earlier probe printed
+                # PROBE_OK while the server was in a persistent error state).
                 anim = game.unreal_service.load_object(uclass="UAnimationAsset", name=WALK_ANIM)
                 if anim is None:
                     print("PROBE_FAILED_load_anim_asset returned None", flush=True)
                     sys.exit(1)
 
                 try:
-                    smc.SetAnimationMode(NewMode="AnimationSingleNode")
+                    smc.PlayAnimation(NewAnimToPlay=anim, bLooping=True)
                 except Exception as e:
-                    print(f"PROBE_FAILED_SetAnimationMode: {e}", flush=True)
-                    sys.exit(1)
-
-                try:
-                    smc.SetAnimation(NewAnimToPlay=anim)
-                except Exception as e:
-                    print(f"PROBE_FAILED_SetAnimation: {e}", flush=True)
-                    sys.exit(1)
-
-                try:
-                    smc.Play(bLooping=True)
-                except Exception as e:
-                    print(f"PROBE_FAILED_Play: {e}", flush=True)
+                    print(f"PROBE_FAILED_PlayAnimation: {e}", flush=True)
                     sys.exit(1)
 
                 # All probe steps succeeded

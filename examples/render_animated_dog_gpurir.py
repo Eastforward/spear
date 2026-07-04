@@ -112,6 +112,10 @@ def parse_args(argv=None):
     p.add_argument("--z-offset-m", type=float, default=0.0,
                    help="Vertical offset applied to every frame (metres). "
                         "Set negative if the mesh pivot is above the foot.")
+    p.add_argument("--dog-scale", type=float, default=0.12,
+                   help="Uniform actor scale applied to BP_dog_animated. "
+                        "Quaternius Dog.glb has native extent ~6.9m (much larger "
+                        "than a real dog); 0.12 * 690cm ~= 80cm tall dog.")
     # room + lights (defaults chosen to match the last static-dog run visually)
     p.add_argument("--room-size-m", type=float, nargs=3, default=[5.2, 4.4, 2.8],
                    metavar=("X", "Y", "Z"))
@@ -221,6 +225,7 @@ def _spawn_room_and_lights(args, game):
         mat = _material_for_piece(piece["name"], wall_material=resolved_wall)
         if piece["name"] == "floor":
             mat = resolved_floor
+        print(f"[render_animated_dog] spawning piece={piece['name']} mat={mat}", flush=True)
         spawn_room_piece(
             game=game,
             piece=piece,
@@ -262,19 +267,29 @@ def _spawn_room_and_lights(args, game):
     return resolved_floor, resolved_wall
 
 
-def _spawn_animated_dog(game, x_cm, y_cm, z_cm):
-    """Spawn BP_dog_animated and start Walking on loop. Returns (actor, smc)."""
+def _spawn_animated_dog(game, x_cm, y_cm, z_cm, scale=0.12):
+    """Spawn BP_dog_animated and start Walking on loop. Returns (actor, smc).
+
+    Uses PlayAnimation directly (single BlueprintCallable UFUNCTION that
+    internally SetAnimationMode+SetAnimation+Play). UE 5.5 native param
+    names: `NewAnimToPlay` (UAnimationAsset*) + `bLooping` (bool).
+    Reference: UE 5.5 SkeletalMeshComponent.h:1126.
+
+    scale: uniform actor scale to correct the Quaternius Dog.glb native
+    ~6.9m extent down to something dog-sized.
+    """
     bp = game.unreal_service.load_class(uclass="AActor", name=ANIMATED_DOG_BP)
     actor = game.unreal_service.spawn_actor(
         uclass=bp,
         location={"X": float(x_cm), "Y": float(y_cm), "Z": float(z_cm)},
         spawn_parameters={"SpawnCollisionHandlingOverride": "AlwaysSpawn"},
     )
+    actor.SetActorScale3D(
+        NewScale3D={"X": float(scale), "Y": float(scale), "Z": float(scale)}
+    )
     smc = game.unreal_service.get_component_by_class(actor=actor, uclass="USkeletalMeshComponent")
-    smc.SetAnimationMode(NewAnimationMode="AnimationSingleNode")
     anim = game.unreal_service.load_object(uclass="UAnimationAsset", name=ANIMATED_DOG_WALKING_ANIM)
-    smc.SetAnimation(NewAnimToPlay=anim)
-    smc.Play(bLooping=True)
+    smc.PlayAnimation(NewAnimToPlay=anim, bLooping=True)
     return actor, smc
 
 
@@ -325,13 +340,43 @@ def render_animated_dog(args):
                     pass
 
             resolved_floor, resolved_wall = _spawn_room_and_lights(args, game)
+            print("[render_animated_dog] room+lights done, spawning camera...", flush=True)
             cam, comp = spawn_camera(game=game, width=args.width, height=args.height)
+            # Fixed camera pose: park it near one corner of the room, looking
+            # diagonally across so both the mic center and the moving source are
+            # generally in-frame. Static-dog script instead ORBITS the camera
+            # around the source, but for a moving dog we want a static viewpoint
+            # so the dog's motion is visible relative to the room.
+            rx_cm = args.room_size_m[0] * M2CM
+            ry_cm = args.room_size_m[1] * M2CM
+            rz_cm = args.room_size_m[2] * M2CM
+            cam_x = 0.5 * M2CM   # 0.5m from the -x wall
+            cam_y = 0.5 * M2CM   # 0.5m from the -y wall
+            cam_z = 1.6 * M2CM   # eye height
+            # Aim at room center (mic position)
+            import math as _m
+            look_x, look_y, look_z = rx_cm / 2.0, ry_cm / 2.0, 1.2 * M2CM
+            # Named cam_yaw_deg / cam_pitch_deg to avoid shadowing the yaw_deg
+            # ARRAY returned by _compute_trajectory (which drives the dog per
+            # frame). Silent shadow would blow up later at yaw_deg[i].
+            cam_yaw_deg = _m.degrees(_m.atan2(look_y - cam_y, look_x - cam_x))
+            cam_pitch_deg = -_m.degrees(_m.atan2(cam_z - look_z,
+                                                 _m.hypot(look_x - cam_x, look_y - cam_y)))
+            cam.K2_SetActorLocationAndRotation(
+                NewLocation={"X": cam_x, "Y": cam_y, "Z": cam_z},
+                NewRotation={"Roll": 0.0, "Pitch": cam_pitch_deg, "Yaw": cam_yaw_deg},
+                bSweep=False, bTeleport=True,
+            )
+            print(f"[render_animated_dog] camera at ({cam_x:.0f},{cam_y:.0f},{cam_z:.0f}) "
+                  f"yaw={cam_yaw_deg:.1f} pitch={cam_pitch_deg:.1f}, spawning BP_dog_animated...", flush=True)
             dog_actor, _dog_smc = _spawn_animated_dog(
                 game,
                 x_cm=positions_m[0, 0] * M2CM,
                 y_cm=positions_m[0, 1] * M2CM,
                 z_cm=positions_m[0, 2] * M2CM,
+                scale=args.dog_scale,
             )
+            print("[render_animated_dog] dog spawned OK", flush=True)
         with instance.end_frame():
             pass
 
