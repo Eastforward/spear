@@ -75,9 +75,10 @@ def main():
     for ap in imported_paths:
         spear.log(f"  {ap}")
 
-    # 3. Locate the SkeletalMesh and the Walking AnimSequence among imported assets
+    # 3. Locate the SkeletalMesh, Walking AnimSequence, and fur Material
     skeletal_mesh_path = None
     walking_anim_path = None
+    fur_material_path = None
     for ap in imported_paths:
         data = unreal.EditorAssetLibrary.find_asset_data(asset_path=ap)
         cls = str(data.get_editor_property(name="asset_class_path").get_editor_property(name="asset_name"))
@@ -90,11 +91,121 @@ def main():
         elif cls == "AnimSequence" and args.walking_hint.lower() in name.lower():
             walking_anim_path = obj_path
             spear.log(f"  found Walking AnimSequence: {obj_path}")
+        elif cls in ("Material", "MaterialInstanceConstant") and "fur" in name.lower():
+            fur_material_path = obj_path
+            spear.log(f"  found fur material: {obj_path} (cls={cls})")
 
     assert skeletal_mesh_path is not None, f"no SkeletalMesh found in {imported_paths}"
     assert walking_anim_path is not None, (
         f"no AnimSequence with '{args.walking_hint}' in name found among {imported_paths}"
     )
+    if fur_material_path is None:
+        spear.log("WARN no 'fur' material found; SKM will use the Interchange default which may be pale beige")
+
+    # 3b. Force-bind the fur material into the SKM's material slot 0 so the
+    # cooked mesh renders with our procedural fur. Interchange sometimes
+    # imports the Material asset but leaves the SKM slot bound to a placeholder;
+    # this reassignment guarantees the correct diffuse survives cook + package.
+    if fur_material_path is not None:
+        skm_obj = unreal.load_asset(name=skeletal_mesh_path)
+        fur_mat = unreal.load_asset(name=fur_material_path)
+        materials = skm_obj.get_editor_property("materials")
+        spear.log(f"  SKM material slots before: {[str(m.material_slot_name) + '=' + (m.material_interface.get_path_name() if m.material_interface else 'None') for m in materials]}")
+        if len(materials) > 0:
+            materials[0].material_interface = fur_mat
+            skm_obj.set_editor_property("materials", materials)
+            editor_asset_subsystem.save_loaded_asset(asset_to_save=skm_obj)
+            spear.log(f"  bound {fur_material_path} to SKM slot 0 and saved")
+        else:
+            spear.log("WARN SKM has 0 material slots; can't bind fur material")
+
+        # Diagnose the fur MaterialInstance: dump its texture parameters so we
+        # can confirm the base-color texture actually points at
+        # `dog_fur_diffuse` (the diffuse baked from Blender). Interchange
+        # sometimes creates the material but wires the color to a placeholder.
+        try:
+            for pname in ["baseColorTexture", "BaseColor", "DiffuseColor", "diffuse", "Base Color"]:
+                try:
+                    tv = unreal.MaterialEditingLibrary.get_material_instance_texture_parameter_value(
+                        instance=fur_mat, parameter_name=pname
+                    )
+                    if tv is not None:
+                        spear.log(f"    fur mat texture param {pname!r} -> {tv.get_path_name()}")
+                except Exception:
+                    pass
+            for pname in ["baseColorFactor", "BaseColorFactor", "TintColor"]:
+                try:
+                    vv = unreal.MaterialEditingLibrary.get_material_instance_vector_parameter_value(
+                        instance=fur_mat, parameter_name=pname
+                    )
+                    spear.log(f"    fur mat vector param {pname!r} -> {vv}")
+                except Exception:
+                    pass
+        except Exception as e:
+            spear.log(f"    (couldn't dump material params: {e})")
+
+        # Force the diffuse texture into the fur MaterialInstance's base color
+        # texture parameter. The Interchange glTF importer names it
+        # "baseColorTexture" for MetallicRoughness workflow.
+        diffuse_path = None
+        for ap in imported_paths:
+            data = unreal.EditorAssetLibrary.find_asset_data(asset_path=ap)
+            cls = str(data.get_editor_property(name="asset_class_path").get_editor_property(name="asset_name"))
+            name = str(data.get_editor_property(name="asset_name"))
+            pkg_dir = str(data.get_editor_property(name="package_path"))
+            if cls == "Texture2D" and "fur" in name.lower():
+                diffuse_path = posixpath.join(pkg_dir, f"{name}.{name}")
+                spear.log(f"  found fur diffuse Texture2D: {diffuse_path}")
+                break
+        if diffuse_path is not None:
+            tex = unreal.load_asset(name=diffuse_path)
+            # Verify texture properties: srgb should be True for base color,
+            # mip gen should be default, compression should NOT be uncompressed.
+            spear.log(f"  fur diffuse Texture2D:")
+            spear.log(f"    srgb={tex.get_editor_property('srgb')}")
+            spear.log(f"    compression_settings={tex.get_editor_property('compression_settings')}")
+            spear.log(f"    mip_gen_settings={tex.get_editor_property('mip_gen_settings')}")
+            spear.log(f"    lod_group={tex.get_editor_property('lod_group')}")
+            # dump parent material and its parent chain
+            try:
+                parent = fur_mat.get_editor_property("parent")
+                spear.log(f"  fur mat parent = {parent.get_path_name() if parent else 'None'}")
+            except Exception as e:
+                spear.log(f"    (couldn't dump fur mat parent: {e})")
+            for pname in ["baseColorTexture", "BaseColor", "DiffuseColor"]:
+                try:
+                    ok = unreal.MaterialEditingLibrary.set_material_instance_texture_parameter_value(
+                        instance=fur_mat, parameter_name=pname, value=tex
+                    )
+                    spear.log(f"  set fur mat texture param {pname!r} -> {diffuse_path}: {ok}")
+                    if ok:
+                        break
+                except Exception as e:
+                    spear.log(f"    set param {pname!r} failed: {e}")
+            # Force dark warm brown via baseColorFactor. Our procedural
+            # diffuse averages to (156,132,106) RGB which is much too pale
+            # once ambient light is factored in. Multiplying by a rich brown
+            # tint pulls it back to a real dog-fur tone.
+            for pname in ("baseColorFactor", "BaseColorFactor"):
+                try:
+                    unreal.MaterialEditingLibrary.set_material_instance_vector_parameter_value(
+                        instance=fur_mat, parameter_name=pname,
+                        value=unreal.LinearColor(0.35, 0.20, 0.11, 1.0),
+                    )
+                    spear.log(f"  set fur mat vector param {pname!r} -> warm brown tint")
+                except Exception as e:
+                    spear.log(f"    set factor {pname!r} failed: {e}")
+            # Turn off metallic/roughness sheen if present so the fur reads matte.
+            for pname, val in (("metallicFactor", 0.0), ("MetallicFactor", 0.0),
+                                ("roughnessFactor", 0.95), ("RoughnessFactor", 0.95)):
+                try:
+                    unreal.MaterialEditingLibrary.set_material_instance_scalar_parameter_value(
+                        instance=fur_mat, parameter_name=pname, value=val,
+                    )
+                    spear.log(f"  set fur mat scalar param {pname!r} -> {val}")
+                except Exception:
+                    pass
+            editor_asset_subsystem.save_loaded_asset(asset_to_save=fur_mat)
 
     # 4. Create the Blueprint wrapping the SkeletalMesh with the Walking anim on loop
     bp_path = posixpath.join(args.bp_content_dir, args.bp_name)
@@ -128,6 +239,23 @@ def main():
             saved_play_rate=1.0,
         ),
     )
+    # CRITICAL for cooked-build rendering via USceneCaptureComponent2D:
+    # SkeletalMeshComponent's default `VisibilityBasedAnimTickOption` is
+    # `OnlyTickPoseWhenRendered`, which checks `LastRenderTime`. A scene-
+    # capture component (which is how SPEAR grabs frames) does NOT update
+    # `LastRenderTime` reliably before the anim-tick pre-pass runs, so the
+    # anim clock never advances → legs freeze in first-frame pose.
+    # `AlwaysTickPoseAndRefreshBones` bypasses the visibility check entirely.
+    # Setting this at the editor level bakes it into the BP's SMC default
+    # subobject; the runtime `SetVisibilityBasedAnimTickOption(...)` setter
+    # is not a UFUNCTION (SPEAR RPC returns 'UnrealObject' not callable).
+    smc.set_editor_property(
+        name="visibility_based_anim_tick_option",
+        value=unreal.VisibilityBasedAnimTickOption.ALWAYS_TICK_POSE_AND_REFRESH_BONES,
+    )
+    # NB: don't try `component_tick_enabled` here — that property is on
+    # `FTickFunction` (`smc.primary_component_tick.b_start_with_tick_enabled`),
+    # not a bare SMC property. Component tick is already enabled by default.
 
     spear.log(f"Saving BP: {bp_path}")
     editor_asset_subsystem.save_loaded_asset(asset_to_save=blueprint_asset)
