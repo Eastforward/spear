@@ -182,17 +182,22 @@ def main():
                         break
                 except Exception as e:
                     spear.log(f"    set param {pname!r} failed: {e}")
-            # Force dark warm brown via baseColorFactor. Our procedural
-            # diffuse averages to (156,132,106) RGB which is much too pale
-            # once ambient light is factored in. Multiplying by a rich brown
-            # tint pulls it back to a real dog-fur tone.
+            # Force baseColorFactor. Default is warm brown (0.35,0.20,0.11)
+            # for real fur; set SPEAR_DOG_TINT_WHITE=1 for a debug-only
+            # UV-checkerboard render (no tint = raw texture visible).
+            import os as _os
+            if _os.environ.get("SPEAR_DOG_TINT_WHITE") == "1":
+                tint = unreal.LinearColor(1.0, 1.0, 1.0, 1.0)
+                tint_name = "white (debug/UV)"
+            else:
+                tint = unreal.LinearColor(0.35, 0.20, 0.11, 1.0)
+                tint_name = "warm brown"
             for pname in ("baseColorFactor", "BaseColorFactor"):
                 try:
                     unreal.MaterialEditingLibrary.set_material_instance_vector_parameter_value(
-                        instance=fur_mat, parameter_name=pname,
-                        value=unreal.LinearColor(0.35, 0.20, 0.11, 1.0),
+                        instance=fur_mat, parameter_name=pname, value=tint,
                     )
-                    spear.log(f"  set fur mat vector param {pname!r} -> warm brown tint")
+                    spear.log(f"  set fur mat vector param {pname!r} -> {tint_name}")
                 except Exception as e:
                     spear.log(f"    set factor {pname!r} failed: {e}")
             # Turn off metallic/roughness sheen if present so the fur reads matte.
