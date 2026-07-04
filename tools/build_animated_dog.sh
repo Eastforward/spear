@@ -18,6 +18,19 @@ UE_DIR=/data/UE_5.5
 PY=/data/jzy/miniconda3/envs/spear-env/bin/python
 BP_PATH="$SPEAR_DIR/cpp/unreal_projects/SpearSim/Content/MyAssets/Audioset/Blueprints/animated_dog/BP_dog_animated.uasset"
 
+MESH_DIR="$SPEAR_DIR/cpp/unreal_projects/SpearSim/Content/MyAssets/Audioset/Meshes/animated_dog"
+BP_DIR="$SPEAR_DIR/cpp/unreal_projects/SpearSim/Content/MyAssets/Audioset/Blueprints/animated_dog"
+
+echo "=== Stage 2 pre: wipe stale animated_dog uassets on disk ==="
+# Root cause of a 20+ min editor hang seen on 2026-07-04: if a previous
+# cook was killed mid-flight, its uassets stay on disk but the editor's
+# asset registry no longer sees them cleanly. Calling
+# EditorAssetLibrary.delete_directory in the import script then spins
+# forever waiting for phantom references to release. Wiping the dirs at
+# filesystem level FIRST avoids that entirely — the import script just
+# creates a fresh dir instead of trying to delete.
+rm -rf "$MESH_DIR" "$BP_DIR"
+
 echo "=== Stage 2a: headless import (UE commandlet) ==="
 "$PY" "$SPEAR_DIR/tools/run_editor_script.py" \
     --script "$SPEAR_DIR/tools/import_animated_dog_editor.py" \
