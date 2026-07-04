@@ -18,13 +18,18 @@ Usage (in background):
 import os
 import sys
 
-# Both use real HF: mirror redirects to real HF anyway (verified 2026-07-05
-# via `curl -I` returning 308 -> huggingface.co); and gated Flux requires
-# real endpoint because mirror strips Authorization headers.
+# CRITICAL: huggingface_hub reads HF_ENDPOINT into a module-level constant
+# at import time. Setting os.environ AFTER `from huggingface_hub import ...`
+# has NO effect. We must set it here, before ANY hf import happens.
+# Both target models live on real HF (mirror strips Authorization on gated
+# Flux; SDXL happens to work fine on real HF too — verified 2026-07-05).
+os.environ["HF_ENDPOINT"] = "https://huggingface.co"
+
+# (repo_id, description)
 MODELS = [
-    ("black-forest-labs/FLUX.1-dev", "https://huggingface.co",
+    ("black-forest-labs/FLUX.1-dev",
         "Flux.1 dev (gated; requires license accepted at huggingface.co)"),
-    ("stabilityai/stable-diffusion-xl-base-1.0", "https://huggingface.co",
+    ("stabilityai/stable-diffusion-xl-base-1.0",
         "SDXL base 1.0 (open)"),
 ]
 
@@ -33,11 +38,10 @@ def main():
     from huggingface_hub import snapshot_download
     from huggingface_hub.errors import GatedRepoError
 
-    for repo_id, endpoint, desc in MODELS:
-        old_endpoint = os.environ.get("HF_ENDPOINT", "")
-        os.environ["HF_ENDPOINT"] = endpoint
+    print(f"[prefetch] HF_ENDPOINT={os.environ['HF_ENDPOINT']}", flush=True)
+    for repo_id, desc in MODELS:
         try:
-            print(f"[prefetch] {desc} via {endpoint}", flush=True)
+            print(f"[prefetch] {desc}", flush=True)
             path = snapshot_download(
                 repo_id=repo_id,
                 ignore_patterns=["*.bin", "*.msgpack", "*.h5", "*.onnx"],
@@ -49,8 +53,6 @@ def main():
             print(f"  Accept license at https://huggingface.co/{repo_id} while logged in.", flush=True)
         except Exception as e:
             print(f"PREFETCH_FAIL {repo_id}: {type(e).__name__}: {e}", flush=True)
-        finally:
-            os.environ["HF_ENDPOINT"] = old_endpoint
 
     print("PREFETCH_DONE", flush=True)
 
