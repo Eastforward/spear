@@ -83,6 +83,37 @@ ANIMATED_DOG_BP = "/Game/MyAssets/Audioset/Blueprints/animated_dog/BP_dog_animat
 ANIMATED_DOG_WALKING_ANIM = "/Game/MyAssets/Audioset/Meshes/animated_dog/Walking"
 DEFAULT_RENDER_ROOT = "/data/jzy/code/SPEAR/tmp/render_animated_dog_gpurir"
 
+# Tier-1 breed presets — linear-space RGB multiplier applied to the
+# baked diffuse via a runtime MaterialInstanceDynamic. Diffuse itself
+# is left uniform-ish, and this tint pulls it into breed-typical colors.
+# Add new breeds here; the same Dog_textured.glb + Walking anim is reused.
+BREED_TINTS_LINEAR = {
+    "warm_brown":       (0.35, 0.20, 0.11),   # generic mutt (our default)
+    "golden":           (0.85, 0.55, 0.20),   # golden retriever
+    "yellow_lab":       (0.90, 0.70, 0.35),   # yellow labrador
+    "chocolate_lab":    (0.20, 0.10, 0.05),   # chocolate labrador
+    "black_lab":        (0.02, 0.02, 0.02),   # black labrador
+    "beagle_tan":       (0.55, 0.35, 0.20),   # beagle base coat
+    "husky_gray":       (0.55, 0.55, 0.55),   # husky/wolf gray
+    "white":            (0.95, 0.95, 0.92),   # samoyed / west highland white
+}
+
+# Dog height reference table (cm at withers) — used to translate
+# --dog-height-cm to actor scale. Quaternius Dog.glb native extent is
+# ~6.9 m; scale 0.12 → ~82 cm tall dog. The mapping is height_cm / 690.
+QUATERNIUS_DOG_NATIVE_HEIGHT_CM = 690.0
+
+BREED_HEIGHT_CM = {  # typical withers height for reference
+    "golden":           58.0,
+    "yellow_lab":       57.0,
+    "chocolate_lab":    57.0,
+    "black_lab":        57.0,
+    "beagle_tan":       38.0,
+    "husky_gray":       55.0,
+    "white":            48.0,
+    "warm_brown":       55.0,
+}
+
 
 def parse_waypoints(s):
     """Parse '0.5,0.5;2.6,0.5;2.6,4.0' into [(0.5,0.5), (2.6,0.5), (2.6,4.0)]."""
@@ -112,10 +143,25 @@ def parse_args(argv=None):
     p.add_argument("--z-offset-m", type=float, default=0.0,
                    help="Vertical offset applied to every frame (metres). "
                         "Set negative if the mesh pivot is above the foot.")
-    p.add_argument("--dog-scale", type=float, default=0.12,
+    p.add_argument("--dog-scale", type=float, default=None,
                    help="Uniform actor scale applied to BP_dog_animated. "
-                        "Quaternius Dog.glb has native extent ~6.9m (much larger "
-                        "than a real dog); 0.12 * 690cm ~= 80cm tall dog.")
+                        "Quaternius Dog.glb has native extent ~6.9m; "
+                        "0.12 -> ~82cm tall dog. If --dog-height-cm is set "
+                        "this is ignored (height wins). If both are None the "
+                        "breed default height is used.")
+    p.add_argument("--dog-height-cm", type=float, default=None,
+                   help="Withers height in cm; sets --dog-scale automatically "
+                        "so the rendered dog is this tall. Overrides --dog-scale.")
+    p.add_argument("--breed", choices=sorted(BREED_TINTS_LINEAR.keys()),
+                   default="warm_brown",
+                   help="Tier-1 preset that sets both the coat tint and (if "
+                        "neither --dog-scale nor --dog-height-cm is given) the "
+                        "typical withers height. See BREED_TINTS_LINEAR + "
+                        "BREED_HEIGHT_CM for the table.")
+    p.add_argument("--tint-linear-rgb", type=float, nargs=3, default=None,
+                   metavar=("R", "G", "B"),
+                   help="Override breed tint with an explicit linear-space RGB "
+                        "triple. Useful for one-off custom colors.")
     # room + lights (defaults chosen to match the last static-dog run visually)
     p.add_argument("--room-size-m", type=float, nargs=3, default=[5.2, 4.4, 2.8],
                    metavar=("X", "Y", "Z"))
@@ -155,6 +201,19 @@ def parse_args(argv=None):
     args = p.parse_args(argv)
     if args.trajectory_mode == "waypoints" and not args.waypoints:
         p.error("--trajectory-mode waypoints requires --waypoints '...'")
+
+    # Resolve breed -> tint (unless --tint-linear-rgb given), and height/scale
+    if args.tint_linear_rgb is not None:
+        args._resolved_tint = tuple(args.tint_linear_rgb)
+    else:
+        args._resolved_tint = BREED_TINTS_LINEAR[args.breed]
+    # Resolve dog size: height > scale > breed-default-height
+    if args.dog_height_cm is not None:
+        args._resolved_scale = args.dog_height_cm / QUATERNIUS_DOG_NATIVE_HEIGHT_CM
+    elif args.dog_scale is not None:
+        args._resolved_scale = args.dog_scale
+    else:
+        args._resolved_scale = BREED_HEIGHT_CM[args.breed] / QUATERNIUS_DOG_NATIVE_HEIGHT_CM
     return args
 
 
@@ -267,7 +326,39 @@ def _spawn_room_and_lights(args, game):
     return resolved_floor, resolved_wall
 
 
-def _spawn_animated_dog(game, x_cm, y_cm, z_cm, scale=0.12):
+def _apply_breed_tint(game, smc, tint_linear_rgb):
+    """Create a MaterialInstanceDynamic wrapping the baked fur material and
+    override baseColorFactor with the given (r,g,b) linear tuple.
+
+    This is the runtime hook for Tier-1 breed switching: we do NOT re-cook
+    the game or re-import the asset; every render call picks its tint fresh.
+
+    Returns the MID (or None if the SMC has no material to override).
+    """
+    r, g, b = tint_linear_rgb
+    tint = {"R": float(r), "G": float(g), "B": float(b), "A": 1.0}
+    try:
+        n_mats = smc.GetNumMaterials()
+    except Exception:
+        n_mats = 1
+    if n_mats <= 0:
+        return None
+    # slot 0 = Dog_Fur. Create a MID that wraps whatever's currently there.
+    mid = smc.CreateAndSetMaterialInstanceDynamic(ElementIndex=0)
+    if mid is None:
+        print("[render_animated_dog] WARN CreateAndSetMaterialInstanceDynamic returned None", flush=True)
+        return None
+    # UE 5.5 UMaterialInstanceDynamic UFUNCTION for vector param:
+    #   SetVectorParameterValue(FName ParameterName, FLinearColor Value)
+    for pname in ("baseColorFactor", "BaseColorFactor"):
+        try:
+            mid.SetVectorParameterValue(ParameterName=pname, Value=tint)
+        except Exception as e:
+            print(f"[render_animated_dog] MID {pname!r} warn: {e}", flush=True)
+    return mid
+
+
+def _spawn_animated_dog(game, x_cm, y_cm, z_cm, scale=0.12, tint_linear_rgb=None):
     """Spawn BP_dog_animated and start Walking on loop. Returns (actor, smc).
 
     Uses PlayAnimation directly (single BlueprintCallable UFUNCTION that
@@ -322,6 +413,12 @@ def _spawn_animated_dog(game, x_cm, y_cm, z_cm, scale=0.12):
         smc.SetPlayRate(Rate=1.0)
     except Exception:
         pass
+
+    # Tier-1 breed tint: runtime MID override of baseColorFactor. Skipped
+    # if caller passed tint_linear_rgb=None (baked warm-brown remains).
+    if tint_linear_rgb is not None:
+        _apply_breed_tint(game, smc, tint_linear_rgb)
+
     return actor, smc
 
 
@@ -410,9 +507,13 @@ def render_animated_dog(args):
                 x_cm=positions_m[0, 0] * M2CM,
                 y_cm=positions_m[0, 1] * M2CM,
                 z_cm=args.z_offset_m * M2CM,
-                scale=args.dog_scale,
+                scale=args._resolved_scale,
+                tint_linear_rgb=args._resolved_tint,
             )
-            print("[render_animated_dog] dog spawned OK", flush=True)
+            print(f"[render_animated_dog] dog spawned OK breed={args.breed} "
+                  f"tint={args._resolved_tint} scale={args._resolved_scale:.4f} "
+                  f"(height~{args._resolved_scale * QUATERNIUS_DOG_NATIVE_HEIGHT_CM:.0f}cm)",
+                  flush=True)
 
             # THE ACTUAL FIX for the frozen-legs bug (previous 4 iterations
             # of T8 chased phantom fixes because I missed this):
@@ -485,6 +586,10 @@ def render_animated_dog(args):
             "mic_pos_m": [args.room_size_m[0] / 2.0, args.room_size_m[1] / 2.0, 1.2],
             "resolved_floor_material": resolved_floor,
             "resolved_wall_material": resolved_wall,
+            "breed": args.breed,
+            "tint_linear_rgb": list(args._resolved_tint),
+            "dog_scale": args._resolved_scale,
+            "dog_height_cm_effective": args._resolved_scale * QUATERNIUS_DOG_NATIVE_HEIGHT_CM,
         }
         if args.trajectory_mode == "waypoints":
             traj_json["waypoints_m"] = [list(wp) for wp in args.waypoints]
