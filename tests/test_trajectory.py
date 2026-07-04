@@ -86,5 +86,68 @@ class GpurirTrajectoryTests(unittest.TestCase):
         np.testing.assert_array_equal(sub, expected)
 
 
+class WaypointTrajectoryTests(unittest.TestCase):
+    def test_waypoint_endpoints(self):
+        import trajectory
+        traj = trajectory.waypoint_trajectory(
+            waypoints_m=[(0.5, 0.5), (5.0, 4.0)],
+            n_frames=36,
+            room_size_m=(5.2, 4.4, 2.8),
+            kind="linear",
+        )
+        self.assertEqual(traj.shape, (36, 3))
+        np.testing.assert_allclose(traj[0, :2], [0.5, 0.5], atol=1e-6)
+        np.testing.assert_allclose(traj[-1, :2], [5.0, 4.0], atol=1e-6)
+
+    def test_waypoint_min_points(self):
+        import trajectory
+        with self.assertRaises(ValueError):
+            trajectory.waypoint_trajectory(
+                waypoints_m=[(1.0, 1.0)],  # only 1 point
+                n_frames=36,
+                room_size_m=(5.2, 4.4, 2.8),
+            )
+
+    def test_waypoint_clip_to_room(self):
+        import trajectory
+        with self.assertLogs("trajectory", level="WARNING"):
+            traj = trajectory.waypoint_trajectory(
+                waypoints_m=[(-1.0, -1.0), (999.0, 999.0)],
+                n_frames=10,
+                room_size_m=(5.2, 4.4, 2.8),
+                wall_margin_m=0.1,
+                kind="linear",
+            )
+        # Endpoints should be clipped to [margin, room_dim - margin]
+        self.assertGreaterEqual(traj[0, 0], 0.1 - 1e-9)
+        self.assertLessEqual(traj[-1, 0], 5.2 - 0.1 + 1e-9)
+        self.assertLessEqual(traj[-1, 1], 4.4 - 0.1 + 1e-9)
+
+
+class YawTests(unittest.TestCase):
+    def test_yaw_straight_line(self):
+        import trajectory
+        positions = np.stack([
+            np.linspace(0.0, 5.0, 20),  # x
+            np.zeros(20),                # y
+            np.full(20, 0.45),           # z
+        ], axis=1)
+        yaw = trajectory.compute_yaw_from_positions(positions)
+        # +x direction is 0 degrees
+        np.testing.assert_allclose(yaw, np.zeros(20), atol=1.0)  # 1 deg tolerance
+
+    def test_yaw_curve(self):
+        import trajectory
+        # Half-circle in xy at radius 1 centered at (0,0), from (1,0) to (-1,0)
+        t = np.linspace(0.0, np.pi, 40)
+        positions = np.stack([np.cos(t), np.sin(t), np.full(40, 0.45)], axis=1)
+        yaw = trajectory.compute_yaw_from_positions(positions)
+        # Yaw of forward tangent goes from ~+90 (moving +y) around to ~-90/+270
+        # (moving -y). It should be monotonically increasing modulo 360.
+        unwrapped = np.unwrap(np.deg2rad(yaw))
+        diffs = np.diff(unwrapped)
+        self.assertGreater(diffs.mean(), 0.0, "yaw should sweep in one direction")
+
+
 if __name__ == "__main__":
     unittest.main()
