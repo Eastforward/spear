@@ -202,12 +202,13 @@ import os
 import sys
 
 # (repo_id, endpoint_override, description)
+# Both use real HF: mirror redirects to real HF anyway (verified 2026-07-05
+# via `curl -I` returning 308 -> huggingface.co); and gated Flux requires
+# real endpoint because mirror strips Authorization headers.
 MODELS = [
-    # Flux is gated; must use real HF (mirror strips auth)
     ("black-forest-labs/FLUX.1-dev", "https://huggingface.co",
         "Flux.1 dev (gated; requires license accepted at huggingface.co)"),
-    # SDXL is open; mirror is fine and faster in China
-    ("stabilityai/stable-diffusion-xl-base-1.0", "https://hf-mirror.com",
+    ("stabilityai/stable-diffusion-xl-base-1.0", "https://huggingface.co",
         "SDXL base 1.0 (open)"),
 ]
 
