@@ -136,7 +136,20 @@ CUDA_VISIBLE_DEVICES=0
            /data/jzy/code/Hunyuan3D-2.1/pretrained_models/tencent/Hunyuan3D-2.1/hunyuan3d-paintpbr-v2-1
    ```
 
-**HF endpoint:** `HF_ENDPOINT=https://hf-mirror.com` is already set globally on this box (via user's shell profile). Confirm with `env | grep HF_ENDPOINT` — if empty, prepend to any HF download command.
+**HF endpoint (IMPORTANT — verified 2026-07-05):**
+- `HF_ENDPOINT=https://hf-mirror.com` is already set globally on this box (user's shell profile).
+- **hf-mirror.com IGNORES `Authorization` header** — any HF token is silently rejected there. So gated repos (Flux.1-dev) MUST use the real `HF_ENDPOINT=https://huggingface.co` explicitly.
+- Ungated repos (SDXL base, Hunyuan weights, DINOv2) work fine on the mirror and are FASTER (China-region CDN).
+- **Rule for our pipeline**: SDXL / DINOv2 / Hunyuan → mirror; Flux.1-dev → real HF (must set env explicitly per-command).
+
+**HF token:** stored at `/data/jzy/.cache/huggingface/token` (37 bytes). User is `valkiscute`, has `canReadGatedRepos: true`. Test:
+```bash
+HF_ENDPOINT=https://huggingface.co /data/jzy/miniconda3/envs/hunyuan3d/bin/python -c "
+from huggingface_hub import whoami; print(whoami()['name'])"
+```
+Expected: `valkiscute`. If it says `Invalid user token` — check `HF_ENDPOINT` was actually overridden (mirror won't validate the token).
+
+**Flux.1-dev license:** must be accepted at https://huggingface.co/black-forest-labs/FLUX.1-dev while logged in. Otherwise downloads return `GatedRepoError: 403`. This is a one-time user action, not automatable.
 
 **Baseline glb state:** `tmp/animated_dog/Dog_textured.glb` should contain the warm-brown baseline from the predecessor spec. If it does not, restore from `.bak.warm_brown` before T2.
 
@@ -168,44 +181,61 @@ We download BOTH so `flux_generate_reference.py --model` can switch between them
 # /data/jzy/code/SPEAR/tools/prefetch_t2i_models.py
 """Task 0: prefetch Flux.1 dev + SDXL base 1.0 weights into HF cache.
 
+Two important quirks (see plan's env-prep appendix):
+  1. Gated repo Flux.1-dev requires real HF endpoint. The globally-set
+     HF_ENDPOINT=https://hf-mirror.com strips Authorization headers and
+     will return 403 for gated repos. We override to https://huggingface.co
+     JUST for the Flux download; SDXL keeps the mirror (faster).
+  2. Flux.1-dev requires license acceptance at huggingface.co UI. If not
+     accepted, downloads return GatedRepoError — surface a friendly message.
+
 Runs in the hunyuan3d env (has huggingface_hub already). Designed to be
 launched in the background BEFORE Task 1 so weights download while the
 early tasks run. Idempotent: skips models already cached.
 
 Usage (in background):
-  HF_ENDPOINT=https://hf-mirror.com \\
-    /data/jzy/miniconda3/envs/hunyuan3d/bin/python \\
+  nohup /data/jzy/miniconda3/envs/hunyuan3d/bin/python \\
     /data/jzy/code/SPEAR/tools/prefetch_t2i_models.py \\
     > /tmp/prefetch_t2i.log 2>&1 &
 """
 import os
 import sys
 
+# (repo_id, endpoint_override, description)
 MODELS = [
-    ("black-forest-labs/FLUX.1-dev",
-        # Flux uses safetensors + config + transformer + vae + 2 text encoders
-        None),                    # None = allow all files
-    ("stabilityai/stable-diffusion-xl-base-1.0",
-        None),
+    # Flux is gated; must use real HF (mirror strips auth)
+    ("black-forest-labs/FLUX.1-dev", "https://huggingface.co",
+        "Flux.1 dev (gated; requires license accepted at huggingface.co)"),
+    # SDXL is open; mirror is fine and faster in China
+    ("stabilityai/stable-diffusion-xl-base-1.0", "https://hf-mirror.com",
+        "SDXL base 1.0 (open)"),
 ]
 
 
 def main():
     from huggingface_hub import snapshot_download
+    from huggingface_hub.errors import GatedRepoError
 
-    for repo_id, allow in MODELS:
+    for repo_id, endpoint, desc in MODELS:
+        # Set endpoint just for this download (snapshot_download reads it fresh)
+        old_endpoint = os.environ.get("HF_ENDPOINT", "")
+        os.environ["HF_ENDPOINT"] = endpoint
         try:
-            print(f"[prefetch] downloading {repo_id}...", flush=True)
+            print(f"[prefetch] {desc} via {endpoint}", flush=True)
             path = snapshot_download(
                 repo_id=repo_id,
-                allow_patterns=allow,
                 # Prefer .safetensors over .bin to save space
-                ignore_patterns=["*.bin", "*.msgpack", "*.h5"],
+                ignore_patterns=["*.bin", "*.msgpack", "*.h5", "*.onnx"],
             )
             print(f"PREFETCH_OK {repo_id} -> {path}", flush=True)
+        except GatedRepoError as e:
+            print(f"PREFETCH_FAIL {repo_id}: gated repo denied.", flush=True)
+            print(f"  Accept license at https://huggingface.co/{repo_id} while logged in as valkiscute.", flush=True)
         except Exception as e:
-            print(f"PREFETCH_FAIL {repo_id}: {e}", flush=True)
+            print(f"PREFETCH_FAIL {repo_id}: {type(e).__name__}: {e}", flush=True)
             # continue with the next model instead of aborting
+        finally:
+            os.environ["HF_ENDPOINT"] = old_endpoint
 
     print("PREFETCH_DONE", flush=True)
 
@@ -217,15 +247,22 @@ if __name__ == "__main__":
 - [ ] **Step 2: Kick off the download in the background (BEFORE Task 1)**
 
 ```bash
-# 1. Confirm HF token for Flux.1 dev (gated repo). If not set:
-#    huggingface-cli login    # paste token from https://huggingface.co/settings/tokens
-# The token must be attached to a user that has accepted the FLUX.1 license.
-[ -f ~/.cache/huggingface/token ] || echo "MISSING HF token — Flux download will fail; SDXL still works"
+# 1. Verify token is present and Flux license accepted:
+[ -f ~/.cache/huggingface/token ] || (echo "MISSING HF token — write it to ~/.cache/huggingface/token first"; exit 1)
+HF_ENDPOINT=https://huggingface.co /data/jzy/miniconda3/envs/hunyuan3d/bin/python -c "
+from huggingface_hub import hf_hub_download
+try:
+    hf_hub_download('black-forest-labs/FLUX.1-dev', 'model_index.json')
+    print('FLUX_LICENSE_OK')
+except Exception as e:
+    print(f'FLUX_LICENSE_FAIL: {e}')
+    print('  --> Accept license at https://huggingface.co/black-forest-labs/FLUX.1-dev')
+    print('  --> SDXL will still download; Flux will be skipped.')
+"
 
-# 2. Launch the prefetch in the background
+# 2. Launch the prefetch in the background (script chooses its own HF_ENDPOINT per model)
 mkdir -p /tmp
-HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com} \
-  nohup /data/jzy/miniconda3/envs/hunyuan3d/bin/python \
+nohup /data/jzy/miniconda3/envs/hunyuan3d/bin/python \
   /data/jzy/code/SPEAR/tools/prefetch_t2i_models.py \
   > /tmp/prefetch_t2i.log 2>&1 &
 echo "prefetch pid: $!"
