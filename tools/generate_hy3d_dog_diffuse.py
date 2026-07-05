@@ -84,6 +84,18 @@ def parse_args():
                    help="Blender Catmull-Clark subdiv level (F4 escape hatch). Default 0.")
     p.add_argument("--skip-gate2", action="store_true",
                    help="Bypass Gate 2 (UV coverage) if you know it's low and want to inspect the result anyway")
+    # Post-hoc color correction — Hunyuan diffusion prior consistently
+    # bakes a cool-sky bias into 'should-be-black' surfaces. See
+    # tools/color_correct_diffuse.py for the fix. Defaults are tuned to
+    # a border-collie ref image; may need loosening for lighter breeds.
+    p.add_argument("--no-color-correct", action="store_true",
+                   help="Skip the post-hoc Hunyuan color-bias correction on the baked diffuse.")
+    p.add_argument("--cc-strength", type=float, default=1.0,
+                   help="Gray-world strength (0..1) for color correction.")
+    p.add_argument("--cc-saturation", type=float, default=0.3,
+                   help="HSV saturation multiplier for color correction. 1=keep, <1=desaturate.")
+    p.add_argument("--cc-contrast", type=float, default=1.25,
+                   help="Contrast lift for color correction. 1=none, >1=crush blacks.")
     return p.parse_args()
 
 
@@ -162,6 +174,26 @@ def main():
          "--hy3d-mesh", f"{workdir}/white_mesh_remesh.obj"],
         env_extra=HY3D_ENV)
 
+    # ---------- Stage 1.5: color correction of the raw Hunyuan atlas ----------
+    hy3d_diffuse_src = f"{workdir}/hy3d_diffuse.jpg"
+    if not args.no_color_correct:
+        print("=== Stage 1.5: color_correct_diffuse (Hunyuan blue-bias fix) ===", flush=True)
+        corrected = f"{workdir}/hy3d_diffuse_corrected.png"
+        run([HY3D_PY, f"{REPO}/tools/color_correct_diffuse.py",
+             "--input", hy3d_diffuse_src,
+             "--output", corrected,
+             "--strength", str(args.cc_strength),
+             "--saturation-boost", str(args.cc_saturation),
+             "--contrast-lift", str(args.cc_contrast)],
+            env_extra=HY3D_ENV)
+        hy3d_diffuse_src = corrected
+        metadata["color_corrected"] = True
+        metadata["cc_params"] = {"strength": args.cc_strength,
+                                 "saturation": args.cc_saturation,
+                                 "contrast": args.cc_contrast}
+    else:
+        metadata["color_corrected"] = False
+
     # ---------- Stage 2: UV transfer ----------
     print("=== Stage 2: transfer_uv_texture ===", flush=True)
     diffuse = f"{workroot}/transferred_diffuse.png"
@@ -169,7 +201,7 @@ def main():
     run([HY3D_PY, f"{REPO}/tools/transfer_uv_texture.py",
          "--orig-mesh", input_glb,
          "--hy3d-mesh", f"{workdir}/white_mesh_remesh.obj",
-         "--hy3d-diffuse", f"{workdir}/hy3d_diffuse.jpg",
+         "--hy3d-diffuse", hy3d_diffuse_src,
          "--output", diffuse,
          "--size", str(args.diffuse_size),
          "--dilate", str(args.dilate)],
