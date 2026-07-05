@@ -46,6 +46,17 @@ def parse_argv():
                    help="Diffuse texture PNG/JPG for the new mesh")
     p.add_argument("--output", required=True)
     p.add_argument("--auto-align", default="yes", choices=["yes", "no"])
+    p.add_argument("--flip-x", action="store_true",
+                   help="Mirror new mesh along X (use when the new mesh's forward is opposite to the rig).")
+    p.add_argument("--body-only", action="store_true",
+                   help="Only swap the BODY portion (torso + legs). Head and tail are stitched from "
+                        "the original mesh so their bones drive them cleanly. Uses spatial cut on X.")
+    p.add_argument("--head-cut", type=float, default=0.55,
+                   help="With --body-only: fraction (0..1) along X from the source mesh's back to keep "
+                        "as body. Vertices past this go to head. Default 0.55.")
+    p.add_argument("--tail-cut", type=float, default=0.10,
+                   help="With --body-only: fraction (0..1) along X from source mesh's back below which "
+                        "vertices are considered tail (dropped and refilled from original). Default 0.10.")
     return p.parse_args(argv)
 
 
@@ -100,6 +111,90 @@ def apply_transforms(obj):
     """Apply object.location/rotation/scale into vertex data so nothing carries over."""
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+
+
+def body_only_crop(tgt_obj, src_obj, head_cut, tail_cut):
+    """Delete Hunyuan mesh vertices in the HEAD and TAIL X-regions, then
+    merge back the equivalent regions from the ORIGINAL Dog mesh.
+
+    The idea: skinning weight transfer is only reliable in regions where
+    the two meshes have similar shape. Head + tail differ most between
+    the low-poly Quaternius Dog and Hunyuan's realistic sculpt, so the
+    weights would map incorrectly there. By using the original for head
+    and tail (which already has correct weights), and Hunyuan just for
+    the body (where both meshes are similar cylinders), we get high-poly
+    body detail without head/tail distortion.
+
+    Returns the target mesh object (may be the same reference — it's
+    edited in-place).
+    """
+    import numpy as np
+    # 1. Compute src bbox on X to derive absolute cut planes
+    def bbox_x(obj):
+        pts = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
+        return min(p.x for p in pts), max(p.x for p in pts)
+    src_x_min, src_x_max = bbox_x(src_obj)
+    x_range = src_x_max - src_x_min
+    tail_x = src_x_min + tail_cut * x_range
+    head_x = src_x_min + head_cut * x_range
+    print(f"[body-only] src X range=[{src_x_min:.2f}, {src_x_max:.2f}]  "
+          f"tail_cut_x={tail_x:.2f}  head_cut_x={head_x:.2f}", flush=True)
+
+    # 2. Delete target mesh vertices outside [tail_x, head_x] X range
+    bpy.context.view_layer.objects.active = tgt_obj
+    tgt_obj.select_set(True)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    verts_to_remove = []
+    for i, v in enumerate(tgt_obj.data.vertices):
+        wp = tgt_obj.matrix_world @ v.co
+        if wp.x < tail_x or wp.x > head_x:
+            verts_to_remove.append(i)
+    print(f"[body-only] removing {len(verts_to_remove)}/{len(tgt_obj.data.vertices)} target verts "
+          f"outside body X range", flush=True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for i in verts_to_remove:
+        tgt_obj.data.vertices[i].select = True
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.delete(type="VERT")
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    # 3. Duplicate src object, delete its BODY (keep head + tail)
+    bpy.ops.object.select_all(action="DESELECT")
+    src_obj.select_set(True)
+    bpy.context.view_layer.objects.active = src_obj
+    bpy.ops.object.duplicate(linked=False)
+    src_dup = bpy.context.active_object
+    src_dup.name = f"{src_obj.name}_headtail"
+
+    # Delete verts INSIDE body range on the duplicate
+    verts_body = []
+    for i, v in enumerate(src_dup.data.vertices):
+        wp = src_dup.matrix_world @ v.co
+        if tail_x <= wp.x <= head_x:
+            verts_body.append(i)
+    print(f"[body-only] on src copy, removing {len(verts_body)}/{len(src_dup.data.vertices)} verts "
+          f"inside body X range (keeping head+tail)", flush=True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for i in verts_body:
+        src_dup.data.vertices[i].select = True
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.delete(type="VERT")
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    # 4. Join src_dup INTO tgt_obj so we end up with a single hybrid mesh
+    #    (tgt keeps its material; src_dup's material comes along as slot 2).
+    bpy.ops.object.select_all(action="DESELECT")
+    src_dup.select_set(True)
+    tgt_obj.select_set(True)
+    bpy.context.view_layer.objects.active = tgt_obj
+    bpy.ops.object.join()
+    print(f"[body-only] hybrid mesh: verts={len(tgt_obj.data.vertices)} "
+          f"faces={len(tgt_obj.data.polygons)}", flush=True)
+    return tgt_obj
 
 
 def transfer_vertex_groups(src_obj, tgt_obj):
@@ -211,9 +306,30 @@ def main():
     tgt_mesh = max(new_meshes, key=lambda o: len(o.data.vertices))
     print(f"[load] new_mesh={tgt_mesh.name} verts={len(tgt_mesh.data.vertices)}", flush=True)
 
+    # 3.5. Optionally flip X to match src orientation (rig assumes +X = forward,
+    # some meshes come with -X = forward).
+    if args.flip_x:
+        tgt_mesh.scale.x *= -1
+        bpy.context.view_layer.update()
+        # Apply the negative scale so vertices flip in-place (avoids inside-out normals)
+        apply_transforms(tgt_mesh)
+        # Recompute normals (they got flipped by the mirror)
+        bpy.context.view_layer.objects.active = tgt_mesh
+        tgt_mesh.select_set(True)
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.mesh.normals_make_consistent(inside=False)
+        bpy.ops.object.mode_set(mode="OBJECT")
+        print(f"[flip-x] mirrored target mesh along X and recomputed normals", flush=True)
+
     # 4. Auto-align target mesh into source mesh's bbox
     if args.auto_align == "yes":
         align_bbox(tgt_mesh, src_mesh)
+
+    # 4.5. Body-only mode: keep only mid-X body portion of new mesh, then
+    # append original mesh's head + tail vertices as a separate island.
+    if args.body_only:
+        tgt_mesh = body_only_crop(tgt_mesh, src_mesh, args.head_cut, args.tail_cut)
 
     # 5. Assign diffuse texture
     assign_texture(tgt_mesh, args.new_diffuse)
