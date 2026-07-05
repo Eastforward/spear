@@ -90,6 +90,8 @@ def coarse_region_labels(
     bounds: tuple[np.ndarray, np.ndarray] | None = None,
     *,
     tail_x: float = 0.16,
+    tail_raised_x: float = 0.32,
+    tail_raised_y: float = 0.55,
     head_x: float = 0.64,
     leg_y: float = 0.36,
     front_x: float = 0.50,
@@ -100,6 +102,14 @@ def coarse_region_labels(
     Z=lateral.  These are deliberately coarse regions: they prevent a head or
     tail vertex from stealing weights from a nearby but semantically unrelated
     leg face, then the inpainting pass smooths small gaps.
+
+    Two definitions of "tail region":
+      1. `x <= tail_x`:                 the low-X strip (original tail zone)
+      2. `x <= tail_raised_x AND y >= tail_raised_y`: covers a raised/curled
+         tail whose tip has moved forward and up. This is essential when the
+         Hunyuan-generated mesh has a tail-up pose while the source Dog has
+         a hanging tail — the raised tip's X falls beyond `tail_x` and would
+         otherwise be misclassified as torso and get non-tail bone weights.
     """
     uvw = _normalized_xyz(vertices, bounds)
     x = uvw[:, 0]
@@ -107,7 +117,8 @@ def coarse_region_labels(
     z = uvw[:, 2]
     labels = np.full(len(vertices), REGION_TORSO, dtype=np.int64)
 
-    labels[x <= tail_x] = REGION_TAIL
+    tail_mask = (x <= tail_x) | ((x <= tail_raised_x) & (y >= tail_raised_y))
+    labels[tail_mask] = REGION_TAIL
     labels[(x >= head_x) & (y >= leg_y)] = REGION_HEAD
 
     leg_mask = (y < leg_y) & (x > tail_x)
