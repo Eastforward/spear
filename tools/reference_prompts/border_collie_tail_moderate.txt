@@ -1,0 +1,13 @@
+# Prompt template for Hunyuan-friendly animal reference images.
+# The key rules learned 2026-07-05:
+#   1) tail must be spatially separated from hind legs (weight-transfer confusion)
+#   2) legs must be visibly apart (same reason for front/hind ambiguity)
+#   3) rembg the output before Hunyuan (otherwise Hunyuan reconstructs the plinth too)
+#   4) no color correction needed IF rembg is applied (Hunyuan's blue bias only
+#      manifests when the input has background environment lighting)
+#
+# Border collie:
+"a border collie dog in perfect side profile view, its tail held clearly above
+the horizontal at about 45 degrees upward (not vertical), all four legs spread
+wide apart with visible gaps between them, standing on a level surface, plain
+solid white background, product photography, isolated on white"
