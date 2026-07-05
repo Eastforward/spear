@@ -58,19 +58,24 @@ def main():
     pipeline = Hunyuan3DPaintPipeline(conf)
     print(f"[hy3d_bake] pipeline loaded in {time.time()-t0:.1f}s", flush=True)
 
+    # IMPORTANT: pass output as .obj, not .glb. Hunyuan writes the OBJ with
+    # proper UV coordinates via save_obj_mesh(); then it ALSO writes a .glb
+    # (via trimesh) which usually comes out broken with "incorrect header"
+    # and no UVs. Downstream tools need the OBJ.
+    output_obj = os.path.splitext(output_glb)[0] + ".obj"
     t1 = time.time()
     pipeline(
         mesh_path=work_glb,
         image_path=args.reference_image,
-        output_mesh_path=output_glb,
-        use_remesh=True,     # near-no-op on our 1233-vert mesh; probe verified
-        save_glb=True,
+        output_mesh_path=output_obj,     # <-- .obj (writes UVs)
+        use_remesh=True,
+        save_glb=True,                    # still write the (usually broken) .glb sidecar
     )
     dt = time.time() - t1
     print(f"[hy3d_bake] paint pipeline finished in {dt:.1f}s", flush=True)
 
     # Rename baked sidecars to canonical names so downstream tools have stable paths
-    stem = os.path.splitext(os.path.basename(output_glb))[0]
+    stem = os.path.splitext(os.path.basename(output_obj))[0]
     for src_suffix, dst_name in [(".jpg", "hy3d_diffuse.jpg"),
                                  ("_metallic.jpg", "hy3d_metallic.jpg"),
                                  ("_roughness.jpg", "hy3d_roughness.jpg")]:
@@ -78,15 +83,29 @@ def main():
         dst = os.path.join(args.workdir, dst_name)
         if os.path.exists(src):
             shutil.move(src, dst)
+    # Canonical name for the textured obj (has UVs — downstream weight-transfer needs it)
+    textured_obj = os.path.join(args.workdir, "hy3d_textured.obj")
+    if os.path.exists(output_obj):
+        shutil.move(output_obj, textured_obj)
 
-    # Sanity check the three products
-    required = ["white_mesh_remesh.obj", "hy3d_diffuse.jpg"]
+    # Sanity check
+    required = ["white_mesh_remesh.obj", "hy3d_textured.obj", "hy3d_diffuse.jpg"]
     missing = [f for f in required if not os.path.exists(os.path.join(args.workdir, f))]
     if missing:
         print(f"HY3D_BAKE_FAIL missing {missing} in {args.workdir}")
         sys.exit(1)
 
-    print(f"HY3D_BAKE_OK workdir={args.workdir} elapsed={dt:.1f}s")
+    # Assert hy3d_textured.obj actually has UVs (this is the whole point of the
+    # tool ordering fix — we discovered 2026-07-05 that if downstream tools use
+    # white_mesh_remesh.obj, they get zero UVs and produce untextured meshes)
+    with open(textured_obj) as f:
+        content = f.read()
+    if "\nvt " not in content:
+        print(f"HY3D_BAKE_FAIL {textured_obj} contains no vt (UV) lines")
+        sys.exit(1)
+
+    print(f"HY3D_BAKE_OK workdir={args.workdir} elapsed={dt:.1f}s "
+          f"textured_obj={textured_obj}")
 
 
 if __name__ == "__main__":
