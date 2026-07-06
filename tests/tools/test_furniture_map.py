@@ -97,3 +97,71 @@ def test_empty_bboxes_never_hit():
     xy = np.array([[3.8, 3.0]])
     assert any_bbox_hits_point([], 3.8, 3.0) is False
     assert any_bbox_hits_series([], xy) is False
+
+
+# ---- integration: scene_spec + furniture ----
+from gpurir_scenes import scene_spec
+from gpurir_scenes.scene_spec import (
+    SceneSpec, AnimalPlacement, ROOM_SIZE_M, MIC_POS_M, T60_S, SOURCE_HEIGHT_M
+)
+
+
+def _static_husky_spec_at(x: float, y: float) -> SceneSpec:
+    """Build a SceneSpec with dog_husky standing still at (x, y) for all 75 frames."""
+    traj = np.tile(np.array([x, y, SOURCE_HEIGHT_M]), (75, 1))
+    yaw = np.zeros(75)
+    return SceneSpec(
+        seed=0,
+        room_size_m=ROOM_SIZE_M,
+        t60_s=T60_S,
+        mic_pos_m=MIC_POS_M,
+        animals=[AnimalPlacement(
+            tag="dog_husky", is_animated=True,
+            trajectory_m=traj, yaw_deg=yaw,
+        )],
+    )
+
+
+def test_check_no_clipping_with_furniture_rejects_inside_bbox():
+    with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as tf:
+        _write_fake_json(tf.name)
+        bboxes = load_apartment_furniture(json_path=tf.name)
+    os.unlink(tf.name)
+    # (3.8, 3.0) is inside the fake sofa bbox
+    spec = _static_husky_spec_at(3.8, 3.0)
+    with pytest.raises(AssertionError, match="clips furniture"):
+        scene_spec.check_no_clipping(spec, furniture_bboxes=bboxes)
+
+
+def test_check_no_clipping_no_furniture_backward_compat():
+    """Not passing furniture_bboxes -> old behaviour unchanged (no furniture check)."""
+    spec = _static_husky_spec_at(2.6, 2.2)  # at mic center, safely away from walls
+    scene_spec.check_no_clipping(spec)  # no exception
+
+
+def test_check_no_clipping_with_furniture_passes_when_safe():
+    with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as tf:
+        _write_fake_json(tf.name)
+        bboxes = load_apartment_furniture(json_path=tf.name)
+    os.unlink(tf.name)
+    spec = _static_husky_spec_at(1.5, 1.5)  # far from fake sofa
+    scene_spec.check_no_clipping(spec, furniture_bboxes=bboxes)  # no exception
+
+
+def test_compose_scene_avoids_furniture():
+    """With a fake sofa blocking (3.8, 3.0), compose_scene shouldn't put
+    animal centers there. We check 10 seeds."""
+    with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as tf:
+        _write_fake_json(tf.name)
+        bboxes = load_apartment_furniture(json_path=tf.name)
+    os.unlink(tf.name)
+    for seed in range(10):
+        try:
+            spec = scene_spec.compose_scene(seed, furniture_bboxes=bboxes)
+        except RuntimeError:
+            continue
+        for a in spec.animals:
+            xy = scene_spec._placement_xy_series(a)
+            assert not any_bbox_hits_series(bboxes, xy), (
+                f"seed {seed}: {a.tag} hits fake sofa"
+            )
