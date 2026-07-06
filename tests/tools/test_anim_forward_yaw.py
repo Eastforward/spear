@@ -75,3 +75,65 @@ def test_scene_two_dogs_uses_scene_spec_constant():
         "(directly or via a local alias with the same value) so both paths "
         "always agree."
     )
+
+
+# ---- Tier B upgrade: per-tag walking_forward_yaw_offset_deg ----------------
+def test_all_animated_tags_have_walking_yaw_offset_field():
+    """Every entry in ANIMATED_RIG_MAP must declare its own
+    walking_forward_yaw_offset_deg. Prevents silently adding a new rig
+    (e.g. Mixamo horse) and getting backward-walking without any warning."""
+    from species_rig_map import ANIMATED_RIG_MAP
+    for tag, meta in ANIMATED_RIG_MAP.items():
+        assert "walking_forward_yaw_offset_deg" in meta, (
+            f"animated tag {tag} missing walking_forward_yaw_offset_deg. "
+            f"Set it based on your rig's Walking anim local-forward direction. "
+            f"For Quaternius Dog/Cat use 180.0."
+        )
+        assert isinstance(meta["walking_forward_yaw_offset_deg"], (int, float))
+
+
+def test_all_current_tags_use_quaternius_offset_180():
+    """The 5 current animated tags (Cat, Dog, chipmunk) are all Quaternius,
+    so all must declare 180.0. If someone changes one of these to a non-180
+    value without also swapping to a non-Quaternius rig, that's a bug."""
+    from species_rig_map import ANIMATED_RIG_MAP
+    for tag, meta in ANIMATED_RIG_MAP.items():
+        assert meta["walking_forward_yaw_offset_deg"] == 180.0, (
+            f"tag {tag} declares walking_forward_yaw_offset_deg="
+            f"{meta['walking_forward_yaw_offset_deg']} but all current rigs "
+            f"are Quaternius (needs 180.0). Did you swap in a non-Quaternius "
+            f"rig?"
+        )
+
+
+def test_generate_trajectory_uses_per_tag_offset():
+    """_generate_trajectory should look up the offset from ANIMATED_RIG_MAP
+    for the tag it's given, not the global constant. Verify by monkey-patching
+    ANIMATED_RIG_MAP with a fake tag that uses offset=0 and check the yaw
+    now equals raw motion direction (not motion+180)."""
+    import numpy as np
+    from species_rig_map import ANIMATED_RIG_MAP
+    saved_meta = ANIMATED_RIG_MAP.get("dog_husky")
+    fake_meta = dict(saved_meta)
+    fake_meta["walking_forward_yaw_offset_deg"] = 0.0
+    ANIMATED_RIG_MAP["dog_husky"] = fake_meta
+    try:
+        rng = np.random.default_rng(42)
+        traj, yaw = scene_spec._generate_trajectory(
+            rng, scene_spec.ROOM_SIZE_M, "dog_husky"
+        )
+        dx = np.gradient(traj[:, 0])
+        dy = np.gradient(traj[:, 1])
+        motion = np.degrees(np.arctan2(dy, dx))
+        diff = (yaw - motion + 360) % 360
+        # With offset=0, yaw should equal motion (mod 360), so diff ≈ 0
+        for i, d in enumerate(diff):
+            speed = (dx[i] ** 2 + dy[i] ** 2) ** 0.5
+            if speed < 1e-3:
+                continue
+            assert abs(d) < 1e-3 or abs(d - 360) < 1e-3, (
+                f"frame {i}: with offset=0, yaw should track motion; "
+                f"got yaw={yaw[i]:.2f} motion={motion[i]:.2f}"
+            )
+    finally:
+        ANIMATED_RIG_MAP["dog_husky"] = saved_meta

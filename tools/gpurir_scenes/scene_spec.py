@@ -22,6 +22,16 @@ from species_rig_map import ANIMATED_RIG_MAP, STATIC_MESH_MAP  # noqa: E402
 from gpurir_scenes.furniture_map import any_bbox_hits_series  # noqa: E402
 
 
+def _forward_yaw_offset_for_tag(tag):
+    """Look up per-tag rig-specific walking yaw offset.
+
+    Kept as a helper (not inlined) so unit tests can monkey-patch
+    ANIMATED_RIG_MAP entries to prove _generate_trajectory really reads
+    the per-tag value, not a hard-coded constant.
+    """
+    return ANIMATED_RIG_MAP[tag]["walking_forward_yaw_offset_deg"]
+
+
 ANIMATED_TAGS = list(ANIMATED_RIG_MAP.keys())
 STATIC_TAGS = list(STATIC_MESH_MAP.keys())
 ALL_TAGS = ANIMATED_TAGS + STATIC_TAGS
@@ -39,13 +49,15 @@ ANIMAL_CLEARANCE_M = 0.15
 SOURCE_HEIGHT_M = 0.45  # dog-mouth-ish; audio source height
 STATIC_ACTOR_Z_M = 0.0  # actor on floor (visual only; audio still uses source height)
 
-# All Quaternius rigs (Dog, Cat) have Walking anim whose local-forward is
-# -X_local. To make an animated actor walk head-first along its motion
-# direction, we must set:
-#     body_yaw_world = motion_direction_world + ANIM_FORWARD_YAW_OFFSET_DEG
-# scene_spec._generate_trajectory / _generate_local_trajectory and hand-written
-# scenes (scene_two_dogs) MUST use this same constant. Without it, animated
-# animals walk BACKWARD (their -X_local points opposite to motion).
+# Legacy alias for the Quaternius rig family (Dog, Cat). Both random and
+# hand-written scenes now read the offset per-tag from
+# species_rig_map.ANIMATED_RIG_MAP[tag]["walking_forward_yaw_offset_deg"],
+# so this constant is only kept for:
+#   (a) backward compat with scene_two_dogs (which aliases this name), and
+#   (b) documentation.
+# Do NOT reference this constant when computing yaw for a rig-based animal --
+# use _forward_yaw_offset_for_tag(tag) instead, or the corresponding
+# ANIMATED_RIG_MAP field.
 ANIM_FORWARD_YAW_OFFSET_DEG = 180.0
 
 TRAJ_ANCHORS = 10
@@ -158,13 +170,15 @@ def _generate_trajectory(rng, room_size_m, tag):
     ys = np.clip(cs_y(tf), wall_slack_m, ry - wall_slack_m)
     zs = np.full(N_FRAMES, SOURCE_HEIGHT_M)
     traj = np.stack([xs, ys, zs], axis=1)
-    # Yaw: tangent direction of the smooth spline + ANIM_FORWARD_YAW_OFFSET_DEG
-    # to compensate for Quaternius rig's -X_local walking direction. Without
-    # the offset, the animal moonwalks (body faces motion but feet cycle backward).
+    # Yaw: tangent direction of the smooth spline + per-tag rig offset. This
+    # per-tag lookup replaces the global constant so a future non-Quaternius
+    # rig (Mixamo, custom) can declare its own offset without silently
+    # inheriting Quaternius's 180.
     dx = np.gradient(xs)
     dy = np.gradient(ys)
     motion_deg = np.degrees(np.arctan2(dy, dx))
-    yaw = (motion_deg + ANIM_FORWARD_YAW_OFFSET_DEG) % 360.0
+    offset = _forward_yaw_offset_for_tag(tag)
+    yaw = (motion_deg + offset) % 360.0
     return traj, yaw
 
 
@@ -193,7 +207,8 @@ def _generate_local_trajectory(rng, room_size_m, tag, existing_animals):
         dx = np.gradient(xs)
         dy = np.gradient(ys)
         motion_deg = np.degrees(np.arctan2(dy, dx))
-        yaw = (motion_deg + ANIM_FORWARD_YAW_OFFSET_DEG) % 360.0
+        offset = _forward_yaw_offset_for_tag(tag)
+        yaw = (motion_deg + offset) % 360.0
         return traj, yaw
     raise RuntimeError(
         f"could not place local fallback trajectory for {tag} after {LOCAL_TRAJ_TRIES} tries"
