@@ -7,10 +7,32 @@ Wolf rig -- large ungulates:                              horse, cattle, yak, do
 
 import os
 
-QUATERNIUS_DIR = "/data/jzy/code/Spatial/v77_4ch_S2L/assets/mesh_library/quaternius_animalpack"
-QUATERNIUS_FARM = "/data/jzy/code/Spatial/v77_4ch_S2L/assets/mesh_library/quaternius_farm"
-HY3D_BATCH_DIR = "/data/jzy/code/SPEAR/tmp/hy3d_batch"
-HY3D_AUDIOSET_DIR = "/data/jzy/code/Hunyuan3D-2.1/outputs/audioset_assets"
+# --- path resolution -------------------------------------------------------
+# SPEAR_ROOT = this file's grandparent (tools/species_rig_map.py → SPEAR/).
+SPEAR_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# AVENGINE_ROOT: parent of external/SPEAR/ if this checkout lives inside an
+# AVEngine monorepo (default post-2026-07-07). Env var overrides; else infer.
+AVENGINE_ROOT = os.environ.get(
+    "AVENGINE_ROOT",
+    os.path.dirname(os.path.dirname(SPEAR_ROOT)),   # ../.. from SPEAR
+)
+
+# Quaternius rigs live in AVEngine assets/ (copied from Spatial by AVEngine setup).
+QUATERNIUS_DIR = os.path.join(AVENGINE_ROOT, "assets/mesh_library/quaternius_animalpack")
+QUATERNIUS_FARM = os.path.join(AVENGINE_ROOT, "assets/mesh_library/quaternius_farm")
+
+# Hunyuan-generated intermediate mesh outputs. Historically lived under
+# SPEAR/tmp/hy3d_batch and Hunyuan3D-2.1/outputs/audioset_assets. At runtime
+# these are only referenced for filesystem paths already baked into UE .uasset
+# at cook time — the demo pipeline doesn't actually load .obj at runtime.
+HY3D_BATCH_DIR = os.environ.get(
+    "HY3D_BATCH_DIR", os.path.join(SPEAR_ROOT, "tmp/hy3d_batch")
+)
+HY3D_AUDIOSET_DIR = os.environ.get(
+    "HY3D_AUDIOSET_DIR",
+    os.path.join(AVENGINE_ROOT, "external/Hunyuan3D-2.1/outputs/audioset_assets"),
+)
 
 
 def _batch_mesh(tag):

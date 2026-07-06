@@ -22,7 +22,7 @@ import os
 import subprocess
 import sys
 
-REPO = "/data/jzy/code/SPEAR"
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "examples"))
 sys.path.insert(0, os.path.join(REPO, "tools"))
 

@@ -17,7 +17,9 @@ import numpy as np
 # but only at load-time (not stored in the JSON), so no re-dump required.
 DEFAULT_APARTMENT_MIC_ORIGIN_CM = (-120.0, 80.0, 120.0)
 DEFAULT_APARTMENT_MIC_POS_SCENE_M = (2.6, 2.2)
-DEFAULT_JSON_PATH = "/data/jzy/code/SPEAR/data/apartment_furniture_map.json"
+# Path relative to SPEAR repo root (this file lives at SPEAR/tools/gpurir_scenes/).
+_SPEAR_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DEFAULT_JSON_PATH = os.path.join(_SPEAR_ROOT, "data/apartment_furniture_map.json")
 
 
 @dataclass(frozen=True)

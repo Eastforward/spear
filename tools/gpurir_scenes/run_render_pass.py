@@ -23,7 +23,9 @@ import cv2
 import numpy as np
 import spear
 
-REPO = "/data/jzy/code/SPEAR"
+# SPEAR repo root inferred from this file's location: tools/gpurir_scenes/*.py
+# → parent-parent-parent = SPEAR/. Works regardless of where SPEAR is checked out.
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "examples"))
 sys.path.insert(0, os.path.join(REPO, "tools"))
 

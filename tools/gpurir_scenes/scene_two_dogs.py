@@ -211,8 +211,12 @@ def _spec_to_json(spec):
 
 
 def main():
+    _default_out = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "tmp/gpurir_scenes_v1",
+    )
     p = argparse.ArgumentParser()
-    p.add_argument("--out-root", default="/data/jzy/code/SPEAR/tmp/gpurir_scenes_v1")
+    p.add_argument("--out-root", default=_default_out)
     p.add_argument("--skip-audio", action="store_true",
                    help="Reuse existing audio.wav (skip GPURIR pass).")
     args = p.parse_args()
