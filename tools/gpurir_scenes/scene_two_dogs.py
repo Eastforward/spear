@@ -76,7 +76,9 @@ _STATIC_MOTION_YAW = 90.0    # body_yaw=270; Idle asset faces camera at this yaw
 
 # Anim body-yaw offset: Quaternius Dog "Walking" local-forward = -X_local.
 # body_yaw_world = motion_yaw + 180 so the dog walks head-first.
-_ANIM_FORWARD_YAW_OFFSET = 180.0
+# Alias to scene_spec.ANIM_FORWARD_YAW_OFFSET_DEG so the two code paths
+# (random compose_scene and this hand-written scene) always agree.
+from gpurir_scenes.scene_spec import ANIM_FORWARD_YAW_OFFSET_DEG as _ANIM_FORWARD_YAW_OFFSET  # noqa: E402
 
 def _shortest_angular_step(a, b):
     """Linear interp along the shorter arc from angle a to angle b (deg)."""

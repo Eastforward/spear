@@ -39,6 +39,15 @@ ANIMAL_CLEARANCE_M = 0.15
 SOURCE_HEIGHT_M = 0.45  # dog-mouth-ish; audio source height
 STATIC_ACTOR_Z_M = 0.0  # actor on floor (visual only; audio still uses source height)
 
+# All Quaternius rigs (Dog, Cat) have Walking anim whose local-forward is
+# -X_local. To make an animated actor walk head-first along its motion
+# direction, we must set:
+#     body_yaw_world = motion_direction_world + ANIM_FORWARD_YAW_OFFSET_DEG
+# scene_spec._generate_trajectory / _generate_local_trajectory and hand-written
+# scenes (scene_two_dogs) MUST use this same constant. Without it, animated
+# animals walk BACKWARD (their -X_local points opposite to motion).
+ANIM_FORWARD_YAW_OFFSET_DEG = 180.0
+
 TRAJ_ANCHORS = 10
 PLACEMENT_TRIES = 200
 LOCAL_TRAJ_TRIES = 500
@@ -149,10 +158,13 @@ def _generate_trajectory(rng, room_size_m, tag):
     ys = np.clip(cs_y(tf), wall_slack_m, ry - wall_slack_m)
     zs = np.full(N_FRAMES, SOURCE_HEIGHT_M)
     traj = np.stack([xs, ys, zs], axis=1)
-    # Yaw: tangent direction of the smooth spline (forward-facing walk).
+    # Yaw: tangent direction of the smooth spline + ANIM_FORWARD_YAW_OFFSET_DEG
+    # to compensate for Quaternius rig's -X_local walking direction. Without
+    # the offset, the animal moonwalks (body faces motion but feet cycle backward).
     dx = np.gradient(xs)
     dy = np.gradient(ys)
-    yaw = np.degrees(np.arctan2(dy, dx))
+    motion_deg = np.degrees(np.arctan2(dy, dx))
+    yaw = (motion_deg + ANIM_FORWARD_YAW_OFFSET_DEG) % 360.0
     return traj, yaw
 
 
@@ -180,7 +192,8 @@ def _generate_local_trajectory(rng, room_size_m, tag, existing_animals):
             continue
         dx = np.gradient(xs)
         dy = np.gradient(ys)
-        yaw = np.degrees(np.arctan2(dy, dx))
+        motion_deg = np.degrees(np.arctan2(dy, dx))
+        yaw = (motion_deg + ANIM_FORWARD_YAW_OFFSET_DEG) % 360.0
         return traj, yaw
     raise RuntimeError(
         f"could not place local fallback trajectory for {tag} after {LOCAL_TRAJ_TRIES} tries"
