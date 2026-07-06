@@ -349,6 +349,9 @@ def _parse_args():
 
 if __name__ == "__main__":
     args = _parse_args()
-    spec = compose_scene(seed=args.seed)
+    # For apartment scenes, pass furniture to compose_scene so sampling avoids
+    # furniture from the start (not just at the final check).
+    furniture = load_apartment_furniture() if args.room == "apartment" else None
+    spec = compose_scene(seed=args.seed, furniture_bboxes=furniture)
     run_render_pass(spec, args.room, args.out_dir)
     print(f"RENDER_DONE {args.out_dir}")
