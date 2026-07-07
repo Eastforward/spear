@@ -1,0 +1,3 @@
+{
+  "_doc": "Per-rig-tag calibration cache written by rig_direction_check.write_rig_calibration_json. Each entry: walking_forward_yaw_offset_deg (float, deg to add to motion_yaw for body_yaw), algorithm_version, calibrated_at ISO8601. Automatically populated when calibrate_rig_forward_from_velocity is called during a diagnostic run."
+}
