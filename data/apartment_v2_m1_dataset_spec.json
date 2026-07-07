@@ -1,0 +1,37 @@
+{
+  "spec_version": "apartment_v2_m1",
+  "description": "Plan 2 M1 dataset spec: apartment_v1 shell + subset furniture, 40 randomized clips, 5s each at 15 fps. Mic uniformly sampled + h-rand + uniform yaw. Sources 0/1/2 at 20/40/40. Rig tags dog_golden (dog_bark, real) + dog_husky (music_piano, synthetic).",
+
+  "n_clips_default": 40,
+  "seed_default": 20260708,
+
+  "room_backend": "apartment_shell",
+  "apartment_shell_map": "data/apartment_shell_map.json",
+  "apartment_furniture_map": "data/apartment_furniture_map.json",
+  "furniture_mode": "subset",
+  "furniture_include_categories": ["core", "decoration"],
+
+  "render_config": {
+    "width": 640, "height": 480, "fps": 15,
+    "n_frames": 75, "duration_s": 5.0
+  },
+  "audio_config": {
+    "sample_rate_hz": 16000, "duration_s": 5.0,
+    "n_samples": 80000, "output_channels": 2
+  },
+  "camera_config_defaults": {
+    "fov_deg": 90.0, "fov_v_deg": 60.0
+  },
+
+  "mic_pose_sampling": {
+    "height_range_m": [0.5, 1.8],
+    "yaw_range_deg": [0.0, 360.0]
+  },
+  "source_sampling": {
+    "distance_range_m": [0.5, 6.0],
+    "z_m": 0.45,
+    "n_sources_distribution": [0.20, 0.40, 0.40]
+  },
+
+  "audio_library_path": "data/audio_library_v1.json"
+}
