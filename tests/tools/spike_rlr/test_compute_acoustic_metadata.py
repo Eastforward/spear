@@ -92,3 +92,30 @@ def test_azi_ele_dist_local_offset_pure_x():
         src_xyz=[0.0, 0.0, 1.5], mic_xyz=[0.0, 0.0, 0.0], mic_yaw_deg=0.0)
     assert abs(ele - 90.0) < 0.1
     assert abs(dist - 1.5) < 0.01
+
+
+def test_visibility_fields_present():
+    if not META.exists():
+        pytest.skip("metadata not yet computed")
+    d = json.loads(META.read_text())
+    for s in d["sources"]:
+        assert "source_in_fov_per_frame" in s
+        assert "source_occluded_by_furniture_per_frame" in s
+        assert "source_visible_from_camera_per_frame" in s
+        assert len(s["source_in_fov_per_frame"]) == 75
+        # All are bool
+        for v in s["source_in_fov_per_frame"]:
+            assert isinstance(v, bool)
+
+
+def test_visible_implies_in_fov_and_not_occluded():
+    if not META.exists():
+        pytest.skip("metadata not yet computed")
+    d = json.loads(META.read_text())
+    for s in d["sources"]:
+        for k in range(len(s["source_visible_from_camera_per_frame"])):
+            vis = s["source_visible_from_camera_per_frame"][k]
+            in_fov = s["source_in_fov_per_frame"][k]
+            occ = s["source_occluded_by_furniture_per_frame"][k]
+            assert vis == (in_fov and not occ), \
+                f"frame {k}: visible={vis} but in_fov={in_fov}, occluded={occ}"

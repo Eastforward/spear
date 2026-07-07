@@ -28,8 +28,12 @@ import soundfile as sf
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "spike_rlr"))
-from scene_two_dogs_apartment import compose_two_dog_scene_apartment  # noqa: E402
+from scene_two_dogs_apartment import (  # noqa: E402
+    compose_two_dog_scene_apartment,
+    _kept_furniture_bboxes, _shell_wall_bboxes,
+)
 from profiling import StageTimer  # noqa: E402
+from visibility import batch_frame_visibility  # noqa: E402
 
 
 # Mapping from audio_lookup key in the spec -> semantic source category.
@@ -112,6 +116,23 @@ def compute(spec_path: Path, out_dir: Path, csv_path: Path,
         mic_yaw = float(spec["mic"]["yaw_deg"])
         scene = compose_two_dog_scene_apartment(spec_path)
 
+        # Build 3D obstacle bboxes for visibility check (Plan 1.5.C).
+        # Reuse the same kept-furniture + shell-wall lists that the scene
+        # composer used, and lift them into Z ranges: furniture 0-1.5m,
+        # walls 0-2.8m. Windows/doors are already in shell walls.
+        cats = json.loads(
+            (REPO_ROOT / "tools/spike_rlr/apartment_furniture_categories.json").read_text()
+        )
+        furn_xy = _kept_furniture_bboxes(spec, cats)
+        shell_xy = _shell_wall_bboxes(spec)
+        obstacles_3d = []
+        for x0, y0, x1, y1 in furn_xy:
+            obstacles_3d.append(((x0, y0, 0.0), (x1, y1, 1.5)))
+        for x0, y0, x1, y1 in shell_xy:
+            obstacles_3d.append(((x0, y0, 0.0), (x1, y1, 2.8)))
+        fov_h = float(spec["camera_configs"][0]["fov_deg"])
+        fov_v = 60.0  # conventional vertical FOV; can be added to spec later.
+
         # For each source, locate its per-source binaural WAV (LOW quality
         # is the default Plan-1 render).
         bin_dir = out_dir / "binaural_native"
@@ -128,6 +149,14 @@ def compute(spec_path: Path, out_dir: Path, csv_path: Path,
                              for xyz in pl.trajectory_m]
             drrs = drr_proxy_per_frame(pl.trajectory_m, mic_pos)
 
+            # Per-frame visibility (Plan 1.5.C)
+            traj_xyz = np.asarray(pl.trajectory_m)
+            vis = batch_frame_visibility(
+                traj_xyz, mic_pos, mic_yaw,
+                fov_h_deg=fov_h, fov_v_deg=fov_v,
+                obstacles_xyz=obstacles_3d,
+            )
+
             sources_out.append({
                 "tag": pl.tag,
                 "category": _LOOKUP_TO_CATEGORY.get(audio_lookup, "unknown"),
@@ -138,6 +167,11 @@ def compute(spec_path: Path, out_dir: Path, csv_path: Path,
                 ],
                 "source_azi_ele_dist_mic_local_per_frame": [list(t) for t in azi_ele_dist],
                 "source_amp_gain_per_frame": gains,
+                "source_in_fov_per_frame": [bool(x) for x in vis["in_fov"]],
+                "source_occluded_by_furniture_per_frame":
+                    [bool(x) for x in vis["occluded_by_furniture"]],
+                "source_visible_from_camera_per_frame":
+                    [bool(x) for x in vis["visible"]],
             })
 
         payload = {
