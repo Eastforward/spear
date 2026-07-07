@@ -1,0 +1,21 @@
+{
+  "_doc": "Plan 2 initial audio catalog. dog_bark reuses the Plan 1 file used by dog_golden. music_piano is generated in-code by run_audio_pass_rlr.py's _synth_piano_scale — path is a sentinel string. Plan 3 will replace this with proper FSD50K + Stable Audio Open files.",
+  "samples": [
+    {
+      "category": "dog_bark",
+      "path": "/data/datasets/omniaudio/train-data-az-360-large/Barking Aldi Dog_358.wav",
+      "is_synthetic": false,
+      "duration_s": 5.0,
+      "sample_rate": 16000,
+      "source": "omniaudio_traindata"
+    },
+    {
+      "category": "music_piano",
+      "path": "__synth_piano_scale__",
+      "is_synthetic": true,
+      "duration_s": 5.0,
+      "sample_rate": 16000,
+      "source": "in-code-synth"
+    }
+  ]
+}
