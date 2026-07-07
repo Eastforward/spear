@@ -1,0 +1,21 @@
+{
+  "n_clips": 40,
+  "flag_coverage": {
+    "occluded_by_furniture": 2,
+    "occluded_by_wall": 1,
+    "never_occluded": 27,
+    "leaves_camera_fov": 26,
+    "stays_in_camera_fov": 4,
+    "crosses_azimuth_zero": 8,
+    "passes_close_to_mic": 4,
+    "far_from_mic_whole_clip": 5,
+    "stationary": 0,
+    "steady_walk": 11,
+    "stop_and_go": 7,
+    "sources_pass_each_other": 1
+  },
+  "stage_seconds": {
+    "ue_render": 1124.5387,
+    "metadata_extract": 0.3493
+  }
+}
