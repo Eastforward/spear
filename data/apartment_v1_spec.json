@@ -14,12 +14,13 @@
   "furniture_exclude_actors": [],
   "mic": {
     "pos_m": [0.5, 0.15, 1.2],
-    "yaw_deg": 90.0,
-    "forward": [0.0, 1.0, 0.0],
-    "type_rlr": "binaural_native"
+    "yaw_deg": 0.0,
+    "forward": [1.0, 0.0, 0.0],
+    "type_rlr": "binaural_native",
+    "notes": "yaw=0 world -> yaw=0 UE (facing +X UE); mic-forward = +X world (SSOT). Sofa is at world +X from mic, so camera looks at sofa."
   },
   "camera_configs": [
-    {"name": "view0", "pos_m": [0.5, 0.15, 1.2], "yaw_deg": 90.0, "fov_deg": 90.0}
+    {"name": "view0", "pos_m": [0.5, 0.15, 1.2], "yaw_deg": 0.0, "fov_deg": 90.0}
   ],
   "render_config": {
     "width": 640,
