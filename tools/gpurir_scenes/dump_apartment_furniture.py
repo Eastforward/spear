@@ -25,17 +25,26 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "examples"))
 sys.path.insert(0, os.path.join(REPO, "tools"))
+sys.path.insert(0, os.path.join(REPO, "tools", "gpurir_scenes"))
 
 from render_in_apartment import APARTMENT_MAP, configure_instance  # noqa: E402
+from apartment_actor_classifier import classify_actor  # noqa: E402
 
 
-# Filter thresholds (UE world Z is from apartment origin, NOT room floor).
-# Apartment floor ~27 cm; ceiling ~280 cm. Thresholds are STARTING values.
-# After --dry-run, review the z-histogram and adjust if needed.
-Z_CEILING_CM = 300.0     # bbox_min_z > this -> drop (ceiling)
-Z_FLOOR_CM = 5.0         # bbox_max_z < this -> drop (floor patch/decal)
-NAME_KEYWORDS = ("wall", "floor", "ceiling", "ground")
-BBOX_AREA_MAX_CM2 = 200000.0  # x_extent * y_extent > 20 m^2 -> drop (structural mesh)
+# Map new shell_* / structural labels back to legacy filter-reason strings so
+# the on-disk JSON schema stays byte-compatible with prior consumers.
+_LABEL_TO_LEGACY_REASON = {
+    "shell_ceiling": "z_ceiling",
+    "shell_floor": "z_floor",
+    "shell_wall": "name_wall",
+    "shell_door": "name_door",
+    "shell_window": "name_window",
+    "shell_curtain": "name_curtain",
+    "shell_picture": "name_picture",
+    "shell_mirror": "name_mirror",
+    "structural": "bbox_too_large",
+    "furniture": "kept",
+}
 
 
 def _git_head() -> str:
@@ -49,18 +58,10 @@ def _git_head() -> str:
 
 def _classify(actor_name: str, bbox_min_z: float, bbox_max_z: float,
               x_extent_cm: float, y_extent_cm: float) -> str:
-    """Return filter reason string ("z_ceiling" / "name_wall" / ... / "kept")."""
-    if bbox_min_z > Z_CEILING_CM:
-        return "z_ceiling"
-    if bbox_max_z < Z_FLOOR_CM:
-        return "z_floor"
-    nl = actor_name.lower()
-    for kw in NAME_KEYWORDS:
-        if kw in nl:
-            return f"name_{kw}"
-    if x_extent_cm * y_extent_cm > BBOX_AREA_MAX_CM2:
-        return "bbox_too_large"
-    return "kept"
+    """Return legacy filter reason string; delegates to the shared classifier."""
+    label = classify_actor(actor_name, bbox_min_z, bbox_max_z,
+                            x_extent_cm, y_extent_cm)
+    return _LABEL_TO_LEGACY_REASON[label]
 
 
 def dump_apartment(out_path, dry_run=False):
@@ -77,6 +78,8 @@ def dump_apartment(out_path, dry_run=False):
             records = []
             reasons = {"z_ceiling": 0, "z_floor": 0, "name_wall": 0,
                        "name_floor": 0, "name_ceiling": 0, "name_ground": 0,
+                       "name_door": 0, "name_window": 0, "name_curtain": 0,
+                       "name_picture": 0, "name_mirror": 0,
                        "bbox_too_large": 0, "kept": 0}
             z_bins = [0] * 12  # 0-50, 50-100, ..., 550+ cm
 
