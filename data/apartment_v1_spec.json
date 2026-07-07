@@ -41,21 +41,21 @@
       "tag": "dog_golden",
       "audio_lookup": "dog_bark",
       "kind": "moving",
-      "start_pos_m": [-1.0, -2.0, 0.45],
-      "end_pos_m":   [-1.0,  2.0, 0.45],
+      "start_pos_m": [-2.5, -2.0, 0.45],
+      "end_pos_m":   [-2.5,  2.0, 0.45],
       "motion": "linear_uniform",
       "wanted_anim": "Walking",
-      "notes": "Golden walks along -Y to +Y at X=-1m (behind mic since mic at X=0.5). Provides a rear/side-behind audio cue; visually not in front-camera FOV."
+      "notes": "Golden walks along -Y to +Y at X=-2.5 (behind mic in the dining/kitchen room). Provides a rear audio cue; visually out of front-camera FOV. Planner inserts small detour if needed."
     },
     {
       "tag": "dog_husky",
       "audio_lookup": "wolf_howl",
       "kind": "moving",
-      "start_pos_m": [3.0, -2.5, 0.45],
-      "end_pos_m":   [3.0,  2.5, 0.45],
+      "start_pos_m": [0.5, -1.0, 0.45],
+      "end_pos_m":   [1.5,  0.3, 0.45],
       "motion": "linear_uniform",
       "wanted_anim": "Walking",
-      "notes": "Husky walks along -Y to +Y at X=3m (in front of mic + on sofa side). Left-to-right visual + audio sweep as strong DoA test. Passes near sofa (X:[1.87,5.45], Y:[-0.77,0.85]) so occlusion event may occur mid-clip."
+      "notes": "Husky walks from (0.5,-1.0) to (1.5,0.3) — a diagonal in the small free-space corridor directly in front of the camera. ~50% of frames land inside the +X 90-deg FOV cone; the rest give audio-only cues from the side. Planner (A*+Chaikin) curves around the sofa (X>=1.87) and any inflated obstacles automatically."
     }
   ]
 }

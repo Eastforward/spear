@@ -47,8 +47,32 @@ from gpurir_scenes.run_render_pass import (  # noqa: E402
     _world_from_scene, _yaw_world_to_ue, _spawn_animal, _step_animated,
 )
 from apartment_actor_classifier import classify_actor, SHELL_LABELS  # noqa: E402
-from scene_two_dogs_apartment import compose_two_dog_scene_apartment  # noqa: E402
+from scene_two_dogs_apartment import (  # noqa: E402
+    compose_two_dog_scene_apartment,
+    _kept_furniture_bboxes,
+    _shell_wall_bboxes,
+)
 from profiling import StageTimer  # noqa: E402
+
+
+def _check_no_clipping_apartment(spec_dict, scene, cats):
+    """Safety net: raise AssertionError if any animal trajectory point enters
+    any kept furniture or shell wall bbox. Called before UE render so we
+    catch bad specs cheaply rather than staring at a 30 s render of a dog
+    walking through a sofa."""
+    obstacles = _kept_furniture_bboxes(spec_dict, cats) + _shell_wall_bboxes(spec_dict)
+    for a in scene.animals:
+        for k, xyz in enumerate(a.trajectory_m):
+            x, y = float(xyz[0]), float(xyz[1])
+            for x0, y0, x1, y1 in obstacles:
+                if x0 <= x <= x1 and y0 <= y <= y1:
+                    raise AssertionError(
+                        f"{a.tag} clips obstacle at frame {k}: "
+                        f"pos=({x:.2f}, {y:.2f}) inside bbox "
+                        f"[{x0:.2f},{y0:.2f}]-[{x1:.2f},{y1:.2f}]. "
+                        f"Fix spec start/end so planner can route around, "
+                        f"or set spec 'furniture_exclude_actors' to remove it."
+                    )
 
 
 def _load_categories():
@@ -138,12 +162,15 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
     yaw_ue_deg = _yaw_world_to_ue(yaw_world_deg, "apartment")
 
     scene = compose_two_dog_scene_apartment(spec_path)
+    cats = _load_categories()
+    # Safety net: fail fast if any planned trajectory clips a furniture / wall
+    # bbox. Cheap (a few hundred us) and saves ~30 s of UE render on bad specs.
+    _check_no_clipping_apartment(spec, scene, cats)
 
     frames_dir = out_dir / "videos" / "apartment_v1_view0"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
     with StageTimer("ue_render", clip_id=clip_id, csv_path=csv_path):
-        cats = _load_categories()
         instance = configure_instance(rpc_port=39004)
         game = instance.get_game()
         try:

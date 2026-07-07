@@ -51,15 +51,16 @@ def test_yaw_is_finite_everywhere():
         assert np.all(np.isfinite(yaws)), f"{a.tag}: non-finite yaw"
 
 
-def test_yaw_diffs_are_small_for_linear_motion():
-    """Uniform linear motion should have essentially constant yaw."""
+def test_yaw_diffs_are_smooth():
+    """Planned + Chaikin-smoothed motion should have small step-to-step yaw
+    changes (no >20 deg jumps). Pure linear would be <1 deg; planner curves
+    add a bit."""
     sc = compose_two_dog_scene_apartment(SPEC)
     for a in sc.animals:
         yaws = np.asarray(a.yaw_deg)
-        # Wrap-safe diff via unwrap
         unwrapped = np.unwrap(np.deg2rad(yaws))
         diffs_deg = np.rad2deg(np.diff(unwrapped))
-        assert np.max(np.abs(diffs_deg)) < 5.0, \
+        assert np.max(np.abs(diffs_deg)) < 20.0, \
             f"{a.tag}: yaw jumps too big ({np.max(np.abs(diffs_deg)):.2f} deg)"
 
 
