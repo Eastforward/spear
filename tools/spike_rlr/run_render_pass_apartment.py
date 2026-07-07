@@ -55,6 +55,16 @@ from scene_two_dogs_apartment import (  # noqa: E402
 from profiling import StageTimer  # noqa: E402
 
 
+def _rig_assert_enabled() -> bool:
+    """Check if per-clip rig direction assertion should run.
+
+    Enabled by: SPEAR_RIG_ASSERT=1 env var OR --rig-assert CLI flag.
+    Opt-in to preserve fast Plan 1 iteration; will be on-by-default in Plan 2.
+    """
+    return os.environ.get("SPEAR_RIG_ASSERT", "0") == "1" or \
+           any("--rig-assert" in a for a in sys.argv)
+
+
 def _check_no_clipping_apartment(spec_dict, scene, cats):
     """Safety net: raise AssertionError if any animal trajectory point enters
     any kept furniture or shell wall bbox. Called before UE render so we
@@ -241,6 +251,43 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
                 if frame_i % 15 == 0:
                     print(f"[apt_render] frame {frame_i}/{n_frames}")
 
+            # ---- Plan 1.5.B: per-clip rig direction sanity check ----
+            # Opt-in via env var (SPEAR_RIG_ASSERT=1) or --rig-assert flag.
+            # Verifies actor's body was actually walking in the expected
+            # world-frame direction. Catches yaw-formula regressions.
+            if _rig_assert_enabled():
+                from rig_direction_check import assert_body_forward
+                for actor, placement in zip(actors, scene.animals):
+                    if not placement.is_animated:
+                        continue
+                    # Expected world yaw derived from mid-clip velocity in
+                    # the trajectory (motion_yaw before rig offset). We
+                    # convert traj[frame_i+1] - traj[frame_i] on the SSOT
+                    # frame for a mid-clip window.
+                    mid = n_frames // 2
+                    t = np.asarray(placement.trajectory_m)
+                    if mid + 5 >= len(t):
+                        continue
+                    dxy = t[mid + 5, :2] - t[mid, :2]
+                    if np.linalg.norm(dxy) < 1e-3:
+                        continue
+                    expected_motion_yaw_ssot = np.degrees(np.arctan2(dxy[1], dxy[0]))
+                    # World<->UE apartment convention: yaw_ue = -yaw_world.
+                    # Observed bone velocity is in UE cm frame.
+                    expected_yaw_ue = -expected_motion_yaw_ssot
+                    try:
+                        assert_body_forward(
+                            actor, instance,
+                            expected_yaw_world_deg=expected_yaw_ue,
+                            tolerance_deg=25.0,
+                            context=f"apartment_v1/{placement.tag}",
+                        )
+                        print(f"[apt_render] rig direction OK for {placement.tag}")
+                    except AssertionError as e:
+                        print(f"[apt_render] {e}")
+                        # Re-raise so CI can catch, but log first for humans
+                        raise
+
             # ffmpeg -> mp4
             mp4_path = out_dir / "videos" / "apartment_v1_view0.mp4"
             subprocess.run([
@@ -261,6 +308,9 @@ def main():
     ap.add_argument("--spec", default=str(DEFAULT_SPEC))
     ap.add_argument("--out-dir", default=str(DEFAULT_OUT))
     ap.add_argument("--clip-id", default="apartment_v1_000")
+    ap.add_argument("--rig-assert", action="store_true",
+                    help="Enable Plan 1.5.B rig direction assertion per clip "
+                         "(also enabled by SPEAR_RIG_ASSERT=1 env var).")
     args = ap.parse_args()
     out_dir = Path(args.out_dir)
     csv_path = out_dir / "profile_per_clip.csv"
