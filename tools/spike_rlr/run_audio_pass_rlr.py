@@ -594,7 +594,7 @@ def compute_binaural(spec_path, glb_path, materials_sidecar_path,
         indirect_ray_count=indirect_ray_count,
     )
 
-    load_scene = _load_scene_and_scene_two_dogs()
+    load_scene = _load_scene_and_scene_two_dogs(spec_path)
     scene = load_scene(spec_path)
     _set_agent_pose(sim, spec["mic"]["pos_m"])
 
@@ -667,17 +667,46 @@ def main():
     ap.add_argument("--out", default=str(REPO_ROOT / "tmp" / "spike_output" / "raw_audio" / "audio_B_rlr_FOA.wav"))
     ap.add_argument("--stereo-out", default=str(REPO_ROOT / "tmp" / "spike_output" / "raw_audio" / "audio_B_rlr_stereo.wav"))
     ap.add_argument("--quality", default="high", choices=["low", "high", "max"])
+    ap.add_argument("--channel-layout", default="ambisonics",
+                    choices=["ambisonics", "binaural"],
+                    help="ambisonics=4ch FOA output (default); binaural=2ch native binaural output")
     args = ap.parse_args()
 
     t_start = time.time()
-    compute_rir_and_render(
-        spec_path=args.spec,
-        glb_path=args.mesh,
-        materials_sidecar_path=args.materials,
-        out_wav_path=args.out,
-        downmix_stereo_path=args.stereo_out,
-        quality_mode=args.quality,
-    )
+
+    # Level-1/Level-2 profiling: wrap the RLR audio pass in a StageTimer.
+    # clip_id is derived from spec basename (e.g. apartment_v1_000). CSV
+    # goes to <out-dir>/profile_per_clip.csv where out-dir is inferred from
+    # the --out argument's parent-parent (…/tmp/spike_output_apartment/raw_audio_hq/foo.wav
+    # -> …/tmp/spike_output_apartment/).
+    spec_stem = Path(args.spec).stem  # e.g. "apartment_v1_spec"
+    clip_id = spec_stem.replace("_spec", "") + "_000"
+    csv_path = Path(args.out).resolve().parent.parent / "profile_per_clip.csv"
+    stage_name = "rlr_audio_binaural" if args.channel_layout == "binaural" else "rlr_audio_foa"
+
+    sys.path.insert(0, str(REPO_ROOT / "tools" / "spike_rlr"))
+    from profiling import StageTimer
+
+    with StageTimer(stage_name, clip_id=clip_id, csv_path=csv_path):
+        if args.channel_layout == "binaural":
+            # Reuse the same --out path (caller controls filename) but call the
+            # binaural code path. --stereo-out is unused in this mode.
+            compute_binaural(
+                spec_path=args.spec,
+                glb_path=args.mesh,
+                materials_sidecar_path=args.materials,
+                out_wav_path=Path(args.out),
+                quality_mode=args.quality,
+            )
+        else:
+            compute_rir_and_render(
+                spec_path=args.spec,
+                glb_path=args.mesh,
+                materials_sidecar_path=args.materials,
+                out_wav_path=args.out,
+                downmix_stereo_path=args.stereo_out,
+                quality_mode=args.quality,
+            )
     print(f"[rlr] TOTAL wall time: {time.time() - t_start:.1f}s")
 
 
