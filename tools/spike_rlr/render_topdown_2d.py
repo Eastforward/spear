@@ -255,12 +255,13 @@ def _render_frame_apartment(frame_idx, scene, spec, tmp_dir):
     mic_yaw = spec["mic"]["yaw_deg"]
     ax.plot(mic_pos[0], mic_pos[1], 'v', markersize=14, color='#1e5ea8',
             markeredgecolor='black', markeredgewidth=1)
-    # Forward arrow along mic_yaw: at yaw=0 (SSOT convention),
-    # mic-forward = +Y (per spec["mic"]["forward"] = [0,1,0]).
-    # Rotate by mic_yaw around Z: fwd = (sin(yaw), cos(yaw)) in XY.
+    # Forward arrow along mic_yaw.
+    # apartment_v1 convention: at yaw=0, mic-forward = +X world (per
+    # spec["mic"]["forward"] = [1, 0, 0]). yaw rotates CCW in XY plane.
+    # Therefore: fwd = (cos(yaw), sin(yaw)).
     yaw_rad = np.deg2rad(mic_yaw)
-    fwd_dx = 0.6 * np.sin(yaw_rad)
-    fwd_dy = 0.6 * np.cos(yaw_rad)
+    fwd_dx = 0.6 * np.cos(yaw_rad)
+    fwd_dy = 0.6 * np.sin(yaw_rad)
     ax.annotate('', xy=(mic_pos[0] + fwd_dx, mic_pos[1] + fwd_dy),
                 xytext=(mic_pos[0], mic_pos[1]),
                 arrowprops=dict(arrowstyle='->', color='#1e5ea8', lw=2))
@@ -271,15 +272,15 @@ def _render_frame_apartment(frame_idx, scene, spec, tmp_dir):
     fov_deg = float(spec["camera_configs"][0]["fov_deg"])
     fov_half = np.deg2rad(fov_deg / 2)
     fov_reach = 4.0
-    # Left/right edges of the cone rotated by mic_yaw
+    # Left/right edges of the cone rotated by mic_yaw (same +X-forward convention)
     left_ang = yaw_rad - fov_half
     right_ang = yaw_rad + fov_half
     fov_verts = [
         mic_pos[:2],
-        [mic_pos[0] + fov_reach * np.sin(left_ang),
-         mic_pos[1] + fov_reach * np.cos(left_ang)],
-        [mic_pos[0] + fov_reach * np.sin(right_ang),
-         mic_pos[1] + fov_reach * np.cos(right_ang)],
+        [mic_pos[0] + fov_reach * np.cos(left_ang),
+         mic_pos[1] + fov_reach * np.sin(left_ang)],
+        [mic_pos[0] + fov_reach * np.cos(right_ang),
+         mic_pos[1] + fov_reach * np.sin(right_ang)],
     ]
     ax.add_patch(mpatches.Polygon(fov_verts, facecolor='#1e5ea8', alpha=0.08,
                                     edgecolor='#1e5ea8', linewidth=0.5, linestyle='--'))
