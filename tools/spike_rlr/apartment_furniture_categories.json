@@ -1,0 +1,42 @@
+{
+  "_doc": "Per-actor category assignment for apartment_0000's 33 furniture items (post-shell-refactor). Used by run_render_pass_apartment.py to decide which furniture actors to keep in subset mode (core + decoration; misc excluded). Every actor from data/apartment_furniture_map.json MUST appear in exactly one category.",
+  "core": [
+    "Meshes/06_sofa/Sofa:StaticMeshActor_61",
+    "Meshes/07_table/LivingRoom_Table:SM_table_sofa_44",
+    "Meshes/07_table/Round_Table:SM_table_circular_polySurface65_47",
+    "Meshes/07_table/Side_Table_01:SM_Side_Table_16",
+    "Meshes/07_table/Side_Table_02:SM_side_table2",
+    "Meshes/05_chair/LivingRoom_Chair_01:SM_chair_living_2",
+    "Meshes/05_chair/LivingRoom_Chair_02:SM_chair_living_21",
+    "Meshes/05_chair/Round_Table_Chair_01:StaticMeshActor_67",
+    "Meshes/10_bookshelf/Shelf:StaticMeshActor_64",
+    "Meshes/38_otherstructure/Fireplace:StaticMeshActor_13"
+  ],
+  "decoration": [
+    "Meshes/18_pillow/Cushion_01:StaticMeshActor_74",
+    "Meshes/18_pillow/Cushion_02:StaticMeshActor_76",
+    "Meshes/18_pillow/Cushion_03:StaticMeshActor_91",
+    "Meshes/18_pillow/Cushion_04:StaticMeshActor_62",
+    "Meshes/18_pillow/Cushion_05:StaticMeshActor_63",
+    "Meshes/35_lamp/LivingRoom_Lamp_01:StaticMeshActor_14",
+    "Meshes/35_lamp/LivingRoom_Lamp_02:StaticMeshActor_30",
+    "Meshes/40_otherprop/Vase_01:SM_vase_2",
+    "Meshes/40_otherprop/Vase_02:SM_Vase_02_5",
+    "Meshes/40_otherprop/Vase_03:SM_plant_pot_6",
+    "Meshes/38_otherstructure/Vinyl_Frame_01:StaticMeshActor_42",
+    "Meshes/38_otherstructure/Vinyl_Frame_02:StaticMeshActor_5"
+  ],
+  "misc": [
+    "Debug/SM_Prop_04:StaticMeshActor_0",
+    "Meshes/05_chair/Kitchen_Chair_01:StaticMeshActor_16",
+    "Meshes/05_chair/Kitchen_Chair_02:StaticMeshActor_17",
+    "Meshes/05_chair/Kitchen_Chair_03:StaticMeshActor_19",
+    "Meshes/05_chair/Kitchen_Chair_04:StaticMeshActor_20",
+    "Meshes/05_chair/Round_Table_Chair_02:StaticMeshActor_73",
+    "Meshes/05_chair/Round_Table_Chair_03:StaticMeshActor_75",
+    "Meshes/05_chair/Round_Table_Chair_04:StaticMeshActor_77",
+    "Meshes/40_otherprop/Prop_01_01:StaticMeshActor_70",
+    "Meshes/40_otherprop/Prop_01_02:StaticMeshActor_60",
+    "Meshes/40_otherprop/Prop_05:StaticMeshActor_66"
+  ]
+}

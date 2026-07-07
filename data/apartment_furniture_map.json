@@ -1,8 +1,8 @@
 {
   "meta": {
     "apartment_map_path": "/Game/SPEAR/Scenes/apartment_0000/Maps/apartment_0000",
-    "dump_date_utc": "2026-07-06T13:07:49.802100+00:00",
-    "spear_commit": "85f9e5a500ef8af5c16fa747e6806d1847bf4621",
+    "dump_date_utc": "2026-07-07T13:53:12.828509+00:00",
+    "spear_commit": "64176d608cd12d81e147884ef1b99936b1394798",
     "ue_version": "5.5",
     "apartment_mic_origin_cm_at_dump": [
       -120.0,
@@ -10,16 +10,21 @@
       120.0
     ],
     "num_actors_seen": 54,
-    "num_actors_after_filter": 45,
+    "num_actors_after_filter": 33,
     "filter_reasons": {
       "z_ceiling": 1,
-      "z_floor": 0,
+      "z_floor": 3,
       "name_wall": 5,
-      "name_floor": 3,
+      "name_floor": 0,
       "name_ceiling": 0,
       "name_ground": 0,
+      "name_door": 2,
+      "name_window": 4,
+      "name_curtain": 2,
+      "name_picture": 3,
+      "name_mirror": 1,
       "bbox_too_large": 0,
-      "kept": 45
+      "kept": 33
     }
   },
   "furniture": [
@@ -64,78 +69,6 @@
         64.01389602841974,
         475.46060215289083,
         95.63401794433594
-      ],
-      "actor_rotation_deg": [
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "actor_name": "Meshes/19_mirror/Mirror:SM_Mirror_5",
-      "uclass": "AStaticMeshActor",
-      "bbox_min_ue_cm": [
-        -249.15323923718032,
-        646.6171337904498,
-        212.00812040864298
-      ],
-      "bbox_max_ue_cm": [
-        -131.26138567348798,
-        656.1163775347018,
-        351.2520016342289
-      ],
-      "actor_location_ue_cm": [
-        -190.20731245533415,
-        651.3667556625758,
-        281.63006102143595
-      ],
-      "actor_rotation_deg": [
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "actor_name": "Meshes/11_picture/Picture_Set:SM_picture_03_12",
-      "uclass": "AStaticMeshActor",
-      "bbox_min_ue_cm": [
-        -45.32158241205987,
-        -573.5357267649688,
-        149.39708917478697
-      ],
-      "bbox_max_ue_cm": [
-        -40.66107477176301,
-        -307.14795589462153,
-        281.6743115330621
-      ],
-      "actor_location_ue_cm": [
-        -42.99132859191144,
-        -440.34184132979516,
-        215.53570035392454
-      ],
-      "actor_rotation_deg": [
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "actor_name": "Meshes/11_picture/Picture_02:SM_picture_3",
-      "uclass": "AStaticMeshActor",
-      "bbox_min_ue_cm": [
-        264.0484231374204,
-        -27.331632510522084,
-        189.11205208507556
-      ],
-      "bbox_max_ue_cm": [
-        404.4442005096082,
-        -21.33103960017901,
-        329.50778115001697
-      ],
-      "actor_location_ue_cm": [
-        334.2463118235143,
-        -24.331336055350548,
-        259.30991661754626
       ],
       "actor_rotation_deg": [
         0.0,
@@ -480,54 +413,6 @@
       ]
     },
     {
-      "actor_name": "Meshes/08_door/Door:StaticMeshActor_21",
-      "uclass": "AStaticMeshActor",
-      "bbox_min_ue_cm": [
-        -57.52235842718765,
-        -201.61819675053536,
-        26.967248788922774
-      ],
-      "bbox_max_ue_cm": [
-        -43.702094481541415,
-        -116.41819581943142,
-        233.96724878892277
-      ],
-      "actor_location_ue_cm": [
-        -50.61222645436453,
-        -159.0181962849834,
-        130.46724878892277
-      ],
-      "actor_rotation_deg": [
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "actor_name": "Meshes/08_door/Door_Frame:StaticMeshActor_22",
-      "uclass": "AStaticMeshActor",
-      "bbox_min_ue_cm": [
-        -49.875839824520675,
-        -210.21523123775745,
-        26.967248788922745
-      ],
-      "bbox_max_ue_cm": [
-        -41.00021390979287,
-        -106.82485408508143,
-        242.93575464829775
-      ],
-      "actor_location_ue_cm": [
-        -45.43802686715677,
-        -158.52004266141944,
-        134.95150171861025
-      ],
-      "actor_rotation_deg": [
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
       "actor_name": "Meshes/35_lamp/LivingRoom_Lamp_02:StaticMeshActor_30",
       "uclass": "AStaticMeshActor",
       "bbox_min_ue_cm": [
@@ -720,30 +605,6 @@
       ]
     },
     {
-      "actor_name": "Meshes/16_curtain/Curtains_02:StaticMeshActor_65",
-      "uclass": "AStaticMeshActor",
-      "bbox_min_ue_cm": [
-        -548.9264270281435,
-        -638.6802447553663,
-        62.86173285119662
-      ],
-      "bbox_max_ue_cm": [
-        -41.02066530939351,
-        -619.8516314741163,
-        372.6254199849857
-      ],
-      "actor_location_ue_cm": [
-        -294.9735461687685,
-        -629.2659381147413,
-        217.74357641809115
-      ],
-      "actor_rotation_deg": [
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
       "actor_name": "Meshes/40_otherprop/Prop_05:StaticMeshActor_66",
       "uclass": "AStaticMeshActor",
       "bbox_min_ue_cm": [
@@ -792,54 +653,6 @@
       ]
     },
     {
-      "actor_name": "Meshes/09_window/Casement_Body:StaticMeshActor_68",
-      "uclass": "AStaticMeshActor",
-      "bbox_min_ue_cm": [
-        544.9441959160267,
-        -26.848937483058535,
-        24.853370044457506
-      ],
-      "bbox_max_ue_cm": [
-        595.3448306816517,
-        654.1953149125713,
-        374.8854554631587
-      ],
-      "actor_location_ue_cm": [
-        570.1445132988392,
-        313.6731887147564,
-        199.8694127538081
-      ],
-      "actor_rotation_deg": [
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "actor_name": "Meshes/09_window/Casement_SlidePart_01:StaticMeshActor_69",
-      "uclass": "AStaticMeshActor",
-      "bbox_min_ue_cm": [
-        537.6367618339955,
-        -17.301207990871063,
-        21.232745502221178
-      ],
-      "bbox_max_ue_cm": [
-        569.0180484550892,
-        322.8916955278057,
-        377.6330445744868
-      ],
-      "actor_location_ue_cm": [
-        553.3274051445424,
-        152.79524376846732,
-        199.432895038354
-      ],
-      "actor_rotation_deg": [
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
       "actor_name": "Meshes/40_otherprop/Prop_01_01:StaticMeshActor_70",
       "uclass": "AStaticMeshActor",
       "bbox_min_ue_cm": [
@@ -856,54 +669,6 @@
         -516.344813447113,
         -39.9483339086373,
         130.25790876059637
-      ],
-      "actor_rotation_deg": [
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "actor_name": "Meshes/09_window/Casement_SlidePart_02:StaticMeshActor_71",
-      "uclass": "AStaticMeshActor",
-      "bbox_min_ue_cm": [
-        556.8912174004017,
-        307.2163415238995,
-        21.23319563649852
-      ],
-      "bbox_max_ue_cm": [
-        587.7375919121205,
-        647.4093041703838,
-        377.6335023381587
-      ],
-      "actor_location_ue_cm": [
-        572.3144046562611,
-        477.31282284714166,
-        199.4333489873286
-      ],
-      "actor_rotation_deg": [
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "actor_name": "Meshes/16_curtain/Curtains_01:StaticMeshActor_72",
-      "uclass": "AStaticMeshActor",
-      "bbox_min_ue_cm": [
-        520.0697522693911,
-        -26.718412607282005,
-        25.87782629520902
-      ],
-      "bbox_max_ue_cm": [
-        538.8983821381644,
-        654.8880758216856,
-        370.1731426099062
-      ],
-      "actor_location_ue_cm": [
-        529.4840672037777,
-        314.0848316072018,
-        198.0254844525576
       ],
       "actor_rotation_deg": [
         0.0,
@@ -1024,54 +789,6 @@
         -346.16841975247956,
         -444.2690321267548,
         93.15113391171553
-      ],
-      "actor_rotation_deg": [
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "actor_name": "Meshes/09_window/Casement_Side:StaticMeshActor_87",
-      "uclass": "AStaticMeshActor",
-      "bbox_min_ue_cm": [
-        -490.9262390136719,
-        -688.33154296875,
-        89.26155853271484
-      ],
-      "bbox_max_ue_cm": [
-        -99.07374572753906,
-        -644.9024658203125,
-        343.56549072265625
-      ],
-      "actor_location_ue_cm": [
-        -294.99999237060547,
-        -666.6170043945312,
-        216.41352462768555
-      ],
-      "actor_rotation_deg": [
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "actor_name": "Meshes/11_picture/Picture_01:StaticMeshActor_9",
-      "uclass": "AStaticMeshActor",
-      "bbox_min_ue_cm": [
-        82.87500487560624,
-        -27.331328143326303,
-        189.11205161928677
-      ],
-      "bbox_max_ue_cm": [
-        223.27075697474663,
-        -21.331326634014673,
-        329.5077806842282
-      ],
-      "actor_location_ue_cm": [
-        153.07288092517643,
-        -24.331327388670488,
-        259.3099161517575
       ],
       "actor_rotation_deg": [
         0.0,
