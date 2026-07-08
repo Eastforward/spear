@@ -58,7 +58,7 @@ STATIC_ACTOR_Z_M = 0.0  # actor on floor (visual only; audio still uses source h
 # Do NOT reference this constant when computing yaw for a rig-based animal --
 # use _forward_yaw_offset_for_tag(tag) instead, or the corresponding
 # ANIMATED_RIG_MAP field.
-ANIM_FORWARD_YAW_OFFSET_DEG = 180.0
+ANIM_FORWARD_YAW_OFFSET_DEG = 0.0   # 2026-07-08: was 180.0; see species_rig_map.QUATERNIUS_FORWARD_YAW_OFFSET_DEG
 
 TRAJ_ANCHORS = 10
 PLACEMENT_TRIES = 200

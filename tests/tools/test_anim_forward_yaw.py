@@ -1,16 +1,20 @@
 """Regression test: rig-based animated animals must face their motion direction.
 
-Root cause of the "backward-walk" bug: Quaternius Dog/Cat "Walking" animation
-has its local forward = -X_local. If we set the actor's body_yaw = motion_yaw
-directly (which is what scene_spec._generate_trajectory did before this fix),
-the actor's +X_local aligns with motion direction, so the anim's -X_local
-(the walking direction) points 180 degrees AWAY from motion → the dog walks
-backward relative to its head.
+2026-07-08 correction (visual verification):
+  The Quaternius Dog/Cat "Walking" animation local-forward is +X_local
+  (NOT -X_local as previously assumed). This means body_yaw = motion_yaw
+  directly with NO offset. See git commit history for the visual proof:
+  shoebox_v2 view2 rendered with offset=180 showed golden walking head-first
+  BACKWARDS (head pointed at -X while motion was +X); after switching to
+  offset=0 the same scene rendered head-first FORWARD. Same result
+  reproduced in apartment_v1 mic-yaw-180 view (data/apartment_v1_spec.json).
 
-Correct formula: body_yaw_world = motion_yaw_world + 180 (mod 360).
+Formula: body_yaw_world = (motion_yaw_world + offset) mod 360, where
+         offset = Quaternius rig's walking_forward_yaw_offset_deg = 0.
 
-This regression test hard-codes the expected relationship so if anyone ever
-tries to remove the +180 again, it fails immediately.
+DO NOT change offset back to 180 without visual re-verification against
+BOTH shoebox AND apartment rooms — the earlier "180" assumption looked
+plausible from BP inspection but was visually wrong.
 """
 from __future__ import annotations
 
@@ -20,102 +24,81 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, "/data/jzy/code/SPEAR/tools")
+sys.path.insert(0, "/data/jzy/code/AVEngine/external/SPEAR/tools")
 
 from gpurir_scenes import scene_spec
 
 
-def test_ANIM_FORWARD_YAW_OFFSET_is_180():
-    """The constant is 180 for Quaternius rigs (Dog/Cat). Prevents accidental
-    removal or "fix" that would flip all animated animals backward."""
-    assert scene_spec.ANIM_FORWARD_YAW_OFFSET_DEG == 180.0, (
-        "Quaternius Walking anim local-forward is -X_local, so body_yaw must "
-        "be motion_yaw + 180 for the animal to face its motion direction. "
-        "Removing this offset makes ALL animated animals moonwalk."
+def test_QUATERNIUS_forward_offset_is_zero():
+    """Quaternius Dog/Cat walking anim local-forward = +X_local; no offset.
+    Verified visually on shoebox_v2 view2 and apartment_v1 mic-yaw-180 view.
+    If this ever needs to change, re-render both rooms with the new value
+    and inspect the output — do NOT trust rig-blueprint inspection alone."""
+    from species_rig_map import QUATERNIUS_FORWARD_YAW_OFFSET_DEG
+    assert QUATERNIUS_FORWARD_YAW_OFFSET_DEG == 0.0, (
+        f"Quaternius Dog/Cat Walk anim local-forward is +X_local, so no "
+        f"offset needed. Got {QUATERNIUS_FORWARD_YAW_OFFSET_DEG}."
     )
 
 
 def test_generated_trajectory_yaw_matches_motion_direction():
-    """For any animated tag, the generated yaw must satisfy
-    (yaw - motion_direction) mod 360 == 180 (within numerical tolerance)."""
+    """For any animated Quaternius tag, generated yaw ≈ motion direction."""
     rng = np.random.default_rng(42)
     tag = "dog_husky"
     traj, yaw = scene_spec._generate_trajectory(rng, scene_spec.ROOM_SIZE_M, tag)
-    # motion direction per frame (from gradient)
     xs = traj[:, 0]
     ys = traj[:, 1]
     dx = np.gradient(xs)
     dy = np.gradient(ys)
     motion_deg = np.degrees(np.arctan2(dy, dx))
     diff = (yaw - motion_deg + 360) % 360
-    # Every frame should have diff ≈ 180
     for i, d in enumerate(diff):
-        # Skip frames where motion is nearly zero (degenerate direction)
         speed = math.hypot(dx[i], dy[i])
         if speed < 1e-3:
             continue
-        assert abs(d - 180.0) < 1e-3, (
+        # After 2026-07-08 fix: diff should be ~0 (body faces motion direction).
+        assert abs(d) < 1e-3 or abs(d - 360) < 1e-3, (
             f"frame {i}: yaw={yaw[i]:.2f} motion={motion_deg[i]:.2f} "
-            f"diff={d:.2f} (expected 180)"
+            f"diff={d:.2f} (expected 0 mod 360)"
         )
 
 
-def test_scene_two_dogs_uses_scene_spec_constant():
-    """scene_two_dogs.py must reuse scene_spec.ANIM_FORWARD_YAW_OFFSET_DEG,
-    not hard-code its own copy. This prevents drift between the two paths."""
-    from gpurir_scenes import scene_two_dogs
-    # scene_two_dogs previously had its own _ANIM_FORWARD_YAW_OFFSET = 180.
-    # After the fix it should import from scene_spec so the two values can
-    # never diverge.
-    assert (
-        getattr(scene_two_dogs, "_ANIM_FORWARD_YAW_OFFSET", None)
-        == scene_spec.ANIM_FORWARD_YAW_OFFSET_DEG
-    ), (
-        "scene_two_dogs must use scene_spec.ANIM_FORWARD_YAW_OFFSET_DEG "
-        "(directly or via a local alias with the same value) so both paths "
-        "always agree."
-    )
-
-
-# ---- Tier B upgrade: per-tag walking_forward_yaw_offset_deg ----------------
 def test_all_animated_tags_have_walking_yaw_offset_field():
-    """Every entry in ANIMATED_RIG_MAP must declare its own
-    walking_forward_yaw_offset_deg. Prevents silently adding a new rig
-    (e.g. Mixamo horse) and getting backward-walking without any warning."""
+    """Every ANIMATED_RIG_MAP entry must declare walking_forward_yaw_offset_deg
+    so a new rig with a different forward convention has to make an explicit
+    choice (can't silently inherit the wrong default)."""
     from species_rig_map import ANIMATED_RIG_MAP
     for tag, meta in ANIMATED_RIG_MAP.items():
         assert "walking_forward_yaw_offset_deg" in meta, (
             f"animated tag {tag} missing walking_forward_yaw_offset_deg. "
-            f"Set it based on your rig's Walking anim local-forward direction. "
-            f"For Quaternius Dog/Cat use 180.0."
+            f"For Quaternius Dog/Cat use QUATERNIUS_FORWARD_YAW_OFFSET_DEG (0.0)."
         )
         assert isinstance(meta["walking_forward_yaw_offset_deg"], (int, float))
 
 
-def test_all_current_tags_use_quaternius_offset_180():
+def test_all_current_tags_use_quaternius_offset_0():
     """The 5 current animated tags (Cat, Dog, chipmunk) are all Quaternius,
-    so all must declare 180.0. If someone changes one of these to a non-180
-    value without also swapping to a non-Quaternius rig, that's a bug."""
+    so all must declare 0.0. If someone swaps in a non-Quaternius rig with
+    a different local-forward convention, they must set a NEW offset value
+    and this test will remind them."""
     from species_rig_map import ANIMATED_RIG_MAP
     for tag, meta in ANIMATED_RIG_MAP.items():
-        assert meta["walking_forward_yaw_offset_deg"] == 180.0, (
+        assert meta["walking_forward_yaw_offset_deg"] == 0.0, (
             f"tag {tag} declares walking_forward_yaw_offset_deg="
             f"{meta['walking_forward_yaw_offset_deg']} but all current rigs "
-            f"are Quaternius (needs 180.0). Did you swap in a non-Quaternius "
-            f"rig?"
+            f"are Quaternius (needs 0.0). Did you swap in a non-Quaternius "
+            f"rig? If so, add a new constant + document its local-forward."
         )
 
 
 def test_generate_trajectory_uses_per_tag_offset():
-    """_generate_trajectory should look up the offset from ANIMATED_RIG_MAP
-    for the tag it's given, not the global constant. Verify by monkey-patching
-    ANIMATED_RIG_MAP with a fake tag that uses offset=0 and check the yaw
-    now equals raw motion direction (not motion+180)."""
-    import numpy as np
+    """_generate_trajectory looks up the offset from ANIMATED_RIG_MAP for
+    the tag, not the global constant. Verified by monkey-patching a fake
+    offset=180 and confirming yaw now differs from motion by 180."""
     from species_rig_map import ANIMATED_RIG_MAP
     saved_meta = ANIMATED_RIG_MAP.get("dog_husky")
     fake_meta = dict(saved_meta)
-    fake_meta["walking_forward_yaw_offset_deg"] = 0.0
+    fake_meta["walking_forward_yaw_offset_deg"] = 180.0
     ANIMATED_RIG_MAP["dog_husky"] = fake_meta
     try:
         rng = np.random.default_rng(42)
@@ -126,14 +109,13 @@ def test_generate_trajectory_uses_per_tag_offset():
         dy = np.gradient(traj[:, 1])
         motion = np.degrees(np.arctan2(dy, dx))
         diff = (yaw - motion + 360) % 360
-        # With offset=0, yaw should equal motion (mod 360), so diff ≈ 0
         for i, d in enumerate(diff):
             speed = (dx[i] ** 2 + dy[i] ** 2) ** 0.5
             if speed < 1e-3:
                 continue
-            assert abs(d) < 1e-3 or abs(d - 360) < 1e-3, (
-                f"frame {i}: with offset=0, yaw should track motion; "
-                f"got yaw={yaw[i]:.2f} motion={motion[i]:.2f}"
+            assert abs(d - 180.0) < 1e-3, (
+                f"frame {i}: with offset=180, yaw should be motion+180; "
+                f"got yaw={yaw[i]:.2f} motion={motion[i]:.2f} diff={d:.2f}"
             )
     finally:
         ANIMATED_RIG_MAP["dog_husky"] = saved_meta

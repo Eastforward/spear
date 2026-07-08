@@ -54,11 +54,15 @@ CAT_RIG = f"{QUATERNIUS_DIR}/Cat.glb"
 DOG_RIG = f"{QUATERNIUS_DIR}/Dog.glb"
 
 # Per-rig-family: how many degrees to add to motion direction to get body yaw
-# so the animal walks head-first. Quaternius Dog/Cat "Walking" anim has
-# local-forward = -X_local, so we rotate the body 180 deg from motion direction.
-# If a future rig family (Mixamo, custom) uses a different local-forward,
-# declare a NEW value here and reference it in ANIMATED_RIG_MAP below.
-QUATERNIUS_FORWARD_YAW_OFFSET_DEG = 180.0
+# so the animal walks head-first.
+#
+# 2026-07-08 correction: was 180.0 (assumption: rig-local-forward = -X_local).
+# Visual verification on shoebox_v2 view2 (mic looking -Y, golden walking +X)
+# showed the animation ran head-first-BACKWARDS: head pointed at -X while
+# motion was +X. That means Quaternius Dog/Cat Walk rig-local-forward is
+# actually +X_local, NOT -X_local — no offset needed. See tests/tools/
+# spike_rlr/test_rig_forward_offset.py for the regression check.
+QUATERNIUS_FORWARD_YAW_OFFSET_DEG = 0.0
 
 
 # 2026-07-06: quaternius_farm rigs (Horse/Cow/Zebra) have real Walk anims
