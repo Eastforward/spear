@@ -171,6 +171,23 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
     yaw_world_deg = float(cam_cfg["yaw_deg"])
     yaw_ue_deg = _yaw_world_to_ue(yaw_world_deg, "apartment")
 
+    # Plan 1.5.A gate: every rig tag used must have passed the mesh direction
+    # audit (tmp/hy3d_batch/approved/{tag}/direction.json human_approved=true).
+    # Opt-out for backward compat via SPEAR_SKIP_REVIEW_GATE=1 (used only by
+    # legacy Plan 1 rigs that predate the audit pipeline).
+    if os.environ.get("SPEAR_SKIP_REVIEW_GATE", "0") != "1":
+        from review_gate import assert_mesh_approved, MeshNotApprovedError
+        for src in spec.get("sources", []):
+            tag = src.get("tag")
+            if not tag:
+                continue
+            try:
+                assert_mesh_approved(tag)
+                print(f"[apt_render] review_gate OK for {tag}")
+            except MeshNotApprovedError as e:
+                print(f"[apt_render] review_gate REFUSED {tag}: {e}")
+                raise
+
     scene = compose_two_dog_scene_apartment(spec_path)
     cats = _load_categories()
     # Safety net: fail fast if any planned trajectory clips a furniture / wall
