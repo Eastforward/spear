@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import getpass
+import hashlib
 import json
 import shutil
 import sys
@@ -44,6 +45,8 @@ from flask import Flask, abort, redirect, request, send_file, url_for
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "spike_rlr"))
 from preview_render import render_review_preview  # noqa: E402
+
+PREVIEW_RENDER_SOURCE = REPO_ROOT / "tools" / "spike_rlr" / "preview_render.py"
 
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -314,8 +317,22 @@ def _load_and_concat(mesh_path: Path) -> trimesh.Trimesh:
     return scene
 
 
+def _rotated_mesh_preserving_visuals(mesh: trimesh.Trimesh, R: np.ndarray):
+    rotated = mesh.copy()
+    rotated.vertices = np.asarray(mesh.vertices) @ R.T
+    return rotated
+
+
 def _rotation_json_path(tag_dir: Path) -> Path:
     return tag_dir / "rotation.json"
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with Path(path).open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _read_rotation(tag_dir: Path) -> np.ndarray:
@@ -375,8 +392,7 @@ def _apply_rotation_and_regen_preview(tag_dir: Path):
         src = tag_dir / "mesh.obj"
     R = _read_rotation(tag_dir)
     m = _load_and_concat(src)
-    verts_rot = np.asarray(m.vertices) @ R.T
-    rotated = trimesh.Trimesh(vertices=verts_rot, faces=m.faces, process=False)
+    rotated = _rotated_mesh_preserving_visuals(m, R)
     current_path = tag_dir / "mesh_current.glb"
     rotated.export(str(current_path))
     preview_path = tag_dir / "direction_preview_review.png"
@@ -384,6 +400,16 @@ def _apply_rotation_and_regen_preview(tag_dir: Path):
     hist_str = " + ".join(hist) if hist else "identity"
     render_review_preview(current_path, preview_path,
                            note=f"Accumulated rotation: {hist_str}")
+
+
+def _review_preview_stale(tag_dir: Path) -> bool:
+    current_glb = tag_dir / "mesh_current.glb"
+    preview_png = tag_dir / "direction_preview_review.png"
+    if not current_glb.exists() or not preview_png.exists():
+        return True
+    if PREVIEW_RENDER_SOURCE.exists():
+        return preview_png.stat().st_mtime < PREVIEW_RENDER_SOURCE.stat().st_mtime
+    return False
 
 
 def _classify_conf(pct: float) -> str:
@@ -434,9 +460,7 @@ def create_app(pending_dir, approved_dir, rejected_dir, host="127.0.0.1", port=8
 
         # If we haven't yet generated the review preview for this tag, do so
         # (also picks up any current-rotation state).
-        current_glb = tag_dir / "mesh_current.glb"
-        preview_png = tag_dir / "direction_preview_review.png"
-        if not current_glb.exists() or not preview_png.exists():
+        if _review_preview_stale(tag_dir):
             _apply_rotation_and_regen_preview(tag_dir)
 
         dj = json.loads((tag_dir / "direction.json").read_text())
@@ -473,7 +497,7 @@ def create_app(pending_dir, approved_dir, rejected_dir, host="127.0.0.1", port=8
         tag_dir = pending_dir / tag
         p = tag_dir / "direction_preview_review.png"
         # Regenerate on demand if missing (first visit)
-        if not p.exists():
+        if _review_preview_stale(tag_dir):
             _apply_rotation_and_regen_preview(tag_dir)
         if not p.exists():
             abort(404)
@@ -515,6 +539,8 @@ def create_app(pending_dir, approved_dir, rejected_dir, host="127.0.0.1", port=8
         src = pending_dir / tag
         if not src.exists():
             abort(404, f"tag {tag} not in pending")
+        dst = dest_dir / tag
+        src_mesh_name = "mesh.glb" if (src / "mesh.glb").exists() else "mesh.obj"
 
         # Bake accumulated user rotation on top of the auto-orient step.
         # The direction.json's rotation_applied_to_align_to_plus_x rotates
@@ -522,11 +548,10 @@ def create_app(pending_dir, approved_dir, rejected_dir, host="127.0.0.1", port=8
         # against the ORIGINAL mesh (not the mesh_oriented one, since our
         # UI works on original coordinates).
         R_user = _read_rotation(src)
-        m = _load_and_concat(src / "mesh.glb"
-                              if (src / "mesh.glb").exists() else src / "mesh.obj")
-        verts_final = np.asarray(m.vertices) @ R_user.T
-        final = trimesh.Trimesh(vertices=verts_final, faces=m.faces, process=False)
-        final.export(str(src / "mesh_oriented.glb"))
+        m = _load_and_concat(src / src_mesh_name)
+        final = _rotated_mesh_preserving_visuals(m, R_user)
+        oriented_src = src / "mesh_oriented.glb"
+        final.export(str(oriented_src))
 
         dj_path = src / "direction.json"
         dj = json.loads(dj_path.read_text())
@@ -539,9 +564,11 @@ def create_app(pending_dir, approved_dir, rejected_dir, host="127.0.0.1", port=8
         # Record final user-applied rotation for audit trail
         dj["human_applied_rotation_matrix"] = R_user.tolist()
         dj["human_applied_rotation_history"] = _read_rotation_history(src)
+        dj["mesh_source"] = str((dst / src_mesh_name).resolve())
+        dj["mesh_oriented"] = str((dst / "mesh_oriented.glb").resolve())
+        dj["mesh_sha256"] = _sha256_file(oriented_src)
         dj_path.write_text(json.dumps(dj, indent=2))
 
-        dst = dest_dir / tag
         if dst.exists():
             shutil.rmtree(dst)
         shutil.move(str(src), str(dst))

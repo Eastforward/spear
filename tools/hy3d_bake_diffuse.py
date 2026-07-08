@@ -15,11 +15,49 @@ import shutil
 import sys
 import time
 
-HY3D_ROOT = "/data/jzy/code/Hunyuan3D-2.1"
+SPEAR_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HY3D_ROOT = os.environ.get(
+    "HY3D_ROOT",
+    os.path.join(os.path.dirname(SPEAR_ROOT), "Hunyuan3D-2.1"),
+)
+HY3D_CUSTOM_RASTERIZER_ROOT = os.path.join(
+    HY3D_ROOT, "hy3dpaint", "custom_rasterizer"
+)
+sys.path.insert(0, HY3D_CUSTOM_RASTERIZER_ROOT)
 sys.path.insert(0, HY3D_ROOT)
 sys.path.insert(0, os.path.join(HY3D_ROOT, "hy3dshape"))
 sys.path.insert(0, os.path.join(HY3D_ROOT, "hy3dpaint"))
 os.chdir(HY3D_ROOT)   # MANDATORY — pipeline uses cwd-relative paths
+
+
+def _resolve_realesrgan_ckpt_path():
+    """Return the RealESRGAN checkpoint path for this monorepo checkout."""
+    candidates = [
+        os.path.join(HY3D_ROOT, "ckpt", "RealESRGAN_x4plus.pth"),
+        os.path.join(HY3D_ROOT, "hy3dpaint", "ckpt", "RealESRGAN_x4plus.pth"),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    raise FileNotFoundError(
+        "RealESRGAN_x4plus.pth not found. Expected one of: "
+        + ", ".join(candidates)
+    )
+
+
+def _resolve_multiview_pretrained_path():
+    """Return the Hunyuan paint repo id/path token for local-first loading."""
+    hy3d_models = os.environ.get("HY3DGEN_MODELS", "")
+    local_repo = "hunyuan3d-2.1"
+    if hy3d_models:
+        local_paint = os.path.join(
+            os.path.expanduser(hy3d_models),
+            local_repo,
+            "hunyuan3d-paintpbr-v2-1",
+        )
+        if os.path.exists(local_paint):
+            return local_repo
+    return "tencent/Hunyuan3D-2.1"
 
 
 def parse_args():
@@ -48,7 +86,8 @@ def main():
 
     from textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
     conf = Hunyuan3DPaintConfig(max_num_view=args.max_num_view, resolution=args.resolution)
-    conf.realesrgan_ckpt_path = "hy3dpaint/ckpt/RealESRGAN_x4plus.pth"
+    conf.realesrgan_ckpt_path = _resolve_realesrgan_ckpt_path()
+    conf.multiview_pretrained_path = _resolve_multiview_pretrained_path()
     conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
     conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
     conf.texture_size = args.texture_size

@@ -1,5 +1,6 @@
 """Tests for tools/spike_rlr/auto_orient_ingest.py."""
 import json
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -102,3 +103,54 @@ def test_ingest_help_shows_expected_flags():
     assert r.returncode == 0
     assert "--pending-dir" in r.stdout
     assert "--force" in r.stdout  # for overwriting existing direction.json
+
+
+def test_auto_orient_caps_numeric_threads_before_numpy_import():
+    text = INGEST.read_text()
+
+    assert text.index('os.environ.setdefault("OMP_NUM_THREADS", "1")') < text.index(
+        "import numpy as np"
+    )
+    assert text.index('os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")') < text.index(
+        "import numpy as np"
+    )
+
+
+def test_ingest_preserves_obj_uvs_in_oriented_mesh(tmp_path):
+    sys.path.insert(0, str(REPO / "tests" / "tools" / "spike_rlr"))
+    from test_detect_head_axis import _synth_dog
+
+    pending = tmp_path / "pending"
+    tag_dir = pending / "dog_uv"
+    tag_dir.mkdir(parents=True)
+    verts = _synth_dog(head_axis="+X")
+    obj = tag_dir / "mesh.obj"
+    lines = ["mtllib mesh.mtl", "o dog_uv"]
+    for x, y, z in verts:
+        lines.append(f"v {x:.6f} {y:.6f} {z:.6f}")
+    for _ in verts:
+        lines.append("vt 0.5 0.5")
+    for i in range(1, len(verts) - 2, 3):
+        lines.append(f"f {i}/{i} {i+1}/{i+1} {i+2}/{i+2}")
+    obj.write_text("\n".join(lines) + "\n")
+    (tag_dir / "mesh.mtl").write_text("newmtl Material\nmap_Kd hy3d_diffuse.jpg\n")
+    (tag_dir / "hy3d_diffuse.jpg").write_bytes(b"not a real jpg but referenced")
+
+    r = subprocess.run(
+        [PYTHON, str(INGEST), "--pending-dir", str(pending)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, f"ingest failed:\n{r.stdout}\n---\n{r.stderr}"
+
+    glb = (tag_dir / "mesh_oriented.glb").read_bytes()
+    assert glb[:4] == b"glTF"
+    json_len, json_type = struct.unpack_from("<II", glb, 12)
+    assert json_type == 0x4E4F534A
+    payload = json.loads(glb[20:20 + json_len].decode("utf-8"))
+    attrs = [
+        prim.get("attributes", {})
+        for mesh in payload.get("meshes", [])
+        for prim in mesh.get("primitives", [])
+    ]
+
+    assert any("TEXCOORD_0" in attr for attr in attrs)

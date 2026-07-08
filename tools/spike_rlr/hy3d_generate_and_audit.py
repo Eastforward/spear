@@ -52,6 +52,8 @@ PROMPT_TEMPLATE = (
 NEW_RIGS = [
     {"tag": "dog_beagle", "species": "dog", "breed": "beagle", "seed": 4001},
     {"tag": "cat_british_shorthair", "species": "cat", "breed": "british shorthair", "seed": 4002},
+    {"tag": "dog_beagle_v2", "species": "dog", "breed": "beagle", "seed": 4101},
+    {"tag": "cat_british_shorthair_v2", "species": "cat", "breed": "british shorthair", "seed": 4102},
 ]
 
 
@@ -111,17 +113,64 @@ print('[hy3d] wrote', '{out_glb}')
     return ok
 
 
-def _drop_into_pending(tag: str, source_glb: Path):
-    """Move the generated .glb into tmp/hy3d_batch/pending/{tag}/mesh.glb."""
+def _run_hy3d_paint(ref_png: Path, shape_glb: Path, workdir: Path) -> bool:
+    """Bake Hunyuan texture outputs for the generated shape mesh."""
+    textured_obj = workdir / "hy3d_textured.obj"
+    diffuse = workdir / "hy3d_diffuse.jpg"
+    if textured_obj.exists() and diffuse.exists():
+        print(f"  [hy3d] paint exists, skipping: {textured_obj}")
+        return True
+    t0 = time.time()
+    ok = _run(
+        [HY3D_PY, str(REPO_ROOT / "tools/hy3d_bake_diffuse.py"),
+         "--input-glb", str(shape_glb),
+         "--reference-image", str(ref_png),
+         "--workdir", str(workdir)],
+        env_extra=HY3D_ENV, timeout=1200, check=False,
+    )
+    print(f"  [hy3d] paint {'OK' if ok else 'FAIL'} in {time.time()-t0:.1f}s")
+    return ok and textured_obj.exists() and diffuse.exists()
+
+
+def _drop_into_pending(tag: str, source_mesh: Path):
+    """Copy the generated mesh plus texture sidecars into pending/{tag}/."""
     tag_dir = PENDING_ROOT / tag
     tag_dir.mkdir(parents=True, exist_ok=True)
-    dst = tag_dir / "mesh.glb"
-    if dst.exists():
-        print(f"  pending mesh already exists: {dst}")
-        return
     import shutil
-    shutil.copy2(source_glb, dst)
-    print(f"  -> pending/{tag}/mesh.glb")
+    source_mesh = Path(source_mesh)
+    dst = tag_dir / ("mesh.obj" if source_mesh.suffix.lower() == ".obj" else "mesh.glb")
+    if dst.suffix.lower() == ".obj":
+        text = source_mesh.read_text()
+        lines = []
+        saw_mtl = False
+        for line in text.splitlines():
+            if line.startswith("mtllib "):
+                lines.append("mtllib mesh.mtl")
+                saw_mtl = True
+            else:
+                lines.append(line)
+        if not saw_mtl:
+            lines.insert(0, "mtllib mesh.mtl")
+        dst.write_text("\n".join(lines) + "\n")
+        src_mtl = source_mesh.parent / "hy3d_output_mesh.mtl"
+        if src_mtl.exists():
+            mtl_text = src_mtl.read_text()
+            replacements = {
+                "hy3d_output_mesh.jpg": "hy3d_diffuse.jpg",
+                "hy3d_output_mesh_metallic.jpg": "hy3d_metallic.jpg",
+                "hy3d_output_mesh_roughness.jpg": "hy3d_roughness.jpg",
+            }
+            for old, new in replacements.items():
+                mtl_text = mtl_text.replace(old, new)
+            (tag_dir / "mesh.mtl").write_text(mtl_text)
+    else:
+        shutil.copy2(source_mesh, dst)
+    for pattern in ("*.mtl", "*.jpg", "*.jpeg", "*.png"):
+        for sidecar in source_mesh.parent.glob(pattern):
+            if sidecar.name == "hy3d_output_mesh.mtl" and dst.suffix.lower() == ".obj":
+                continue
+            shutil.copy2(sidecar, tag_dir / sidecar.name)
+    print(f"  -> pending/{tag}/{dst.name}")
 
 
 def _run_auto_orient():
@@ -158,9 +207,9 @@ def _print_review_instructions():
     print("  3. Open your browser at http://localhost:8080/")
     print()
     print("  4. For each pending tag:")
-    print("       - Look at the red arrow in the 4-view preview.")
-    print("       - If it points at the animal's HEAD -> click [Approve].")
-    print("       - If it points at the TAIL -> click [Head is at opposite end].")
+    print("       - Rotate the mesh until the head points to green HEAD -> and")
+    print("         the animal stands upright along blue UP.")
+    print("       - Then click [Approve].")
     print("       - If the mesh is unusable -> click [Reject].")
     print()
     print("  5. Confirmed tags automatically move to:")
@@ -210,7 +259,10 @@ def main():
             if not _run_hy3d_shape(ref_png, shape_glb):
                 print(f"  [!] Hunyuan3D failed for {rig['tag']} — skipping")
                 continue
-            _drop_into_pending(rig["tag"], shape_glb)
+            if not _run_hy3d_paint(ref_png, shape_glb, wd):
+                print(f"  [!] Hunyuan3D paint failed for {rig['tag']} — skipping")
+                continue
+            _drop_into_pending(rig["tag"], wd / "hy3d_textured.obj")
     else:
         print("== Skipping Hunyuan3D (--skip-hunyuan) ==")
         for rig in target:

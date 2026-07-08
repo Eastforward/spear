@@ -6,6 +6,7 @@ Wolf rig -- large ungulates:                              horse, cattle, yak, do
 """
 
 import os
+import sys
 
 # --- path resolution -------------------------------------------------------
 # SPEAR_ROOT = this file's grandparent (tools/species_rig_map.py → SPEAR/).
@@ -29,16 +30,49 @@ QUATERNIUS_FARM = os.path.join(AVENGINE_ROOT, "assets/mesh_library/quaternius_fa
 HY3D_BATCH_DIR = os.environ.get(
     "HY3D_BATCH_DIR", os.path.join(SPEAR_ROOT, "tmp/hy3d_batch")
 )
+HY3D_APPROVED_DIR = os.environ.get(
+    "HY3D_APPROVED_DIR", os.path.join(HY3D_BATCH_DIR, "approved")
+)
 HY3D_AUDIOSET_DIR = os.environ.get(
     "HY3D_AUDIOSET_DIR",
     os.path.join(AVENGINE_ROOT, "external/Hunyuan3D-2.1/outputs/audioset_assets"),
 )
+
+SPIKE_RLR_DIR = os.path.join(SPEAR_ROOT, "tools", "spike_rlr")
+if SPIKE_RLR_DIR not in sys.path:
+    sys.path.insert(0, SPIKE_RLR_DIR)
 
 
 def _batch_mesh(tag):
     return {
         "mesh": f"{HY3D_BATCH_DIR}/{tag}/hy3d_textured.obj",
         "diffuse": f"{HY3D_BATCH_DIR}/{tag}/hy3d_diffuse.jpg",
+    }
+
+
+def _approved_or_batch_mesh(tag):
+    entry = _batch_mesh(tag)
+    try:
+        from review_gate import approved_mesh_record
+        rec = approved_mesh_record(tag, approved_dir=HY3D_APPROVED_DIR)
+    except Exception:
+        return entry
+    approved_diffuse = os.path.join(
+        os.path.dirname(str(rec["direction_json_path"])), "hy3d_diffuse.jpg"
+    )
+    if os.path.exists(approved_diffuse):
+        diffuse = approved_diffuse
+    else:
+        diffuse = entry["diffuse"] if os.path.exists(entry["diffuse"]) else ""
+    runtime_mesh = rec.get("runtime_mesh_path")
+    downstream_mesh = runtime_mesh or rec["mesh_path"]
+    return {
+        "mesh": str(downstream_mesh),
+        "diffuse": diffuse,
+        "mesh_sha256": rec["mesh_sha256"],
+        "approved_mesh": str(rec["mesh_path"]),
+        "runtime_mesh": str(runtime_mesh) if runtime_mesh else "",
+        "approved_direction_json": str(rec["direction_json_path"]),
     }
 
 
@@ -75,11 +109,15 @@ ANIMATED_RIG_MAP = {
     # 2026-07-06: Cat.glb gate check on cat_persian looked natural once the
     # orbit camera was pulled back and actor scaled to 0.3 -- the "spikes"
     # I initially saw were the persian's long tail fur, not corrupt geometry.
-    "cat_persian":     {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_batch_mesh("cat_persian")},
-    "cat_tabby":       {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_batch_mesh("cat_tabby")},
-    "chipmunk":        {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_batch_mesh("chipmunk")},
-    "dog_golden":      {"rig": DOG_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_batch_mesh("dog_golden")},
-    "dog_husky":       {"rig": DOG_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_batch_mesh("dog_husky")},
+    "cat_persian":     {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("cat_persian")},
+    "cat_tabby":       {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("cat_tabby")},
+    "cat_british_shorthair": {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("cat_british_shorthair")},
+    "cat_british_shorthair_v2": {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("cat_british_shorthair_v2")},
+    "chipmunk":        {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("chipmunk")},
+    "dog_golden":      {"rig": DOG_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("dog_golden")},
+    "dog_husky":       {"rig": DOG_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("dog_husky")},
+    "dog_beagle":      {"rig": DOG_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("dog_beagle")},
+    "dog_beagle_v2":   {"rig": DOG_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("dog_beagle_v2")},
 }
 
 # Import-time guard: every animated tag MUST declare its walking yaw offset.
@@ -89,7 +127,7 @@ for _tag, _meta in ANIMATED_RIG_MAP.items():
     assert "walking_forward_yaw_offset_deg" in _meta, (
         f"animated tag {_tag} missing 'walking_forward_yaw_offset_deg'. "
         f"Set it based on your rig's Walking anim local-forward direction. "
-        f"For Quaternius Dog/Cat use QUATERNIUS_FORWARD_YAW_OFFSET_DEG (180.0)."
+        f"For Quaternius Dog/Cat use QUATERNIUS_FORWARD_YAW_OFFSET_DEG (0.0)."
     )
 
 STATIC_MESH_MAP = {
@@ -110,7 +148,7 @@ RIG_MAP = dict(ANIMATED_RIG_MAP)
 def assert_inputs_exist(tag):
     if tag in ANIMATED_RIG_MAP:
         entry = ANIMATED_RIG_MAP[tag]
-        keys = ("rig", "mesh", "diffuse")
+        keys = ["rig", "mesh", "diffuse"]
     elif tag in STATIC_MESH_MAP:
         entry = STATIC_MESH_MAP[tag]
         keys = ("mesh", "diffuse")

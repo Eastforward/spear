@@ -21,8 +21,16 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import os
 import sys
 from pathlib import Path
+
+# Keep per-mesh audit preparation cheap and predictable. Batch pipelines can
+# parallelize across assets without every worker spawning its own BLAS pool.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 import numpy as np
 import trimesh
@@ -61,6 +69,13 @@ def _load_and_concat(mesh_path: Path):
             raise ValueError(f"empty scene {mesh_path}")
         return trimesh.util.concatenate(geoms)
     return scene
+
+
+def _rotated_mesh_preserving_visuals(mesh: trimesh.Trimesh, R: np.ndarray):
+    """Rotate vertices while keeping UV/material/visual data attached."""
+    rotated = mesh.copy()
+    rotated.vertices = np.asarray(mesh.vertices) @ R.T
+    return rotated
 
 
 def _rotation_matrix_align(from_vec, to_vec):
@@ -107,9 +122,7 @@ def process_one(tag_dir: Path, force: bool = False):
 
     # Rotate mesh so detected head aligns with +X
     R = _rotation_matrix_align(result.head_direction, np.array([1.0, 0.0, 0.0]))
-    verts_rot = verts @ R.T
-    # Build new trimesh with rotated verts, same faces
-    oriented = trimesh.Trimesh(vertices=verts_rot, faces=mesh.faces, process=False)
+    oriented = _rotated_mesh_preserving_visuals(mesh, R)
     oriented_path = tag_dir / "mesh_oriented.glb"
     oriented.export(str(oriented_path))
 

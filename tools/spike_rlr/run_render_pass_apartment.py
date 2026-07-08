@@ -26,6 +26,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -49,8 +50,7 @@ from gpurir_scenes.run_render_pass import (  # noqa: E402
 from apartment_actor_classifier import classify_actor, SHELL_LABELS  # noqa: E402
 from scene_two_dogs_apartment import (  # noqa: E402
     compose_two_dog_scene_apartment,
-    _kept_furniture_bboxes,
-    _shell_wall_bboxes,
+    _static_obstacle_bboxes,
 )
 from profiling import StageTimer  # noqa: E402
 
@@ -70,7 +70,7 @@ def _check_no_clipping_apartment(spec_dict, scene, cats):
     any kept furniture or shell wall bbox. Called before UE render so we
     catch bad specs cheaply rather than staring at a 30 s render of a dog
     walking through a sofa."""
-    obstacles = _kept_furniture_bboxes(spec_dict, cats) + _shell_wall_bboxes(spec_dict)
+    obstacles = _static_obstacle_bboxes(spec_dict, cats)
     for a in scene.animals:
         for k, xyz in enumerate(a.trajectory_m):
             x, y = float(xyz[0]), float(xyz[1])
@@ -88,6 +88,45 @@ def _check_no_clipping_apartment(spec_dict, scene, cats):
 def _load_categories():
     return json.loads((REPO_ROOT / "tools" / "spike_rlr"
                        / "apartment_furniture_categories.json").read_text())
+
+
+def _apartment_camera_ue_cm(mic_pos_m):
+    """Convert an apartment_v1 absolute SSOT mic pose to UE centimeters."""
+    mic_pos_m = np.asarray(mic_pos_m, dtype=np.float64)
+    return (
+        APARTMENT_MIC_ORIGIN_CM[0] + mic_pos_m[0] * M2CM,
+        APARTMENT_MIC_ORIGIN_CM[1] - mic_pos_m[1] * M2CM,
+        APARTMENT_FLOOR_Z_CM + mic_pos_m[2] * M2CM,
+    )
+
+
+def _apartment_ue_cm_to_ssot_m(pos_ue_cm):
+    """Convert an apartment UE centimeter position to absolute SSOT meters."""
+    x_cm, y_cm, z_cm = [float(v) for v in pos_ue_cm]
+    return (
+        (x_cm - APARTMENT_MIC_ORIGIN_CM[0]) / M2CM,
+        -(y_cm - APARTMENT_MIC_ORIGIN_CM[1]) / M2CM,
+        (z_cm - APARTMENT_FLOOR_Z_CM) / M2CM,
+    )
+
+
+def _actor_visual_center_ssot_m(actor):
+    """Return actor bounds center in absolute SSOT meters."""
+    bounds = actor.GetActorBounds(bOnlyCollidingComponents=False, as_dict=True)
+    origin = bounds["Origin"]
+    return _apartment_ue_cm_to_ssot_m((origin["x"], origin["y"], origin["z"]))
+
+
+def _absolute_apartment_render_scene(scene):
+    """Adapt apartment_v1 absolute SSOT trajectories for the shared actor
+    spawner, whose apartment transform is relative to scene.mic_pos_m.
+
+    Plan-2 apartment specs store both mic and source positions in the same
+    absolute apartment coordinate frame where APARTMENT_MIC_ORIGIN_CM is SSOT
+    (0, 0). Setting the render-scene mic anchor to (0, 0) makes the shared
+    _world_from_scene helper place actors in that absolute frame.
+    """
+    return replace(scene, mic_pos_m=(0.0, 0.0, scene.mic_pos_m[2]))
 
 
 def _compute_keep_set(spec, cats):
@@ -219,7 +258,8 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
                     print(f"[apt_render] WARN failed to set FOV: {e}")
 
                 # 3. Spawn dogs
-                actors = [_spawn_animal(game, a, "apartment", scene)
+                render_scene = _absolute_apartment_render_scene(scene)
+                actors = [_spawn_animal(game, a, "apartment", render_scene)
                           for a in scene.animals]
 
                 # Unpause the game
@@ -231,12 +271,9 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
             # Warmup for virtual texture streaming (matches shoebox pipeline)
             instance.step(num_frames=120)
 
-            # Mic UE cm position (from APARTMENT_MIC_ORIGIN_CM + spec offset)
-            mic_pos_m = np.asarray(spec["mic"]["pos_m"])
-            mic_x_cm = APARTMENT_MIC_ORIGIN_CM[0] + mic_pos_m[0] * M2CM
-            # apartment Y-flip: world +Y -> UE -Y from origin
-            mic_y_cm = APARTMENT_MIC_ORIGIN_CM[1] - mic_pos_m[1] * M2CM
-            mic_z_cm = APARTMENT_FLOOR_Z_CM + mic_pos_m[2] * M2CM
+            mic_x_cm, mic_y_cm, mic_z_cm = _apartment_camera_ue_cm(
+                spec["mic"]["pos_m"]
+            )
 
             # Set camera to mic pose, one yaw only (Plan-1 single view)
             with instance.begin_frame():
@@ -265,6 +302,7 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
                     find_body_bone_in_frame,
                     sample_body_bone_position_in_frame,
                 )
+            visual_centers = {placement.tag: [] for placement in scene.animals}
 
             # Per-frame render
             import cv2
@@ -273,7 +311,15 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
                     for actor, placement in zip(actors, scene.animals):
                         if placement.is_animated:
                             _step_animated(actor, placement, frame_i,
-                                            "apartment", scene)
+                                            "apartment", render_scene)
+                    for actor, placement in zip(actors, scene.animals):
+                        try:
+                            center = _actor_visual_center_ssot_m(actor)
+                        except Exception:
+                            center = tuple(float(v) for v in placement.trajectory_m[frame_i])
+                        visual_centers[placement.tag].append(
+                            [float(v) for v in center]
+                        )
                     cam.K2_SetActorLocationAndRotation(
                         NewLocation={"X": mic_x_cm, "Y": mic_y_cm, "Z": mic_z_cm},
                         NewRotation={"Roll": 0.0, "Pitch": 0.0, "Yaw": float(yaw_ue_deg)},
@@ -331,6 +377,20 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
                     except AssertionError as e:
                         print(f"[apt_render] {e}")
                         raise
+
+            visual_meta_path = out_dir / "videos" / "actor_visual_metadata.json"
+            visual_meta_path.write_text(json.dumps({
+                "coordinate_frame": "absolute_ssot_m",
+                "source": "UE actor GetActorBounds Origin per rendered frame",
+                "sources": [
+                    {
+                        "tag": tag,
+                        "visual_center_world_xyz_per_frame": centers,
+                    }
+                    for tag, centers in visual_centers.items()
+                ],
+            }, indent=2))
+            print(f"[apt_render] wrote {visual_meta_path}")
 
             # ffmpeg -> mp4
             mp4_path = out_dir / "videos" / "apartment_v1_view0.mp4"

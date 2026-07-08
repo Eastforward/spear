@@ -13,6 +13,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tools" / "gpurir_scenes"))
+sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
 sys.path.insert(0, str(REPO / "tools"))
 
 
@@ -62,3 +63,56 @@ def test_apartment_position_and_rotation_are_consistent():
     # is 'in front of' the mic in world (world +Y at yaw 90) should still be
     # 'in front of' the mic in UE (UE -Y at yaw -90 → UE-forward is -Y_UE).
     # Both flipped, so directionality preserved.
+
+
+def test_apartment_per_clip_renderer_uses_absolute_ssot_for_random_mic():
+    """Plan-2 apartment clips store mic and source positions in the same
+    absolute SSOT apartment frame. The UE renderer must therefore place both
+    camera and actors through the same absolute SSOT->UE transform; otherwise
+    a source that metadata/topdown says is in front of the camera can be
+    rendered behind it.
+    """
+    import math
+
+    from run_render_pass import _world_from_scene, _yaw_world_to_ue
+    from run_render_pass_apartment import (
+        _apartment_camera_ue_cm,
+        _absolute_apartment_render_scene,
+    )
+    from gpurir_scenes.scene_spec import SceneSpec
+
+    mic_pos_m = (0.6035292184577328, -3.6151139684246543, 0.8056184070759604)
+    mic_yaw_deg = 260.2961920851162
+    # clip_0003 frame 35: topdown/metadata place this near the center of view.
+    source_pos_m = (0.4649450621971391, -4.672269280947141, 0.45)
+
+    camera_ue = np.asarray(_apartment_camera_ue_cm(mic_pos_m), dtype=float)
+    render_scene = _absolute_apartment_render_scene(
+        SceneSpec(seed=0, mic_pos_m=mic_pos_m, animals=[])
+    )
+    actor_ue = np.asarray(
+        _world_from_scene(source_pos_m, room="apartment", spec=render_scene),
+        dtype=float,
+    )
+
+    yaw_ue = _yaw_world_to_ue(mic_yaw_deg, "apartment")
+    forward_ue = np.asarray([
+        math.cos(math.radians(yaw_ue)),
+        math.sin(math.radians(yaw_ue)),
+    ])
+    forward_distance_cm = float((actor_ue[:2] - camera_ue[:2]) @ forward_ue)
+
+    assert forward_distance_cm > 0.0
+
+
+def test_apartment_ue_cm_to_ssot_m_inverse_uses_absolute_origin():
+    from run_render_pass import APARTMENT_FLOOR_Z_CM, APARTMENT_MIC_ORIGIN_CM
+    from run_render_pass_apartment import _apartment_ue_cm_to_ssot_m
+
+    ue = (
+        APARTMENT_MIC_ORIGIN_CM[0] + 250.0,
+        APARTMENT_MIC_ORIGIN_CM[1] - 175.0,
+        APARTMENT_FLOOR_Z_CM + 90.0,
+    )
+
+    assert _apartment_ue_cm_to_ssot_m(ue) == pytest.approx((2.5, 1.75, 0.9))

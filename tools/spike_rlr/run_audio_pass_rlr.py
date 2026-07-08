@@ -37,12 +37,6 @@ import numpy as np
 import soundfile as sf
 
 
-# --- import habitat-sim from ss2 env ---------------------------------------
-# This module MUST be run with ss2 env's python; see run_all.sh.
-import habitat_sim  # noqa: E402
-from habitat_sim.sensor import RLRAudioPropagationChannelLayoutType  # noqa: E402
-
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -127,6 +121,10 @@ def _load_scene_and_scene_two_dogs(spec_path=None):
 _TAG_AUDIO_OVERRIDES = {
     # Golden: real dog bark (restored per user request)
     "dog_golden": "/data/datasets/omniaudio/train-data-az-360-large/Barking Aldi Dog_358.wav",
+    # Beagle review asset: same real dog bark class as golden.
+    "dog_beagle_v2": "/data/datasets/omniaudio/train-data-az-360-large/Barking Aldi Dog_358.wav",
+    # British shorthair review asset: local Omniloc cat purring clip.
+    "cat_british_shorthair_v2": "/data/datasets/cy/omniloc/train/audio/cat purring/-A1eKkZVSRw_000070.mp3",
     # Husky: synthesized C-major do-re-mi piano scale (1 note per ~0.6s).
     # Rich HF harmonics so HRTF ILD is strong; discrete notes make it easy
     # to hear the same note move around the head as husky detours.
@@ -320,6 +318,11 @@ def build_rlr_sim(glb_path, materials_json_path, sample_rate=16000,
     No visual sensors, no physics -- audio only. The scene mesh comes from
     our SSOT-generated shoebox_v2_mesh.glb.
     """
+    # Imported lazily so dispatcher/help tests can import this module in
+    # spear-env; actual RLR rendering still requires the ss2 env.
+    import habitat_sim
+    from habitat_sim.sensor import RLRAudioPropagationChannelLayoutType
+
     sim_cfg = habitat_sim.SimulatorConfiguration()
     sim_cfg.scene_id = str(glb_path)
     sim_cfg.enable_physics = False
@@ -374,26 +377,54 @@ def build_rlr_sim(glb_path, materials_json_path, sample_rate=16000,
     return sim, audio_sensor
 
 
-def _set_agent_pose(sim, mic_pos_scene, mic_forward=(0.0, 1.0, 0.0)):
-    """Place the Habitat agent (mic/listener) at mic_pos and face +Y_scene.
+def _mic_yaw_deg_from_spec(spec: dict) -> float:
+    """Return the listener yaw in the SSOT scene frame.
+
+    Apartment Plan-2 specs put yaw on spec["mic"]. Older shoebox specs only
+    carried it on camera_configs[0]. Their canonical view0 faces +Y, i.e. 90
+    deg in the SSOT +X-forward convention.
+    """
+    mic = spec.get("mic", {})
+    if "yaw_deg" in mic:
+        return float(mic["yaw_deg"])
+    cameras = spec.get("camera_configs") or []
+    if cameras and "yaw_deg" in cameras[0]:
+        return float(cameras[0]["yaw_deg"])
+    return 90.0
+
+
+def _habitat_agent_yaw_deg_for_scene_yaw_deg(scene_yaw_deg: float) -> float:
+    """Convert SSOT scene yaw to Habitat agent yaw about Habitat +Y(up).
+
+    SSOT yaw=0 faces +X_scene; yaw=90 faces +Y_scene. After
+    _habitat_from_scene, scene forward becomes (cos(yaw), 0, sin(yaw)) in
+    Habitat coordinates. Habitat agent forward is local -Z, so rotating it by
+    (270 - yaw) degrees around +Y points the listener at the SSOT forward.
+    """
+    return float((270.0 - float(scene_yaw_deg)) % 360.0)
+
+
+def _set_agent_pose(sim, mic_pos_scene, mic_yaw_deg: float = 90.0):
+    """Place the Habitat agent (mic/listener) at mic_pos and face mic_yaw.
 
     Habitat convention: agent's "forward" is -Z_habitat (like a camera looking
-    down its -Z axis). Our SSOT: +Y_scene = mic_forward = window direction.
-    After the Y<->Z axis swap in _habitat_from_scene, +Y_scene becomes
-    +Z_habitat. So we need to yaw the agent 180 deg about Y (up) so its
-    forward (-Z) becomes +Z, i.e. it now faces +Y_scene.
+    down its -Z axis). Our SSOT yaw=0 faces +X_scene; positive yaw rotates
+    CCW in XY. After the Y<->Z axis swap in _habitat_from_scene, scene forward
+    maps to (cos(yaw), 0, sin(yaw)) in Habitat.
 
     This orientation matters because RLR's ambisonic output is expressed in
-    the LISTENER's local frame (not world frame). Wrong orientation was why
-    all sources ended up on one side in the stereo downmix.
+    the LISTENER's local frame (not world frame). Leaving it fixed at +Y_scene
+    makes random-yaw review clips sound left/right by world axes instead of by
+    the rendered camera view.
     """
     import quaternion  # noqa: E402  (bundled with habitat-sim)
     agent = sim.get_agent(0)
     state = agent.get_state()
     state.position = _habitat_from_scene(mic_pos_scene)
-    # 180-degree rotation about the Y_habitat (up) axis.
-    # Quaternion: w=0, x=0, y=1, z=0
-    state.rotation = np.quaternion(0.0, 0.0, 1.0, 0.0)
+    agent_yaw = np.deg2rad(_habitat_agent_yaw_deg_for_scene_yaw_deg(mic_yaw_deg))
+    half = agent_yaw / 2.0
+    state.rotation = np.quaternion(float(np.cos(half)), 0.0,
+                                   float(np.sin(half)), 0.0)
     agent.set_state(state)
 
 
@@ -436,7 +467,7 @@ def compute_rir_and_render(spec_path, glb_path, materials_sidecar_path,
     scene = load_scene(spec_path)
 
     # Place mic (Habitat's agent = the listener)
-    _set_agent_pose(sim, spec["mic"]["pos_m"])
+    _set_agent_pose(sim, spec["mic"]["pos_m"], _mic_yaw_deg_from_spec(spec))
 
     # Wet output buffer (n_channels x n_samples_total). We know from
     # build_rlr_sim we set 4-ch ambisonic; assert to be defensive.
@@ -568,10 +599,9 @@ def compute_binaural(spec_path, glb_path, materials_sidecar_path,
     """RLR native binaural (2ch) rendering. Uses the AudioSensor's built-in
     HRTF decoder. Same trajectory + per-source overlap-add as FOA path.
 
-    Empirical listener-frame calibration: the agent is yawed 180° about Y
-    in `_set_agent_pose()`, which makes RLR's binaural L and R channels
-    come out swapped relative to the SSOT "world +X = camera right" convention.
-    We swap L↔R at the end to restore convention.
+    Empirical listener-frame calibration: RLR's native binaural L and R
+    channels come out swapped relative to the SSOT review convention after
+    setting the Habitat listener pose. We swap L↔R at the end to restore it.
     """
     with open(spec_path) as f:
         spec = json.load(f)
@@ -601,7 +631,7 @@ def compute_binaural(spec_path, glb_path, materials_sidecar_path,
 
     load_scene = _load_scene_and_scene_two_dogs(spec_path)
     scene = load_scene(spec_path)
-    _set_agent_pose(sim, spec["mic"]["pos_m"])
+    _set_agent_pose(sim, spec["mic"]["pos_m"], _mic_yaw_deg_from_spec(spec))
 
     wet = np.zeros((2, n_samples_total), dtype=np.float32)
     per_source_wet_map = {}
