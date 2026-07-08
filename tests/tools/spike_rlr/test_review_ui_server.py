@@ -49,8 +49,23 @@ def test_tag_view_renders_single_card(workspace):
     assert r.status_code == 200
     assert b"dog_test_srv" in r.data
     assert b"Approve" in r.data
-    assert b"Rotate mesh" in r.data
-    assert b"Roll +90" in r.data
+    # spatial rotate buttons (positioned around preview via CSS grid)
+    assert b"yaw -90" in r.data or b"yaw &minus;90" in r.data or b"yaw \xe2\x88\x9290" in r.data
+    assert b"yaw +90" in r.data
+    assert b"flip 180" in r.data
+    assert b"reset" in r.data
+    # absolute mesh path shown for reviewer's benefit
+    assert b"mesh.glb" in r.data
+
+
+def test_tag_view_shows_absolute_paths(workspace):
+    from review_ui_server import create_app
+    app = create_app(workspace["pending"], workspace["approved"], workspace["rejected"])
+    client = app.test_client()
+    r = client.get("/tag/dog_test_srv")
+    # Both pending dir and mesh path should appear as absolute paths
+    pending_abs = str(workspace["pending"].resolve())
+    assert pending_abs.encode() in r.data
 
 
 def test_preview_png_served(workspace):

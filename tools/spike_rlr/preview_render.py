@@ -167,13 +167,16 @@ def _draw_review_view(ax, mesh, elev, azim, title, bbox_max_extent,
 
 def render_review_preview(mesh_path, out_png_path,
                            note: str = "") -> None:
-    """Render a review-oriented preview: mesh in current world orientation,
-    with GIANT green +X (head direction target) and blue +Y (up target)
-    reference arrows overlaid.
+    """Render a review-oriented preview: mesh viewed from world -Y looking down,
+    so X (target head direction) is on the horizontal screen axis and Z
+    (target side) is on the vertical screen axis. Overlays a GIANT green
+    "HEAD →" arrow along +X (canonical head direction target).
 
-    The reviewer's job is:
-      "rotate the mesh until its head points along the green arrow AND
-       the mesh is standing up (dorsal side up along blue arrow)".
+    Rendering choice: matplotlib 2D projection of world XZ plane (top-down
+    with Y being the depth axis). The reviewer's task becomes:
+      "Rotate the mesh until its head points along the green arrow (→ RIGHT)
+       AND the animal appears to be standing upright (feet toward the
+       viewer, back away from the viewer)."
 
     Args:
       mesh_path: path to .glb / .obj
@@ -185,35 +188,61 @@ def render_review_preview(mesh_path, out_png_path,
     m = _load_mesh(mesh_path)
 
     bbox_size = m.bounds[1] - m.bounds[0]
-    bbox_max_extent = 0.5 * bbox_size.max()
+    R = 0.55 * bbox_size.max()
 
-    fig = plt.figure(figsize=(12, 10))
+    fig, ax = plt.subplots(figsize=(8, 8))
 
-    # 4 views: front (looking down -X), side (looking along -Z), top (looking
-    # down -Y), isometric.  All show the same world axes so the user can
-    # see how the mesh sits relative to the target head direction.
-    ax1 = fig.add_subplot(2, 2, 1, projection="3d")
-    _draw_review_view(ax1, m, elev=15, azim=-70,
-                       title="Isometric (should look natural)",
-                       bbox_max_extent=bbox_max_extent)
-    ax2 = fig.add_subplot(2, 2, 2, projection="3d")
-    _draw_review_view(ax2, m, elev=0, azim=90,
-                       title="Side view (head should be RIGHT →)",
-                       bbox_max_extent=bbox_max_extent)
-    ax3 = fig.add_subplot(2, 2, 3, projection="3d")
-    _draw_review_view(ax3, m, elev=90, azim=-90,
-                       title="Top-down (head should point RIGHT →)",
-                       bbox_max_extent=bbox_max_extent)
-    ax4 = fig.add_subplot(2, 2, 4, projection="3d")
-    _draw_review_view(ax4, m, elev=0, azim=0,
-                       title="Front view (head coming AT you)",
-                       bbox_max_extent=bbox_max_extent)
+    # Project mesh triangles down to the XZ plane (top-down view from world -Y).
+    # We color faces by their Y-depth so front / back is visually distinguishable.
+    verts = np.asarray(m.vertices)
+    faces = np.asarray(m.faces)
 
-    title = f"[{mesh_path.name}]  Rotate until: head points → (GREEN) & animal stands up ↑ (BLUE)"
+    from matplotlib.collections import PolyCollection
+    tri_xz = verts[faces][:, :, [0, 2]]     # (F, 3, 2) — X, Z
+    tri_y = verts[faces][:, :, 1].mean(axis=1)  # (F,) — mean Y (depth)
+    # Sort back-to-front so "closer to viewer" (lower Y) draws on top
+    order = np.argsort(-tri_y)
+    tri_xz = tri_xz[order]
+    tri_y_sorted = tri_y[order]
+    # Color by depth: darker = farther, lighter = closer
+    y_min, y_max = tri_y.min(), tri_y.max()
+    y_norm = (tri_y_sorted - y_min) / max(y_max - y_min, 1e-6)
+    colors = plt.cm.Blues(0.35 + 0.5 * y_norm)
+
+    coll = PolyCollection(tri_xz, facecolors=colors, edgecolors="none", alpha=0.85)
+    ax.add_collection(coll)
+
+    # Frame square around world origin
+    ax.set_xlim(-R * 1.4, R * 1.4)
+    ax.set_ylim(-R * 1.4, R * 1.4)
+    ax.set_aspect("equal")
+    ax.set_xlabel("world +X  (HEAD should point right →)",
+                  fontsize=12, color="#0a0", fontweight="bold")
+    ax.set_ylabel("world +Z  (image up)", fontsize=11, color="#666")
+    ax.grid(True, alpha=0.3, linestyle="--")
+
+    # GIANT green head-direction reference arrow along +X, drawn OFF to the
+    # right side of the mesh so it doesn't overlap.
+    arrow_start_x = R * 0.9
+    arrow_end_x = R * 1.25
+    ax.annotate(
+        "", xy=(arrow_end_x, 0), xytext=(arrow_start_x, 0),
+        arrowprops=dict(arrowstyle="-|>", color="#0a0", lw=6,
+                         mutation_scale=40),
+    )
+    ax.text(R * 1.28, 0, "HEAD →", color="#0a0", fontsize=18,
+            fontweight="bold", va="center")
+
+    # Same for -X: label the tail-target
+    ax.text(-R * 1.28, 0, "← TAIL", color="#a00", fontsize=13,
+            fontweight="bold", va="center", ha="right")
+
+    title = f"{mesh_path.name}"
     if note:
         title += f"\n{note}"
-    fig.suptitle(title, fontsize=11, y=0.995)
+    ax.set_title(title, fontsize=12, pad=10)
 
     out_png_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(str(out_png_path), dpi=80, bbox_inches="tight")
+    fig.savefig(str(out_png_path), dpi=90, bbox_inches="tight",
+                facecolor="white")
     plt.close(fig)

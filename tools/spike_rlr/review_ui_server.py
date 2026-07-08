@@ -49,145 +49,218 @@ from preview_render import render_review_preview  # noqa: E402
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
 <head>
-    <title>Mesh Direction Review — {{tag}}</title>
+    <title>Mesh Review — {{tag}}</title>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <style>
         html, body { margin: 0; padding: 0; background: #f2f4f7;
                      font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
-        .wrap { max-width: 900px; margin: 0 auto; padding: 24px; }
-        h1 { text-align: center; color: #222; margin: 0 0 8px; font-size: 22px; }
-        .progress { text-align: center; color: #667; margin-bottom: 20px; font-size: 14px; }
-        .card { background: #fff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-                 padding: 24px; margin-bottom: 16px; }
-        .tag-name { text-align: center; font-size: 24px; font-weight: 700; color: #223;
-                     margin-bottom: 4px; }
-        .conf { text-align: center; color: #667; font-size: 13px; margin-bottom: 14px; }
+        .wrap { max-width: 820px; margin: 0 auto; padding: 20px; }
+        h1 { text-align: center; color: #222; margin: 0 0 6px; font-size: 20px; }
+        .progress { text-align: center; color: #667; margin-bottom: 16px; font-size: 13px; }
+        .card { background: #fff; border-radius: 12px;
+                 box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+                 padding: 20px; }
+        .tag-name { text-align: center; font-size: 22px; font-weight: 700;
+                     color: #223; margin-bottom: 2px; }
+        .conf { text-align: center; color: #667; font-size: 12px; margin-bottom: 10px; }
         .conf-high { color: #060; }
         .conf-mid  { color: #a60; }
         .conf-low  { color: #c00; }
-        .preview-wrap { text-align: center; margin: 12px 0; }
-        .preview-wrap img { max-width: 100%; border: 1px solid #ddd;
-                             border-radius: 6px; background: #fff; }
+        .rot-applied { color: #049; font-family: monospace; font-size: 12px;
+                        margin-top: 3px; }
         .instructions { background: #fffbe6; border-left: 4px solid #f5c518;
-                         padding: 10px 14px; border-radius: 4px;
-                         color: #443; font-size: 13px; margin: 10px 0 18px; line-height: 1.5; }
-        .actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;
-                    margin: 14px 0 6px; }
-        button { padding: 10px 16px; font-size: 14px; font-weight: 600;
-                  cursor: pointer; border: none; border-radius: 6px;
-                  transition: transform 0.05s, box-shadow 0.15s; }
-        button:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
-        button:active { transform: translateY(1px); }
-        .approve   { background: #16a34a; color: white; }
-        .reject    { background: #dc2626; color: white; }
-        .skip      { background: #64748b; color: white; }
-        .rot       { background: #e5e7eb; color: #223; font-weight: 500; padding: 8px 12px;
-                      font-size: 13px; }
-        .rot:hover { background: #d1d5db; }
-        .rot-x { border-left: 3px solid #dc2626; }
-        .rot-y { border-left: 3px solid #16a34a; }
-        .rot-z { border-left: 3px solid #2563eb; }
-        .section-label { text-align: center; font-size: 12px; color: #667;
-                          text-transform: uppercase; letter-spacing: 0.06em;
-                          margin: 18px 0 8px; font-weight: 600; }
-        .reset-form   { display: inline-block; margin-left: 10px; }
-        .footer { text-align: center; color: #999; font-size: 11px; margin-top: 20px; }
+                         padding: 8px 12px; border-radius: 4px;
+                         color: #443; font-size: 12px; margin: 6px 0 12px;
+                         line-height: 1.5; text-align: center; }
+
+        /* ---- Spatial rotate cross around preview ---- */
+        .stage {
+            display: grid;
+            grid-template-columns: 70px 1fr 70px;
+            grid-template-rows: 60px 1fr 60px;
+            align-items: center; justify-items: center;
+            gap: 6px;
+            max-width: 640px;
+            margin: 0 auto;
+        }
+        .stage .preview { grid-column: 2; grid-row: 2;
+                            display: flex; justify-content: center; }
+        .stage .preview img { max-width: 100%; max-height: 480px;
+                               border: 1px solid #ddd; border-radius: 6px;
+                               background: #fff; display: block; }
+
+        .rot-btn { background: #e5e7eb; color: #223; border: none;
+                    border-radius: 8px; padding: 6px 10px; font-size: 22px;
+                    cursor: pointer; font-weight: 700; line-height: 1;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+                    transition: background 0.1s, transform 0.05s;
+                    min-width: 54px; min-height: 42px; }
+        .rot-btn:hover { background: #d1d5db; }
+        .rot-btn:active { transform: translateY(1px); }
+        .rot-btn small { display: block; font-size: 9px; font-weight: 500;
+                          color: #667; margin-top: 2px; }
+
+        /* Position within grid */
+        .rot-top    { grid-column: 2; grid-row: 1; }
+        .rot-bottom { grid-column: 2; grid-row: 3; }
+        .rot-left   { grid-column: 1; grid-row: 2; }
+        .rot-right  { grid-column: 3; grid-row: 2; }
+        .rot-tl     { grid-column: 1; grid-row: 1; }
+        .rot-tr     { grid-column: 3; grid-row: 1; }
+        .rot-bl     { grid-column: 1; grid-row: 3; }
+        .rot-br     { grid-column: 3; grid-row: 3; }
+
+        .btn-row { display: flex; gap: 12px; justify-content: center;
+                    margin-top: 18px; flex-wrap: wrap; }
+        .btn { padding: 11px 18px; font-size: 14px; font-weight: 600;
+                cursor: pointer; border: none; border-radius: 8px;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .btn:hover { filter: brightness(0.95); }
+        .btn:active { transform: translateY(1px); }
+        .approve { background: #16a34a; color: white; }
+        .reject  { background: #dc2626; color: white; }
+        .skip    { background: #64748b; color: white; }
+        .flip    { background: #f59e0b; color: white; }
+        .reset   { background: #e5e7eb; color: #334; }
+
+        .footer { text-align: center; color: #999; font-size: 11px; margin-top: 16px; }
         form { display: inline; margin: 0; padding: 0; }
+
+        /* Corner buttons (Y-axis yaw = in-plane rotation) — smaller & round */
+        .rot-tl button, .rot-tr button, .rot-bl button, .rot-br button {
+            font-size: 20px;
+            background: #dbeafe;
+        }
+        .rot-tl button:hover, .rot-tr button:hover,
+        .rot-bl button:hover, .rot-br button:hover { background: #bfdbfe; }
     </style>
 </head>
 <body>
     <div class="wrap">
-        <h1>Hunyuan Mesh Direction Review</h1>
+        <h1>Mesh Direction Review</h1>
         <div class="progress">
             Pending: <b>{{n_pending}}</b> &nbsp;|&nbsp;
             Approved: <b>{{n_approved}}</b> &nbsp;|&nbsp;
-            Rejected: <b>{{n_rejected}}</b>
+            Rejected: <b>{{n_rejected}}</b><br>
+            <span style="font-size:11px;">
+              📂 <code>{{pending_dir}}</code>
+            </span>
         </div>
 
         <div class="card">
             <div class="tag-name">{{tag}}</div>
             <div class="conf">
-                Auto-detected head: {{head_direction}}
-                &nbsp;|&nbsp; Confidence:
-                <span class="{{conf_class}}">{{confidence_pct}}%</span>
+                Auto-detected head: {{head_direction}} &nbsp;|&nbsp;
+                Confidence: <span class="{{conf_class}}">{{confidence_pct}}%</span>
                 {% if rotation_applied %}
-                &nbsp;|&nbsp; Applied rotation: {{rotation_applied}}
+                <div class="rot-applied">Applied: {{rotation_applied}}</div>
                 {% endif %}
+                <div class="rot-applied" style="color:#555; font-size:11px;">
+                  📁 <code>{{mesh_abs_path}}</code>
+                </div>
             </div>
 
             <div class="instructions">
-                <b>Target:</b> rotate the mesh so it stands up ↑ (BLUE arrow)
-                AND its head points RIGHT → (GREEN arrow). Then click
-                <b style="color:#16a34a">Approve</b>.
-                <br>Wrong direction? Use the rotate buttons.
-                Unusable mesh? <b style="color:#dc2626">Reject</b>.
-                Come back later? <b>Skip</b>.
+                <b>Goal:</b> rotate so head points to the <b style="color:#0a0">green → HEAD</b> arrow
+                on the right. Then click <b style="color:#16a34a">Approve</b>.
             </div>
 
-            <div class="preview-wrap">
-                <img src="/preview/{{tag}}.png?t={{cache_bust}}" alt="preview">
+            <!-- SPATIAL ROTATE CROSS: arrows around the image -->
+            <div class="stage">
+
+                <!-- Top-left corner: yaw CCW (in-plane, about Y) -->
+                <div class="rot-tl">
+                    <form action="/rotate/{{tag}}" method="post">
+                        <input type="hidden" name="axis" value="y">
+                        <input type="hidden" name="deg" value="-90">
+                        <button type="submit" class="rot-btn" title="Rotate mesh counter-clockwise in this view (yaw −90°)">↺<small>yaw −90°</small></button>
+                    </form>
+                </div>
+
+                <!-- Top center: tilt back-away (roll about X, +90) -->
+                <div class="rot-top">
+                    <form action="/rotate/{{tag}}" method="post">
+                        <input type="hidden" name="axis" value="x">
+                        <input type="hidden" name="deg" value="90">
+                        <button type="submit" class="rot-btn" title="Tilt back — flip the mesh away from viewer (roll +90°)">↑<small>roll +90°</small></button>
+                    </form>
+                </div>
+
+                <!-- Top-right corner: yaw CW -->
+                <div class="rot-tr">
+                    <form action="/rotate/{{tag}}" method="post">
+                        <input type="hidden" name="axis" value="y">
+                        <input type="hidden" name="deg" value="90">
+                        <button type="submit" class="rot-btn" title="Rotate mesh clockwise in this view (yaw +90°)">↻<small>yaw +90°</small></button>
+                    </form>
+                </div>
+
+                <!-- Left: pitch −90 (topple to left in this view) -->
+                <div class="rot-left">
+                    <form action="/rotate/{{tag}}" method="post">
+                        <input type="hidden" name="axis" value="z">
+                        <input type="hidden" name="deg" value="-90">
+                        <button type="submit" class="rot-btn" title="Pitch −90° (about Z axis)">←<small>pitch −</small></button>
+                    </form>
+                </div>
+
+                <!-- Center: preview image -->
+                <div class="preview">
+                    <img src="/preview/{{tag}}.png?t={{cache_bust}}" alt="preview">
+                </div>
+
+                <!-- Right: pitch +90 -->
+                <div class="rot-right">
+                    <form action="/rotate/{{tag}}" method="post">
+                        <input type="hidden" name="axis" value="z">
+                        <input type="hidden" name="deg" value="90">
+                        <button type="submit" class="rot-btn" title="Pitch +90° (about Z axis)">→<small>pitch +</small></button>
+                    </form>
+                </div>
+
+                <!-- Bottom-left corner: flip head↔tail (180 yaw) -->
+                <div class="rot-bl">
+                    <form action="/rotate/{{tag}}" method="post">
+                        <input type="hidden" name="axis" value="y">
+                        <input type="hidden" name="deg" value="180">
+                        <button type="submit" class="rot-btn" title="180° yaw — swap head and tail" style="background:#fef3c7;">⇄<small>flip 180°</small></button>
+                    </form>
+                </div>
+
+                <!-- Bottom center: tilt forward-toward (roll about X, −90) -->
+                <div class="rot-bottom">
+                    <form action="/rotate/{{tag}}" method="post">
+                        <input type="hidden" name="axis" value="x">
+                        <input type="hidden" name="deg" value="-90">
+                        <button type="submit" class="rot-btn" title="Tilt forward — flip the mesh toward viewer (roll −90°)">↓<small>roll −90°</small></button>
+                    </form>
+                </div>
+
+                <!-- Bottom-right corner: reset -->
+                <div class="rot-br">
+                    <form action="/reset/{{tag}}" method="post">
+                        <button type="submit" class="rot-btn" title="Reset all rotations" style="background:#fee2e2;">⟲<small>reset</small></button>
+                    </form>
+                </div>
+
             </div>
 
-            <div class="section-label">Rotate mesh (each click = 90°)</div>
-            <div class="actions">
-                <form action="/rotate/{{tag}}" method="post">
-                    <input type="hidden" name="axis" value="x">
-                    <input type="hidden" name="deg" value="90">
-                    <button class="rot rot-x" type="submit">↻ Roll +90° (about X)</button>
-                </form>
-                <form action="/rotate/{{tag}}" method="post">
-                    <input type="hidden" name="axis" value="x">
-                    <input type="hidden" name="deg" value="-90">
-                    <button class="rot rot-x" type="submit">↺ Roll −90° (about X)</button>
-                </form>
-                <form action="/rotate/{{tag}}" method="post">
-                    <input type="hidden" name="axis" value="y">
-                    <input type="hidden" name="deg" value="90">
-                    <button class="rot rot-y" type="submit">↻ Yaw +90° (about Y = up)</button>
-                </form>
-                <form action="/rotate/{{tag}}" method="post">
-                    <input type="hidden" name="axis" value="y">
-                    <input type="hidden" name="deg" value="-90">
-                    <button class="rot rot-y" type="submit">↺ Yaw −90° (about Y = up)</button>
-                </form>
-                <form action="/rotate/{{tag}}" method="post">
-                    <input type="hidden" name="axis" value="z">
-                    <input type="hidden" name="deg" value="90">
-                    <button class="rot rot-z" type="submit">↻ Pitch +90° (about Z)</button>
-                </form>
-                <form action="/rotate/{{tag}}" method="post">
-                    <input type="hidden" name="axis" value="z">
-                    <input type="hidden" name="deg" value="-90">
-                    <button class="rot rot-z" type="submit">↺ Pitch −90° (about Z)</button>
-                </form>
-                <form action="/rotate/{{tag}}" method="post">
-                    <input type="hidden" name="axis" value="y">
-                    <input type="hidden" name="deg" value="180">
-                    <button class="rot" type="submit">Flip head ↔ tail (180° yaw)</button>
-                </form>
-                <form action="/reset/{{tag}}" method="post" class="reset-form">
-                    <button class="rot" type="submit">Reset all rotations</button>
-                </form>
-            </div>
-
-            <div class="section-label">Decision</div>
-            <div class="actions">
+            <div class="btn-row">
                 <form action="/approve/{{tag}}" method="post">
-                    <button class="approve" type="submit">✅ Approve (head points right)</button>
+                    <button class="btn approve" type="submit">✅ Approve</button>
                 </form>
                 <form action="/reject/{{tag}}" method="post">
                     <input type="hidden" name="reason" value="rejected via UI">
-                    <button class="reject" type="submit">❌ Reject (bad mesh)</button>
+                    <button class="btn reject" type="submit">❌ Reject</button>
                 </form>
                 <form action="/skip/{{tag}}" method="post">
-                    <button class="skip" type="submit">⏭ Skip (come back later)</button>
+                    <button class="btn skip" type="submit">⏭ Skip</button>
                 </form>
             </div>
         </div>
 
         <div class="footer">
-            Server: {{host}}:{{port}} &nbsp;|&nbsp;
-            pending dir: <code>{{pending_dir}}</code>
+            {{host}}:{{port}} &nbsp;|&nbsp; <code>{{pending_dir}}</code>
         </div>
     </div>
 </body>
@@ -246,29 +319,52 @@ def _rotation_json_path(tag_dir: Path) -> Path:
 
 
 def _read_rotation(tag_dir: Path) -> np.ndarray:
-    """Return the accumulated rotation matrix (3x3). Identity by default."""
-    p = _rotation_json_path(tag_dir)
-    if not p.exists():
-        return np.eye(3)
-    j = json.loads(p.read_text())
-    return np.array(j["matrix"], dtype=np.float64)
+    """Return the accumulated rotation matrix (3x3). Identity if file
+    missing, empty, corrupted, or mid-write (see _write_rotation atomicity
+    note)."""
+    return _read_rotation_safe(tag_dir)
 
 
 def _write_rotation(tag_dir: Path, R: np.ndarray, history: list):
+    """Atomic write: write to a temp sibling then rename over the target.
+    Prevents readers from seeing a truncated / empty file mid-write when a
+    reload races the rotate button."""
     p = _rotation_json_path(tag_dir)
-    p.write_text(json.dumps({
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({
         "matrix": R.tolist(),
         "history": history,
         "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }, indent=2))
+    tmp.replace(p)
+
+
+def _read_rotation_safe(tag_dir: Path) -> np.ndarray:
+    """Read with fallback: empty / corrupted file -> identity."""
+    p = _rotation_json_path(tag_dir)
+    if not p.exists():
+        return np.eye(3)
+    try:
+        raw = p.read_text()
+        if not raw.strip():
+            return np.eye(3)
+        j = json.loads(raw)
+        return np.array(j["matrix"], dtype=np.float64)
+    except (json.JSONDecodeError, KeyError, ValueError):
+        return np.eye(3)
 
 
 def _read_rotation_history(tag_dir: Path) -> list:
     p = _rotation_json_path(tag_dir)
     if not p.exists():
         return []
-    j = json.loads(p.read_text())
-    return j.get("history", [])
+    try:
+        raw = p.read_text()
+        if not raw.strip():
+            return []
+        return json.loads(raw).get("history", [])
+    except (json.JSONDecodeError, ValueError):
+        return []
 
 
 def _apply_rotation_and_regen_preview(tag_dir: Path):
@@ -349,6 +445,14 @@ def create_app(pending_dir, approved_dir, rejected_dir, host="127.0.0.1", port=8
         conf_pct = int(det["confidence"] * 100)
         history = _read_rotation_history(tag_dir)
 
+        # Resolve absolute mesh path so the user can see exactly which file
+        # we're reviewing (feature request 2026-07-08).
+        mesh_source = tag_dir / "mesh.glb"
+        if not mesh_source.exists():
+            mesh_source = tag_dir / "mesh.obj"
+        mesh_abs_path = str(mesh_source.resolve())
+        print(f"[review_ui] GET /tag/{tag}  mesh={mesh_abs_path}", flush=True)
+
         import time
         return render_template_string(
             HTML_TEMPLATE, tag=tag,
@@ -356,9 +460,11 @@ def create_app(pending_dir, approved_dir, rejected_dir, host="127.0.0.1", port=8
             confidence_pct=conf_pct,
             conf_class=_classify_conf(conf_pct),
             rotation_applied=" + ".join(history) if history else "",
+            mesh_abs_path=mesh_abs_path,
             n_pending=len(_pending_tags()),
             n_approved=_count(approved_dir), n_rejected=_count(rejected_dir),
-            host=host, port=port, pending_dir=str(pending_dir),
+            host=host, port=port,
+            pending_dir=str(pending_dir.resolve()),
             cache_bust=int(time.time() * 1000),
         )
 
@@ -391,6 +497,8 @@ def create_app(pending_dir, approved_dir, rejected_dir, host="127.0.0.1", port=8
         history = _read_rotation_history(tag_dir)
         history.append(f"{axis}{'+' if deg >= 0 else ''}{int(deg)}")
         _write_rotation(tag_dir, R_new, history)
+        print(f"[review_ui] ROTATE {tag}  axis={axis} deg={deg:+.0f}  "
+              f"history={' + '.join(history)}", flush=True)
         _apply_rotation_and_regen_preview(tag_dir)
         return redirect(url_for("tag_view", tag=tag))
 
@@ -437,6 +545,11 @@ def create_app(pending_dir, approved_dir, rejected_dir, host="127.0.0.1", port=8
         if dst.exists():
             shutil.rmtree(dst)
         shutil.move(str(src), str(dst))
+        print(f"[review_ui] MOVED {tag}  ->  {dst.resolve()}", flush=True)
+        print(f"[review_ui]   direction.json.human_approved = "
+              f"{updates.get('human_approved')}", flush=True)
+        if updates.get("human_notes"):
+            print(f"[review_ui]   notes: {updates['human_notes']}", flush=True)
 
     @app.route("/approve/<tag>", methods=["POST"])
     def approve(tag):
@@ -476,14 +589,30 @@ def main():
                      help="Bind host (default 127.0.0.1; SSH-forward from local)")
     args = ap.parse_args()
 
-    app = create_app(args.pending_dir, args.approved_dir, args.rejected_dir,
+    pending_abs = Path(args.pending_dir).resolve()
+    approved_abs = Path(args.approved_dir).resolve()
+    rejected_abs = Path(args.rejected_dir).resolve()
+
+    app = create_app(pending_abs, approved_abs, rejected_abs,
                       host=args.host, port=args.port)
-    print(f"Review UI serving http://{args.host}:{args.port}/")
-    print(f"  pending: {args.pending_dir}")
-    print(f"  approved: {args.approved_dir}")
-    print(f"  rejected: {args.rejected_dir}")
-    print("SSH port-forward from your local machine:")
-    print(f"  ssh -N -L {args.port}:localhost:{args.port} <this-server>")
+    print("=" * 72, flush=True)
+    print(f"Review UI serving  http://{args.host}:{args.port}/", flush=True)
+    print(f"  pending  dir:  {pending_abs}", flush=True)
+    print(f"  approved dir:  {approved_abs}", flush=True)
+    print(f"  rejected dir:  {rejected_abs}", flush=True)
+    # Enumerate pending tags + their mesh files
+    if pending_abs.exists():
+        pending_tags = sorted(d for d in pending_abs.iterdir()
+                               if d.is_dir() and (d / "direction.json").exists())
+        print(f"  {len(pending_tags)} tag(s) awaiting review:", flush=True)
+        for td in pending_tags:
+            mesh = td / "mesh.glb"
+            if not mesh.exists():
+                mesh = td / "mesh.obj"
+            print(f"     - {td.name:<28s}  {mesh.resolve()}", flush=True)
+    print("SSH port-forward from your local machine:", flush=True)
+    print(f"  ssh -N -L {args.port}:localhost:{args.port} <this-server>", flush=True)
+    print("=" * 72, flush=True)
     app.run(host=args.host, port=args.port)
 
 
