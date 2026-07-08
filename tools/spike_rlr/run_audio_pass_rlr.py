@@ -444,6 +444,11 @@ def compute_rir_and_render(spec_path, glb_path, materials_sidecar_path,
     wet = np.zeros((n_channels, n_samples_total), dtype=np.float32)
     per_source_wet_map = {}  # tag -> (n_channels, n_samples) FOA buffer
 
+    # Function-scope wall clock start so 0-source clips can still return
+    # {"wall_time_s": ...} without UnboundLocalError. Overwritten below per
+    # source if any exists.
+    t0 = time.time()
+
     # For each source: precompute dry, then per-frame get IR + convolve
     for a in scene.animals:
         tag = a.tag

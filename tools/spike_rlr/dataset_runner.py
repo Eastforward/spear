@@ -144,8 +144,17 @@ def main():
         if args.skip_render:
             continue
 
-        # Full render (per-clip): spawn UE, RLR audio, metadata
-        _render_one_clip(i, clip_dir)
+        # Full render (per-clip): spawn UE, RLR audio, metadata.
+        # Tolerate per-clip failures so a single bad spec doesn't lose the
+        # rest of the batch.
+        try:
+            _render_one_clip(i, clip_dir)
+        except subprocess.CalledProcessError as e:
+            print(f"[dataset_runner] clip {i:04d} render FAILED — "
+                  f"continuing to next clip. Error: {e}")
+            (clip_dir / "render_failed.txt").write_text(
+                f"subprocess: {e.cmd}\nreturncode: {e.returncode}\n"
+            )
 
     # Aggregate stats
     from flag_definitions import ALL_FLAGS
@@ -162,11 +171,10 @@ def _render_one_clip(clip_index: int, clip_dir: Path):
     env = dict(os.environ)
     env["DISPLAY"] = ":99"
     env["VK_ICD_FILENAMES"] = "/etc/vulkan/icd.d/nvidia_icd.json"
-    # Plan 1.5.B rig assertion left OFF for M1: calling
-    # instance.begin_frame() after the render loop's teardown causes SPEAR
-    # engine_service.begin_frame:157 assert False (frame state closed).
-    # Enable only in interactive/CI runs where the assert is called mid-loop.
-    env.pop("SPEAR_RIG_ASSERT", None)
+    # Plan 1.5.B rig assertion ON — sampling now happens INSIDE the render
+    # loop's begin_frame windows (see run_render_pass_apartment.py Task 8
+    # fix). No post-loop begin_frame -> no engine_service assert crash.
+    env["SPEAR_RIG_ASSERT"] = "1"
     subprocess.run(
         ["/data/jzy/miniconda3/envs/spear-env/bin/python",
          str(REPO_ROOT / "tools/spike_rlr/run_render_pass_apartment.py"),

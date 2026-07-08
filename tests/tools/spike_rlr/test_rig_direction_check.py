@@ -56,6 +56,33 @@ def test_assert_yaw_ok_raises_outside_tolerance():
                         context="test")
 
 
+def test_in_frame_api_exists():
+    """Plan 1.5.B fix: sample_body_bone_position_in_frame + assert_body_yaw_from_positions
+    must exist so the render loop can call them without opening its own begin_frame."""
+    from rig_direction_check import (
+        sample_body_bone_position_in_frame, find_body_bone_in_frame,
+        assert_body_yaw_from_positions,
+    )
+    # Pure-math yaw assertion works without SPEAR
+    import numpy as np
+    # walking +Y direction (world) -> UE yaw ~ 90
+    assert_body_yaw_from_positions(
+        pos_start=np.array([0, 0, 0]), pos_end=np.array([0, 10, 0]),
+        expected_yaw_world_deg=90.0, tolerance_deg=15.0, context="t",
+    )
+    # velocity too small -> silent skip
+    assert_body_yaw_from_positions(
+        pos_start=np.array([0, 0, 0]), pos_end=np.array([1e-5, 1e-5, 0]),
+        expected_yaw_world_deg=90.0, tolerance_deg=15.0, context="t",
+    )
+    # opposite direction -> raises
+    with pytest.raises(AssertionError):
+        assert_body_yaw_from_positions(
+            pos_start=np.array([0, 0, 0]), pos_end=np.array([0, -10, 0]),
+            expected_yaw_world_deg=90.0, tolerance_deg=15.0, context="t",
+        )
+
+
 def test_read_nonexistent_calibration_returns_none(tmp_path, monkeypatch):
     from rig_direction_check import read_rig_calibration_json
     calib_path = tmp_path / "does_not_exist.json"

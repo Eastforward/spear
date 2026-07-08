@@ -54,28 +54,76 @@ def _assert_yaw_ok(observed: float, expected: float, tolerance_deg: float,
         )
 
 
-def _sample_body_bone_position(actor, instance, bone_name: str):
+def sample_body_bone_position_in_frame(actor, bone_name: str):
     """Query a bone's world-space location via SPEAR RPC.
+
+    IMPORTANT: caller must be inside an active `instance.begin_frame()`
+    context — this function does NOT open its own frame. That was the bug
+    in v1: opening a nested begin_frame after the render loop tore down
+    frame state triggered engine_service.begin_frame:157 assert False.
 
     Returns np.ndarray shape (3,) in UE cm world frame, or None if the bone
     doesn't exist.
     """
-    with instance.begin_frame():
-        try:
-            # SPEAR uses SkeletalMeshComponent.GetBoneTransform(InBoneName, RTS_World)
-            comp = actor.GetComponentByClass(
-                ComponentClass="/Script/Engine.SkeletalMeshComponent")
-            if comp is None:
-                return None
-            tf = comp.GetBoneTransform(InBoneName=bone_name, TransformSpace="RTS_World")
-            loc = tf["Location"] if isinstance(tf, dict) else tf.Location
-            return np.array([loc["x"], loc["y"], loc["z"]], dtype=np.float64)
-        except Exception:
+    try:
+        # SPEAR uses SkeletalMeshComponent.GetBoneTransform(InBoneName, RTS_World)
+        comp = actor.GetComponentByClass(
+            ComponentClass="/Script/Engine.SkeletalMeshComponent")
+        if comp is None:
             return None
+        tf = comp.GetBoneTransform(InBoneName=bone_name, TransformSpace="RTS_World")
+        loc = tf["Location"] if isinstance(tf, dict) else tf.Location
+        return np.array([loc["x"], loc["y"], loc["z"]], dtype=np.float64)
+    except Exception:
+        return None
+
+
+def find_body_bone_in_frame(actor) -> Optional[str]:
+    """Return the first available candidate bone name on this actor.
+
+    Must be called inside an active begin_frame context."""
+    for name in _BODY_BONE_CANDIDATES:
+        pos = sample_body_bone_position_in_frame(actor, name)
+        if pos is not None:
+            return name
+    return None
+
+
+def assert_body_yaw_from_positions(pos_start, pos_end, expected_yaw_world_deg: float,
+                                     tolerance_deg: float = 15.0,
+                                     context: str = "clip") -> None:
+    """Compare a velocity yaw (from two already-sampled positions) to expected.
+
+    No SPEAR access — pure math. Caller samples pos_start and pos_end inside
+    two different begin_frame windows (e.g. frames T and T+N of the render
+    loop) and then passes them here.
+
+    Raises AssertionError if outside tolerance; silently skips if actor
+    isn't moving (pos_end - pos_start too small).
+    """
+    if pos_start is None or pos_end is None:
+        raise RuntimeError(f"[{context}] missing bone position sample")
+    v = np.asarray(pos_end) - np.asarray(pos_start)
+    if np.linalg.norm(v[:2]) < 1e-3:
+        return  # not moving — skip (paused / hold segment)
+    observed_yaw = float(np.degrees(np.arctan2(v[1], v[0])))
+    _assert_yaw_ok(observed=observed_yaw, expected=expected_yaw_world_deg,
+                    tolerance_deg=tolerance_deg, context=context)
+
+
+# ---- Legacy convenience wrappers (open their own begin_frame windows) ----
+# Kept for tests + calibration CLI. Do NOT call these from inside a render
+# loop that has its own frame management.
+
+def _sample_body_bone_position(actor, instance, bone_name: str):
+    with instance.begin_frame():
+        pos = sample_body_bone_position_in_frame(actor, bone_name)
+    with instance.end_frame():
+        pass
+    return pos
 
 
 def _find_body_bone(actor, instance) -> Optional[str]:
-    """Return the first available candidate bone name on this actor."""
     for name in _BODY_BONE_CANDIDATES:
         pos = _sample_body_bone_position(actor, instance, name)
         if pos is not None:
@@ -88,7 +136,8 @@ def calibrate_rig_forward_from_velocity(actor, instance, n_step_frames: int = 30
     forward yaw (world-frame degrees). Caller uses this as offset baseline.
 
     This is a static-scene calibration: caller must have already spawned the
-    actor + set body yaw to 0 before calling.
+    actor + set body yaw to 0 before calling. Opens its own begin_frame
+    windows — safe to call between clips, NOT inside another begin_frame.
     """
     body_bone = _find_body_bone(actor, instance)
     if body_bone is None:
@@ -104,18 +153,17 @@ def calibrate_rig_forward_from_velocity(actor, instance, n_step_frames: int = 30
             f"observed velocity too small ({np.linalg.norm(v):.4f} cm) — "
             f"is the animation actually playing?"
         )
-    # UE world convention: +X = right, +Y = forward (varies per room).
-    # We return the raw world-frame yaw = atan2(vy, vx).
     return float(np.degrees(np.arctan2(v[1], v[0])))
 
 
 def assert_body_forward(actor, instance, expected_yaw_world_deg: float,
                          tolerance_deg: float = 15.0, n_step_frames: int = 5,
                          context: str = "clip") -> None:
-    """Assert that actor's body is moving in the expected world-frame direction.
+    """DEPRECATED for in-render-loop use.
 
-    Samples body-center bone position at frame T and T+N, computes velocity
-    yaw, compares to expected. Raises AssertionError if outside tolerance.
+    Uses its own begin_frame windows — will crash if called after a render
+    loop has torn down frame state. For in-render-loop use, call
+    sample_body_bone_position_in_frame() + assert_body_yaw_from_positions().
     """
     body_bone = _find_body_bone(actor, instance)
     if body_bone is None:
@@ -123,15 +171,11 @@ def assert_body_forward(actor, instance, expected_yaw_world_deg: float,
     pos_start = _sample_body_bone_position(actor, instance, body_bone)
     instance.step(num_frames=n_step_frames)
     pos_end = _sample_body_bone_position(actor, instance, body_bone)
-    if pos_start is None or pos_end is None:
-        raise RuntimeError(f"[{context}] failed to sample bone positions")
-    v = pos_end - pos_start
-    if np.linalg.norm(v[:2]) < 1e-3:
-        # Actor isn't moving; skip assertion (probably paused / hold segment)
-        return
-    observed_yaw = float(np.degrees(np.arctan2(v[1], v[0])))
-    _assert_yaw_ok(observed=observed_yaw, expected=expected_yaw_world_deg,
-                    tolerance_deg=tolerance_deg, context=context)
+    assert_body_yaw_from_positions(
+        pos_start=pos_start, pos_end=pos_end,
+        expected_yaw_world_deg=expected_yaw_world_deg,
+        tolerance_deg=tolerance_deg, context=context,
+    )
 
 
 def write_rig_calibration_json(tag: str, offset_deg: float,

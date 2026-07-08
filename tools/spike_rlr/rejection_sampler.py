@@ -45,16 +45,34 @@ def generate_batch(config: SamplerConfig, spec_template, audio_lib, rng,
             for src in scene_sample.source_specs:
                 motion_style = rng.choice(list(MOTION_STYLES),
                                            p=[0.7, 0.1, 0.2])  # steady dominant
+                # Use furniture+walls for path planning so what the sampler
+                # validates matches what the UE renderer's planner will do
+                # (compose_two_dog_scene_apartment uses both).
+                plan_obstacles = (
+                    list(obstacle_context.get("furniture_bboxes", []))
+                    + list(obstacle_context.get("wall_bboxes", []))
+                )
+                planning_ctx = {
+                    "bounds_xy": spec_template["bounds_xy"],
+                    "obstacles": [(bmin, bmax) for bmin, bmax in plan_obstacles],
+                    "n_frames": spec_template.get("n_frames", 75),
+                    "fps": spec_template.get("fps", 15),
+                }
                 try:
+                    # Even for stationary motion, first try steady planning to
+                    # validate reachability. UE side (compose_two_dog_scene_apartment)
+                    # ALWAYS re-plans regardless of motion_style, so if steady
+                    # fails here the UE render will also fail. This catches
+                    # unreachable endpoints up-front instead of losing 30 s of
+                    # UE render time.
+                    _ = sample_trajectory(
+                        source_spec=src, planning_context=planning_ctx,
+                        rng=np.random.default_rng(0),  # cheap deterministic try
+                        motion_style="steady",
+                    )
+                    # Now sample the actual motion style
                     traj = sample_trajectory(
-                        source_spec=src,
-                        planning_context={
-                            "bounds_xy": spec_template["bounds_xy"],
-                            "obstacles": [(bmin, bmax) for bmin, bmax
-                                            in obstacle_context.get("furniture_bboxes", [])],
-                            "n_frames": spec_template.get("n_frames", 75),
-                            "fps": spec_template.get("fps", 15),
-                        },
+                        source_spec=src, planning_context=planning_ctx,
                         rng=rng, motion_style=str(motion_style),
                     )
                     trajectories.append(traj)

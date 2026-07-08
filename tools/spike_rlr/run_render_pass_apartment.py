@@ -232,6 +232,23 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
                 pass
             instance.step(num_frames=40)
 
+            # ---- Plan 1.5.B: per-clip rig direction sanity check ----
+            # Opt-in via env var (SPEAR_RIG_ASSERT=1) or --rig-assert flag.
+            # In-loop implementation: sample Root bone position at frames
+            # RIG_SAMPLE_FRAME_A and RIG_SAMPLE_FRAME_B (inside their
+            # begin_frame windows), then compare velocity yaw AFTER the
+            # loop finishes. No extra begin_frame after teardown, so no
+            # engine_service.begin_frame:157 assert False crash.
+            rig_assert_on = _rig_assert_enabled()
+            RIG_A = min(30, n_frames // 3)
+            RIG_B = min(RIG_A + 10, n_frames - 1)
+            rig_samples = {}   # placement.tag -> {"a": pos_a, "b": pos_b, "bone": name}
+            if rig_assert_on:
+                from rig_direction_check import (
+                    find_body_bone_in_frame,
+                    sample_body_bone_position_in_frame,
+                )
+
             # Per-frame render
             import cv2
             for frame_i in range(n_frames):
@@ -245,39 +262,50 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
                         NewRotation={"Roll": 0.0, "Pitch": 0.0, "Yaw": float(yaw_ue_deg)},
                         bSweep=False, bTeleport=True,
                     )
+                    # Sample bone positions inside the SAME begin_frame — Plan
+                    # 1.5.B in-loop rig direction check
+                    if rig_assert_on and frame_i in (RIG_A, RIG_B):
+                        which = "a" if frame_i == RIG_A else "b"
+                        for actor, placement in zip(actors, scene.animals):
+                            if not placement.is_animated:
+                                continue
+                            bucket = rig_samples.setdefault(placement.tag, {})
+                            if which == "a":
+                                bucket["bone"] = find_body_bone_in_frame(actor)
+                            bone = bucket.get("bone")
+                            if bone is None:
+                                continue
+                            bucket[which] = sample_body_bone_position_in_frame(actor, bone)
                 with instance.end_frame():
                     img = read_frame(comp)
                     cv2.imwrite(str(frames_dir / f"frame_{frame_i:04d}.png"), img)
                 if frame_i % 15 == 0:
                     print(f"[apt_render] frame {frame_i}/{n_frames}")
 
-            # ---- Plan 1.5.B: per-clip rig direction sanity check ----
-            # Opt-in via env var (SPEAR_RIG_ASSERT=1) or --rig-assert flag.
-            # Verifies actor's body was actually walking in the expected
-            # world-frame direction. Catches yaw-formula regressions.
-            if _rig_assert_enabled():
-                from rig_direction_check import assert_body_forward
-                for actor, placement in zip(actors, scene.animals):
+            # After loop: compare sampled positions (pure math, no SPEAR)
+            if rig_assert_on:
+                from rig_direction_check import assert_body_yaw_from_positions
+                for placement in scene.animals:
                     if not placement.is_animated:
                         continue
-                    # Expected world yaw derived from mid-clip velocity in
-                    # the trajectory (motion_yaw before rig offset). We
-                    # convert traj[frame_i+1] - traj[frame_i] on the SSOT
-                    # frame for a mid-clip window.
-                    mid = n_frames // 2
-                    t = np.asarray(placement.trajectory_m)
-                    if mid + 5 >= len(t):
+                    s = rig_samples.get(placement.tag, {})
+                    pos_a, pos_b = s.get("a"), s.get("b")
+                    if pos_a is None or pos_b is None:
+                        print(f"[apt_render] rig direction SKIP {placement.tag} "
+                              f"(no bone samples)")
                         continue
-                    dxy = t[mid + 5, :2] - t[mid, :2]
+                    t = np.asarray(placement.trajectory_m)
+                    if RIG_B >= len(t):
+                        continue
+                    dxy = t[RIG_B, :2] - t[RIG_A, :2]
                     if np.linalg.norm(dxy) < 1e-3:
                         continue
                     expected_motion_yaw_ssot = np.degrees(np.arctan2(dxy[1], dxy[0]))
-                    # World<->UE apartment convention: yaw_ue = -yaw_world.
-                    # Observed bone velocity is in UE cm frame.
+                    # apartment convention: yaw_ue = -yaw_world
                     expected_yaw_ue = -expected_motion_yaw_ssot
                     try:
-                        assert_body_forward(
-                            actor, instance,
+                        assert_body_yaw_from_positions(
+                            pos_start=pos_a, pos_end=pos_b,
                             expected_yaw_world_deg=expected_yaw_ue,
                             tolerance_deg=25.0,
                             context=f"apartment_v1/{placement.tag}",
@@ -285,7 +313,6 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
                         print(f"[apt_render] rig direction OK for {placement.tag}")
                     except AssertionError as e:
                         print(f"[apt_render] {e}")
-                        # Re-raise so CI can catch, but log first for humans
                         raise
 
             # ffmpeg -> mp4
