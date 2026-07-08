@@ -165,24 +165,49 @@ def _draw_review_view(ax, mesh, elev, azim, title, bbox_max_extent,
             color="#00a", fontsize=11, fontweight="bold")
 
 
+def _project_faces_2d(verts, faces, axes_pair, depth_axis, cmap):
+    """Return (tri_2d, colors, order) for a matplotlib PolyCollection.
+
+    axes_pair: tuple of 2 axis indices for the image (e.g. (0, 1) = XY view)
+    depth_axis: single axis index used to sort front-to-back
+    """
+    from matplotlib.collections import PolyCollection  # noqa: F401
+    tri_2d = verts[faces][:, :, list(axes_pair)]
+    tri_depth = verts[faces][:, :, depth_axis].mean(axis=1)
+    order = np.argsort(-tri_depth)
+    tri_2d = tri_2d[order]
+    tri_depth_sorted = tri_depth[order]
+    dmin, dmax = tri_depth.min(), tri_depth.max()
+    d_norm = (tri_depth_sorted - dmin) / max(dmax - dmin, 1e-6)
+    colors = cmap(0.35 + 0.5 * d_norm)
+    return tri_2d, colors
+
+
 def render_review_preview(mesh_path, out_png_path,
                            note: str = "") -> None:
-    """Render a review-oriented preview: mesh viewed from world -Y looking down,
-    so X (target head direction) is on the horizontal screen axis and Z
-    (target side) is on the vertical screen axis. Overlays a GIANT green
-    "HEAD →" arrow along +X (canonical head direction target).
+    """Render a review-oriented preview optimized for a human to judge
+    'is the mesh standing up AND facing right?' at a glance.
 
-    Rendering choice: matplotlib 2D projection of world XZ plane (top-down
-    with Y being the depth axis). The reviewer's task becomes:
-      "Rotate the mesh until its head points along the green arrow (→ RIGHT)
-       AND the animal appears to be standing upright (feet toward the
-       viewer, back away from the viewer)."
+    Two panels:
+      MAIN (larger)  — SIDE view: world XY plane (up in picture = up in
+                        world, right in picture = head direction). This is
+                        the view that instantly shows 'standing' vs
+                        'lying on its side'.
+      INSET (smaller) — TOP-DOWN view: world XZ plane (up in picture =
+                         world +Z, right in picture = head direction).
+                         Confirms head/tail orientation from above.
+
+    Both panels have the giant green 'HEAD →' reference arrow on the right.
+    The main (side) panel additionally has a blue 'UP ↑' reference arrow
+    at top since standing-vs-lying is judged from this panel.
 
     Args:
       mesh_path: path to .glb / .obj
       out_png_path: where to write .png
       note: optional annotation text under the title
     """
+    from matplotlib.collections import PolyCollection
+
     mesh_path = Path(mesh_path)
     out_png_path = Path(out_png_path)
     m = _load_mesh(mesh_path)
@@ -190,57 +215,80 @@ def render_review_preview(mesh_path, out_png_path,
     bbox_size = m.bounds[1] - m.bounds[0]
     R = 0.55 * bbox_size.max()
 
-    fig, ax = plt.subplots(figsize=(8, 8))
-
-    # Project mesh triangles down to the XZ plane (top-down view from world -Y).
-    # We color faces by their Y-depth so front / back is visually distinguishable.
     verts = np.asarray(m.vertices)
     faces = np.asarray(m.faces)
 
-    from matplotlib.collections import PolyCollection
-    tri_xz = verts[faces][:, :, [0, 2]]     # (F, 3, 2) — X, Z
-    tri_y = verts[faces][:, :, 1].mean(axis=1)  # (F,) — mean Y (depth)
-    # Sort back-to-front so "closer to viewer" (lower Y) draws on top
-    order = np.argsort(-tri_y)
-    tri_xz = tri_xz[order]
-    tri_y_sorted = tri_y[order]
-    # Color by depth: darker = farther, lighter = closer
-    y_min, y_max = tri_y.min(), tri_y.max()
-    y_norm = (tri_y_sorted - y_min) / max(y_max - y_min, 1e-6)
-    colors = plt.cm.Blues(0.35 + 0.5 * y_norm)
+    # Layout: gridspec — 3:1 width ratio for main:inset
+    fig = plt.figure(figsize=(11, 8))
+    gs = fig.add_gridspec(1, 2, width_ratios=[3, 1.2], wspace=0.15)
+    ax_main = fig.add_subplot(gs[0, 0])   # side view (XY)
+    ax_top = fig.add_subplot(gs[0, 1])    # top-down (XZ)
 
-    coll = PolyCollection(tri_xz, facecolors=colors, edgecolors="none", alpha=0.85)
-    ax.add_collection(coll)
+    # ---- Main side panel: XY plane, depth = -Z (so +Z faces are behind) ----
+    # World +X on horizontal axis, world +Y on vertical axis
+    tri_xy, colors_xy = _project_faces_2d(verts, faces, (0, 1),
+                                            depth_axis=2, cmap=plt.cm.Blues)
+    ax_main.add_collection(PolyCollection(tri_xy, facecolors=colors_xy,
+                                            edgecolors="none", alpha=0.85))
+    ax_main.set_xlim(-R * 1.5, R * 1.5)
+    ax_main.set_ylim(-R * 1.4, R * 1.5)
+    ax_main.set_aspect("equal")
+    ax_main.set_xlabel("world +X  (HEAD should point right →)",
+                        fontsize=13, color="#0a0", fontweight="bold")
+    ax_main.set_ylabel("world +Y  (UP — animal should stand upright)",
+                        fontsize=12, color="#00a", fontweight="bold")
+    ax_main.grid(True, alpha=0.3, linestyle="--")
+    ax_main.set_title("SIDE view  (this is what shows 'standing vs lying')",
+                       fontsize=11, pad=8)
 
-    # Frame square around world origin
-    ax.set_xlim(-R * 1.4, R * 1.4)
-    ax.set_ylim(-R * 1.4, R * 1.4)
-    ax.set_aspect("equal")
-    ax.set_xlabel("world +X  (HEAD should point right →)",
-                  fontsize=12, color="#0a0", fontweight="bold")
-    ax.set_ylabel("world +Z  (image up)", fontsize=11, color="#666")
-    ax.grid(True, alpha=0.3, linestyle="--")
-
-    # GIANT green head-direction reference arrow along +X, drawn OFF to the
-    # right side of the mesh so it doesn't overlap.
-    arrow_start_x = R * 0.9
-    arrow_end_x = R * 1.25
-    ax.annotate(
-        "", xy=(arrow_end_x, 0), xytext=(arrow_start_x, 0),
-        arrowprops=dict(arrowstyle="-|>", color="#0a0", lw=6,
-                         mutation_scale=40),
+    # Giant green HEAD arrow on right side
+    ax_main.annotate(
+        "", xy=(R * 1.25, 0), xytext=(R * 0.9, 0),
+        arrowprops=dict(arrowstyle="-|>", color="#0a0", lw=6, mutation_scale=40),
     )
-    ax.text(R * 1.28, 0, "HEAD →", color="#0a0", fontsize=18,
-            fontweight="bold", va="center")
+    ax_main.text(R * 1.28, 0, "HEAD →", color="#0a0", fontsize=17,
+                 fontweight="bold", va="center")
+    ax_main.text(-R * 1.28, 0, "← TAIL", color="#a00", fontsize=12,
+                 fontweight="bold", va="center", ha="right")
 
-    # Same for -X: label the tail-target
-    ax.text(-R * 1.28, 0, "← TAIL", color="#a00", fontsize=13,
-            fontweight="bold", va="center", ha="right")
+    # Blue UP arrow on top
+    ax_main.annotate(
+        "", xy=(0, R * 1.25), xytext=(0, R * 0.9),
+        arrowprops=dict(arrowstyle="-|>", color="#00a", lw=5, mutation_scale=35),
+    )
+    ax_main.text(0, R * 1.35, "UP ↑", color="#00a", fontsize=14,
+                 fontweight="bold", ha="center")
+
+    # Ground line at y=0 for reference
+    ax_main.axhline(0, color="#888", linestyle=":", linewidth=1, alpha=0.6)
+    ax_main.text(-R * 1.4, -R * 0.05, "ground", color="#888", fontsize=9,
+                 va="top")
+
+    # ---- Inset top panel: XZ plane, depth = -Y (bottom = closer to viewer) ----
+    tri_xz, colors_xz = _project_faces_2d(verts, faces, (0, 2),
+                                            depth_axis=1, cmap=plt.cm.Greens)
+    ax_top.add_collection(PolyCollection(tri_xz, facecolors=colors_xz,
+                                          edgecolors="none", alpha=0.85))
+    ax_top.set_xlim(-R * 1.4, R * 1.4)
+    ax_top.set_ylim(-R * 1.4, R * 1.4)
+    ax_top.set_aspect("equal")
+    ax_top.set_xlabel("+X (head →)", fontsize=10, color="#0a0",
+                       fontweight="bold")
+    ax_top.set_ylabel("+Z", fontsize=9, color="#666")
+    ax_top.grid(True, alpha=0.3, linestyle="--")
+    ax_top.set_title("TOP-DOWN\n(confirms head direction)",
+                      fontsize=10, pad=6)
+
+    # Small green arrow on inset too
+    ax_top.annotate(
+        "", xy=(R * 1.3, 0), xytext=(R * 0.9, 0),
+        arrowprops=dict(arrowstyle="-|>", color="#0a0", lw=3, mutation_scale=25),
+    )
 
     title = f"{mesh_path.name}"
     if note:
-        title += f"\n{note}"
-    ax.set_title(title, fontsize=12, pad=10)
+        title += f"     ({note})"
+    fig.suptitle(title, fontsize=12, y=0.995)
 
     out_png_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(str(out_png_path), dpi=90, bbox_inches="tight",
