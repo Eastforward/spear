@@ -71,3 +71,15 @@ def test_preview_handles_lowconfidence(tmp_path):
     out_png = tmp_path / "amorphous_preview.png"
     render_direction_preview(glb_path, result, out_png)
     assert out_png.exists()
+
+
+def test_review_preview_written(tmp_path):
+    """render_review_preview produces PNG regardless of head axis (no detection needed)."""
+    from preview_render import render_review_preview
+    glb_path = _write_synth_glb(tmp_path, head_axis="+X")
+    out_png = tmp_path / "review.png"
+    render_review_preview(glb_path, out_png, note="test note")
+    assert out_png.exists()
+    assert out_png.stat().st_size > 5000
+    with out_png.open("rb") as f:
+        assert f.read(8) == b"\x89PNG\r\n\x1a\n"
