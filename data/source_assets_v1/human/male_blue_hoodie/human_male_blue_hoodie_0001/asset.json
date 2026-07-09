@@ -78,18 +78,18 @@
     "saturation": 0.259
   },
   "visual_assets": {
-    "reference_image": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/reference.png",
-    "mesh_original": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/mesh.obj",
-    "mesh_oriented": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/mesh_oriented.glb",
-    "mesh_runtime": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/mesh_runtime.glb",
-    "mesh_runtime_walking": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/mesh_runtime_walking.glb",
-    "mesh_runtime_standing_idle": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/mesh_runtime_standing_idle.glb",
-    "diffuse": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/hy3d_diffuse.jpg",
-    "roughness": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/hy3d_roughness.jpg",
-    "metallic": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/hy3d_metallic.jpg",
-    "review_image": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/direction_preview_review.png",
-    "direction_json": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/direction.json",
-    "runtime_metadata": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/mesh_runtime.json"
+    "reference_image": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/reference.png",
+    "mesh_original": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/mesh.obj",
+    "mesh_oriented": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/mesh_oriented.glb",
+    "mesh_runtime": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/mesh_runtime.glb",
+    "mesh_runtime_walking": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/mesh_runtime_walking.glb",
+    "mesh_runtime_standing_idle": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/mesh_runtime_standing_idle.glb",
+    "diffuse": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/hy3d_diffuse.jpg",
+    "roughness": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/hy3d_roughness.jpg",
+    "metallic": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/hy3d_metallic.jpg",
+    "review_image": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/direction_preview_review.png",
+    "direction_json": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/direction.json",
+    "runtime_metadata": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/mesh_runtime.json"
   },
   "rig": {
     "skeleton_family": "mixamo_humanoid",
@@ -105,8 +105,8 @@
         "role": "idle",
         "motion_style": "stationary",
         "loop": true,
-        "glb_path": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/mesh_runtime_standing_idle.glb",
-        "source_glb": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/mesh_runtime_standing_idle.glb",
+        "glb_path": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/mesh_runtime_standing_idle.glb",
+        "source_glb": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/mesh_runtime_standing_idle.glb",
         "source_fbx": "raw/Standing_Idle.fbx",
         "sha256": "fb0a6fa6324bf918d93acc28a92a76f8ff19a70d7e06b516b7b59254e77e0dcd"
       },
@@ -114,8 +114,8 @@
         "role": "walk",
         "motion_style": "walking",
         "loop": true,
-        "glb_path": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/mesh_runtime_walking.glb",
-        "source_glb": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/mesh_runtime_walking.glb",
+        "glb_path": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/mesh_runtime_walking.glb",
+        "source_glb": "tmp/hy3d_batch/rejected/human_male_blue_hoodie_v1/mesh_runtime_walking.glb",
         "source_fbx": "raw/Walking.fbx",
         "sha256": "537d44e30fd0b8682b2f6ebebf6676d3b98e10afb1572609e562aed09915df91"
       }
@@ -134,14 +134,14 @@
     ]
   },
   "review": {
-    "overall_status": "approved",
-    "appearance_status": "approved",
-    "direction_status": "approved",
-    "texture_status": "approved",
-    "rig_status": "approved",
-    "audio_mapping_status": "approved",
+    "overall_status": "rejected",
+    "appearance_status": "rejected",
+    "direction_status": "rejected",
+    "texture_status": "rejected",
+    "rig_status": "rejected",
+    "audio_mapping_status": "rejected",
     "approved_by": "jzy",
     "approved_at": "2026-07-09T11:21:14.269088+00:00",
-    "notes": "human asset: animal auto-orient skipped; use review UI manual rotation"
+    "notes": "rejected: reference pose had arms too close to torso; regenerate with strict T-pose for rigging"
   }
 }
