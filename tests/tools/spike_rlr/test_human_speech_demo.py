@@ -90,6 +90,64 @@ def test_visible_human_speech_demo_uses_registered_human_and_real_speech(tmp_pat
     assert src["start_pos_m"] == [-1.5, 1.5, 1.55]
 
 
+def test_visible_moving_human_speech_demo_walks_left_to_right_with_real_speech(tmp_path):
+    from demo_scenarios import compose_visible_moving_human_speech_demo
+    from event_constraints import (
+        constraint_front_of_camera,
+        constraint_in_fov_min_frames,
+        constraint_left_to_right,
+        verify_constraints,
+    )
+    from scene_two_dogs_apartment import compose_two_dog_scene_apartment
+
+    speech_root = tmp_path / "LibriTTS"
+    wav = (
+        speech_root
+        / "train-clean-100"
+        / "1234"
+        / "5678"
+        / "1234_5678_000001_000001.wav"
+    )
+    _write_wav(wav, duration_s=2.0)
+    wav.with_suffix(".normalized.txt").write_text(
+        "This is a moving human speech demo.\n",
+        encoding="utf-8",
+    )
+
+    out_spec = tmp_path / "clip" / "spec.json"
+    spec = compose_visible_moving_human_speech_demo(
+        REPO / "data" / "apartment_v1_spec.json",
+        out_spec_path=out_spec,
+        speech_root=speech_root,
+    )
+
+    src = _source(spec, "human_male_blue_hoodie_v1")
+    traj = np.asarray(src["trajectory_m"], dtype=float)
+    report = verify_constraints([
+        constraint_front_of_camera(src["tag"], traj, spec["mic"]["pos_m"], spec["mic"]["yaw_deg"]),
+        constraint_in_fov_min_frames(src["tag"], traj, spec["mic"]["pos_m"], spec["mic"]["yaw_deg"], 75),
+        constraint_left_to_right(src["tag"], traj, spec["mic"]["pos_m"], spec["mic"]["yaw_deg"], margin_m=0.8),
+    ])
+
+    assert report["passed"], report
+    assert src["asset_id"] == "human_male_blue_hoodie_0001"
+    assert src["audio_lookup"] == "speech"
+    assert src["audio_path"] == str(wav)
+    assert src["wanted_anim"] == "Walking"
+    assert src["motion_style"] == "walking"
+    assert src["source_role"] == "visible_moving_human_speaker"
+    assert src["actor_scale"] == 1.0
+    assert src["actor_z_lift_cm"] == 14.0
+    assert "facing_yaw_deg" not in src
+    assert spec["event_constraint_report"]["passed"]
+
+    scene = compose_two_dog_scene_apartment(out_spec)
+    placement = scene.animals[0]
+    assert placement.wanted_anim == "Walking"
+    assert float(np.ptp(placement.yaw_deg)) < 0.01
+    assert not np.allclose(traj[0, :2], traj[-1, :2])
+
+
 def test_human_visual_marker_falls_back_when_ue_bounds_are_implausible():
     from gpurir_scenes.scene_spec import AnimalPlacement
     from run_render_pass_apartment import _sanitize_actor_visual_center_ssot_m

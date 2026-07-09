@@ -207,6 +207,7 @@ def _human_speech_source(
     wanted_anim: str,
     motion_style: str,
     notes: str,
+    source_role: str = "visible_human_speaker",
     facing_yaw_deg: float | None = None,
 ) -> dict:
     traj = np.asarray(trajectory_m, dtype=np.float64)
@@ -218,7 +219,7 @@ def _human_speech_source(
     src = {
         **entry,
         "kind": "event_demo",
-        "source_role": "visible_human_speaker",
+        "source_role": source_role,
         "start_pos_m": traj[0].round(6).tolist(),
         "end_pos_m": traj[-1].round(6).tolist(),
         "trajectory_m": traj.round(6).tolist(),
@@ -240,6 +241,27 @@ def _human_speech_source(
     src.setdefault("actor_scale", 1.0)
     src.setdefault("actor_z_lift_cm", 14.0)
     return src
+
+
+def _listener_local_point(
+    mic_pos_m,
+    mic_yaw_deg: float,
+    *,
+    forward_m: float,
+    left_m: float,
+    z_m: float,
+) -> np.ndarray:
+    mic = np.asarray(mic_pos_m, dtype=np.float64)
+    yaw = np.deg2rad(float(mic_yaw_deg))
+    c, s = np.cos(yaw), np.sin(yaw)
+    return np.asarray(
+        [
+            mic[0] + c * forward_m - s * left_m,
+            mic[1] + s * forward_m + c * left_m,
+            z_m,
+        ],
+        dtype=np.float64,
+    )
 
 
 def _constraint_starts_outside_fov_ends_inside(
@@ -693,6 +715,127 @@ def compose_visible_human_speech_demo(
     return spec
 
 
+def compose_visible_moving_human_speech_demo(
+    base_spec_path: str | Path = DEFAULT_BASE_SPEC,
+    out_spec_path: str | Path | None = None,
+    *,
+    human_asset_id: str = "human_male_blue_hoodie_0001",
+    speech_root: str | Path | None = None,
+) -> dict:
+    """One visible human speaker walking left-to-right in front of camera."""
+    with open(base_spec_path) as f:
+        spec = copy.deepcopy(json.load(f))
+    if spec.get("spec_version") != "apartment_v1":
+        raise ValueError("visible_moving_human_speech_demo currently targets apartment_v1")
+
+    n_frames = int(spec["render_config"]["n_frames"])
+    speech_z_m = 1.55
+    mic = spec["mic"]["pos_m"]
+    yaw = 140.0
+    spec["mic"]["yaw_deg"] = yaw
+    spec["mic"]["forward"] = [
+        float(np.cos(np.deg2rad(yaw))),
+        float(np.sin(np.deg2rad(yaw))),
+        0.0,
+    ]
+    spec["mic"]["notes"] = (
+        "yaw=140 world, matching the approved apartment front-source review "
+        "view; this keeps the walking human visible."
+    )
+    if spec.get("camera_configs"):
+        spec["camera_configs"][0]["yaw_deg"] = yaw
+    spec["source_height_m"] = speech_z_m
+    spec["source_collision_policy"] = "full_static_aabb_center"
+
+    human_entry = resolve_source_pool_entry({"asset_id": human_asset_id})
+    start = _listener_local_point(
+        mic,
+        yaw,
+        forward_m=1.8,
+        left_m=1.2,
+        z_m=speech_z_m,
+    )
+    end = _listener_local_point(
+        mic,
+        yaw,
+        forward_m=1.8,
+        left_m=-1.2,
+        z_m=speech_z_m,
+    )
+    human_traj = np.linspace(start, end, n_frames, dtype=np.float64)
+    obstacles, _bounds, _valid_regions = _load_apartment_planning_context(spec)
+    report = verify_constraints([
+        constraint_front_of_camera(
+            human_entry["tag"],
+            human_traj,
+            mic,
+            yaw,
+        ),
+        constraint_in_fov_min_frames(
+            human_entry["tag"],
+            human_traj,
+            mic,
+            yaw,
+            min_in_fov_frames=n_frames,
+        ),
+        constraint_left_to_right(
+            human_entry["tag"],
+            human_traj,
+            mic,
+            yaw,
+            margin_m=0.8,
+        ),
+        constraint_no_aabb_intersections(
+            human_entry["tag"],
+            human_traj,
+            obstacles,
+        ),
+    ])
+    if not report["passed"]:
+        raise UnsatisfiableScenarioError(json.dumps(report, indent=2))
+
+    spec["description"] = (
+        "Deterministic apartment review demo: one approved Flux/Hunyuan male "
+        "human speaker walks from camera-left to camera-right while emitting "
+        "real LibriTTS speech."
+    )
+    spec["event_controls"] = [
+        {
+            "name": "visible_moving_human_speaker",
+            "asset_id": human_asset_id,
+            "tag": human_entry["tag"],
+            "type": "linear_visible_human_speech_trajectory",
+            "contract": [
+                "front_of_camera",
+                "in_fov_all_frames",
+                "left_to_right",
+                "full_static_aabb_center",
+            ],
+            "listener_local_start_m": [1.8, 1.2],
+            "listener_local_end_m": [1.8, -1.2],
+        }
+    ]
+    spec["sources"] = [
+        _human_speech_source(
+            human_entry,
+            human_traj,
+            speech_root=speech_root,
+            wanted_anim="Walking",
+            motion_style="walking",
+            source_role="visible_moving_human_speaker",
+            notes=(
+                "Visible moving human speaker controlled by "
+                "visible_moving_human_speaker event. Uses approved "
+                "Flux/Hunyuan appearance and Mixamo Walking loop."
+            ),
+        )
+    ]
+    spec["event_constraint_report"] = report
+
+    _write_spec_and_flags(spec, out_spec_path)
+    return spec
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base-spec", default=str(DEFAULT_BASE_SPEC))
@@ -704,6 +847,7 @@ def main():
             "front_idle_rear_left_to_right",
             "front_idle_left_rear_to_right_front",
             "visible_human_speech",
+            "visible_moving_human_speech",
         ],
     )
     ap.add_argument("--speech-root")
@@ -712,8 +856,9 @@ def main():
         "front_idle_rear_left_to_right": compose_front_idle_rear_left_to_right_demo,
         "front_idle_left_rear_to_right_front": compose_front_idle_left_rear_to_right_front_demo,
         "visible_human_speech": compose_visible_human_speech_demo,
+        "visible_moving_human_speech": compose_visible_moving_human_speech_demo,
     }
-    if args.scenario == "visible_human_speech":
+    if args.scenario in ("visible_human_speech", "visible_moving_human_speech"):
         spec = builders[args.scenario](
             args.base_spec,
             args.out,
