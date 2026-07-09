@@ -2,7 +2,7 @@
 
 Motion styles injected:
   - "steady":       full plan_path_2d output resampled to n_frames
-  - "stationary":   holds start position for all frames (slight noise ±0.05m)
+  - "stationary":   holds start position for all frames
   - "stop_and_go":  planned path split into 3 segments; middle segment
                      replaced with a hold (stopped), start/end walking.
 """
@@ -53,16 +53,12 @@ def sample_trajectory(source_spec, planning_context, rng,
     z = float(start[2])
 
     if motion_style == "stationary":
-        base = np.tile(start, (n_frames, 1)).astype(np.float64)
-        # Small independent jitter to simulate breathing/sway (±5 cm XY)
-        jitter = rng.normal(0, 0.02, size=(n_frames, 2))
-        base[:, 0] += jitter[:, 0]
-        base[:, 1] += jitter[:, 1]
-        return base
+        return np.tile(start, (n_frames, 1)).astype(np.float64)
 
     # For steady + stop_and_go, first plan the full path
     bounds_xy = tuple(planning_context["bounds_xy"])
     obstacles_xy = _obstacles_to_xy(planning_context.get("obstacles", []))
+    valid_xy_rects = planning_context.get("valid_regions")
 
     if motion_style == "steady":
         return plan_path_2d(
@@ -74,6 +70,7 @@ def sample_trajectory(source_spec, planning_context, rng,
             n_frames=n_frames,
             chaikin_iters=2,
             z_m=z,
+            valid_xy_rects=valid_xy_rects,
         )
 
     # stop_and_go: plan full path, then replace middle frames with a hold
@@ -86,6 +83,7 @@ def sample_trajectory(source_spec, planning_context, rng,
         n_frames=n_frames,
         chaikin_iters=2,
         z_m=z,
+        valid_xy_rects=valid_xy_rects,
     )
     n_mid = n_frames // 3
     stop_start = int(rng.integers(n_frames // 4, n_frames // 3 + 1))

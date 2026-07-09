@@ -24,6 +24,31 @@ _MARKER_STYLES = {
     },
 }
 
+_SOURCE_SHORT_LABELS = {
+    "dog_golden": "GOLDEN",
+    "dog_beagle_v2": "BEAGLE",
+    "cat_british_shorthair_v2": "BRITISH",
+}
+
+_FLAG_SHORT_LABELS = {
+    "occluded_by_furniture": "occFurn",
+    "occluded_by_wall": "occWall",
+    "never_occluded": "noOcc",
+    "leaves_camera_fov": "leaveFOV",
+    "stays_in_camera_fov": "stayFOV",
+    "crosses_azimuth_zero": "crossAz",
+    "passes_close_to_mic": "closeMic",
+    "far_from_mic_whole_clip": "farMic",
+    "stationary": "stat",
+    "steady_walk": "walk",
+    "stop_and_go": "stopGo",
+    "sources_pass_each_other": "passSrc",
+}
+
+
+def _format_flag_names(flag_names: list[str]) -> str:
+    return ",".join(_FLAG_SHORT_LABELS.get(name, name) for name in flag_names)
+
 
 def _true_ranges(values):
     ranges = []
@@ -48,8 +73,22 @@ def _count(values):
     return sum(1 for v in values if bool(v))
 
 
+def _effective_audio_values(src: dict) -> list[bool]:
+    if "source_effective_audio_per_frame" in src:
+        return [bool(v) for v in src.get("source_effective_audio_per_frame", [])]
+    threshold = float(src.get("effective_audio_gain_threshold", 0.05))
+    return [
+        float(gain) >= threshold
+        for gain in src.get("source_amp_gain_per_frame", [])
+    ]
+
+
 def _marker_style(tag: str) -> dict:
     return _MARKER_STYLES.get(tag, {"label": tag.upper(), "color": (64, 210, 255)})
+
+
+def _overlay_source_label(tag: str) -> str:
+    return _SOURCE_SHORT_LABELS.get(tag, tag)
 
 
 def project_source_to_frame(src_xyz, mic_pos, mic_yaw_deg: float,
@@ -188,12 +227,16 @@ def write_ue_marker_video(clip_dir: Path, out_video: Path) -> Path:
 def build_overlay_lines(clip_dir: Path) -> list[str]:
     clip_dir = Path(clip_dir)
     spec = json.loads((clip_dir / "spec.json").read_text())
-    flags = json.loads((clip_dir / "flags.json").read_text())
+    flags_path = clip_dir / "flags.json"
+    flags = json.loads(flags_path.read_text()) if flags_path.exists() else {}
+    details_path = clip_dir / "flag_details.json"
+    flag_details = json.loads(details_path.read_text()) if details_path.exists() else {}
+    per_source_flags = flag_details.get("per_source", {})
     metadata = json.loads((clip_dir / "apartment_v1_metadata.json").read_text())
     n_frames = int(metadata["n_frames"])
 
     true_flags = [name for name, enabled in flags.items() if enabled]
-    flag_text = ",".join(true_flags) if true_flags else "none"
+    flag_text = _format_flag_names(true_flags) if true_flags else "none"
     lines = [
         f"{clip_dir.name} | n_src={len(metadata.get('sources', []))} | flags={flag_text}"
     ]
@@ -203,16 +246,28 @@ def build_overlay_lines(clip_dir: Path) -> list[str]:
         tag = src["tag"]
         spec_src = spec_by_tag.get(tag, {})
         motion = spec_src.get("motion_style") or spec_src.get("motion") or "unknown"
-        category = src.get("category") or spec_src.get("audio_lookup") or "unknown"
+        category = (
+            "silent" if spec_src.get("mute_audio")
+            else src.get("category") or spec_src.get("audio_lookup") or "unknown"
+        )
         in_fov = [bool(v) for v in src.get("source_in_fov_per_frame", [])]
         visible = [bool(v) for v in src.get("source_visible_from_camera_per_frame", [])]
         occ = [bool(v) for v in src.get("source_occluded_by_furniture_per_frame", [])]
-        lines.append(
-            f"{tag} {category} {motion} | "
-            f"center-FOV {_count(in_fov)}/{n_frames} | "
-            f"center-visible {_count(visible)}/{n_frames} ({_true_ranges(visible)}) | "
+        sound = _effective_audio_values(src)
+        line = (
+            f"{_overlay_source_label(tag)} {category} {motion} | "
+            f"sound {_count(sound)}/{n_frames} | "
+            f"FOV {_count(in_fov)}/{n_frames} | "
+            f"centerVis {_count(visible)}/{n_frames} ({_true_ranges(visible)}) | "
             f"occ {_count(occ)}/{n_frames}"
         )
+        source_true_flags = [
+            name for name, enabled in per_source_flags.get(tag, {}).items()
+            if enabled
+        ]
+        if source_true_flags:
+            line += f" | src={_format_flag_names(source_true_flags)}"
+        lines.append(line)
     return lines
 
 

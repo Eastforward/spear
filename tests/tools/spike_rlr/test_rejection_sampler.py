@@ -8,7 +8,12 @@ import pytest
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
 
-from rejection_sampler import SamplerConfig, generate_batch  # noqa: E402
+from rejection_sampler import (  # noqa: E402
+    SamplerConfig, generate_batch, joint_visible_frame_count,
+    meets_min_visible_frames, optimize_camera_yaw_for_visible_sources,
+    visible_frame_counts,
+)
+from scene_generator import SceneSample  # noqa: E402
 from audio_library import load_library  # noqa: E402
 from flag_definitions import ALL_FLAGS  # noqa: E402
 
@@ -67,3 +72,105 @@ def test_deterministic_with_seed(tmp_path):
                         obstacle_context={"furniture_bboxes": [], "wall_bboxes": []})
     for x, y in zip(a, b):
         assert x["scene_sample"].mic_pos_m == y["scene_sample"].mic_pos_m
+
+
+def test_review_visible_gate_counts_visible_frames_per_source():
+    template = _stub_template()
+    sample = SceneSample(
+        mic_pos_m=(0.0, 0.0, 1.0),
+        mic_yaw_deg=0.0,
+        source_specs=[{"tag": "dog_beagle_v2"}],
+    )
+    visible_traj = np.array([[2.0, 0.0, 1.0]] * 4)
+    behind_traj = np.array([[-2.0, 0.0, 1.0]] * 4)
+    occluding_ctx = {
+        "furniture_bboxes": [((1.0, -0.5, 0.0), (1.5, 0.5, 2.0))],
+        "wall_bboxes": [],
+    }
+    empty_ctx = {"furniture_bboxes": [], "wall_bboxes": []}
+
+    assert visible_frame_counts(sample, [visible_traj], template, empty_ctx) == [4]
+    assert meets_min_visible_frames(
+        sample, [visible_traj], template, empty_ctx, min_visible_frames=4
+    )
+    assert not meets_min_visible_frames(
+        sample, [visible_traj], template, empty_ctx, min_visible_frames=5
+    )
+    assert visible_frame_counts(sample, [behind_traj], template, empty_ctx) == [0]
+    assert not meets_min_visible_frames(
+        sample, [behind_traj], template, empty_ctx, min_visible_frames=1
+    )
+    assert visible_frame_counts(sample, [visible_traj], template, occluding_ctx) == [0]
+    assert not meets_min_visible_frames(sample, [], template, empty_ctx, 1)
+
+
+def test_review_yaw_optimizer_targets_two_visible_sources():
+    template = _stub_template()
+    sample = SceneSample(
+        mic_pos_m=(0.0, 0.0, 1.0),
+        mic_yaw_deg=180.0,
+        source_specs=[{"tag": "dog_beagle_v2"}, {"tag": "cat_british_shorthair_v2"}],
+    )
+    left = np.array([[2.0, 0.5, 1.0]] * 8)
+    right = np.array([[2.0, -0.5, 1.0]] * 8)
+    empty_ctx = {"furniture_bboxes": [], "wall_bboxes": []}
+
+    assert visible_frame_counts(sample, [left, right], template, empty_ctx) == [0, 0]
+    counts = optimize_camera_yaw_for_visible_sources(
+        sample, [left, right], template, empty_ctx, yaw_step_deg=2.0
+    )
+
+    assert counts == [8, 8]
+    assert joint_visible_frame_count(sample, [left, right], template, empty_ctx) == 8
+    assert meets_min_visible_frames(
+        sample, [left, right], template, empty_ctx, min_visible_frames=8
+    )
+
+
+def test_review_visible_gate_can_require_fov_margin():
+    template = _stub_template()
+    sample = SceneSample(
+        mic_pos_m=(0.0, 0.0, 1.0),
+        mic_yaw_deg=0.0,
+        source_specs=[{"tag": "dog_beagle_v2"}],
+    )
+    edge_traj = np.array([[1.0, 0.93, 1.0]] * 4)  # ~43 deg azimuth
+    empty_ctx = {"furniture_bboxes": [], "wall_bboxes": []}
+
+    assert visible_frame_counts(sample, [edge_traj], template, empty_ctx) == [4]
+    assert visible_frame_counts(
+        sample, [edge_traj], template, empty_ctx, fov_margin_deg=5.0
+    ) == [0]
+    assert not meets_min_visible_frames(
+        sample, [edge_traj], template, empty_ctx,
+        min_visible_frames=1, fov_margin_deg=5.0,
+    )
+
+
+def test_review_joint_visible_gate_requires_same_frames():
+    template = _stub_template()
+    sample = SceneSample(
+        mic_pos_m=(0.0, 0.0, 1.0),
+        mic_yaw_deg=0.0,
+        source_specs=[{"tag": "dog_beagle_v2"}, {"tag": "cat_british_shorthair_v2"}],
+    )
+    front = [2.0, 0.0, 1.0]
+    behind = [-2.0, 0.0, 1.0]
+    first_visible = np.array([front, front, front, behind, behind, behind])
+    second_visible = np.array([behind, behind, behind, front, front, front])
+    empty_ctx = {"furniture_bboxes": [], "wall_bboxes": []}
+
+    assert visible_frame_counts(
+        sample, [first_visible, second_visible], template, empty_ctx,
+    ) == [3, 3]
+    assert joint_visible_frame_count(
+        sample, [first_visible, second_visible], template, empty_ctx,
+    ) == 0
+    assert meets_min_visible_frames(
+        sample, [first_visible, second_visible], template, empty_ctx,
+        min_visible_frames=3,
+    )
+    assert not meets_min_visible_frames(
+        sample, [first_visible, second_visible], template, empty_ctx,
+        min_visible_frames=3, min_joint_visible_frames=1,
+    )

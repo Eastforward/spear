@@ -50,6 +50,7 @@ from gpurir_scenes.run_render_pass import (  # noqa: E402
 from apartment_actor_classifier import classify_actor, SHELL_LABELS  # noqa: E402
 from scene_two_dogs_apartment import (  # noqa: E402
     compose_two_dog_scene_apartment,
+    _shell_wall_bboxes,
     _static_obstacle_bboxes,
 )
 from profiling import StageTimer  # noqa: E402
@@ -70,7 +71,13 @@ def _check_no_clipping_apartment(spec_dict, scene, cats):
     any kept furniture or shell wall bbox. Called before UE render so we
     catch bad specs cheaply rather than staring at a 30 s render of a dog
     walking through a sofa."""
-    obstacles = _static_obstacle_bboxes(spec_dict, cats)
+    policy = spec_dict.get("source_collision_policy", "furniture_and_walls")
+    if policy == "walls_only_center":
+        obstacles = _shell_wall_bboxes(spec_dict)
+        policy_hint = "walls_only_center"
+    else:
+        obstacles = _static_obstacle_bboxes(spec_dict, cats)
+        policy_hint = "furniture_and_walls"
     for a in scene.animals:
         for k, xyz in enumerate(a.trajectory_m):
             x, y = float(xyz[0]), float(xyz[1])
@@ -81,7 +88,8 @@ def _check_no_clipping_apartment(spec_dict, scene, cats):
                         f"pos=({x:.2f}, {y:.2f}) inside bbox "
                         f"[{x0:.2f},{y0:.2f}]-[{x1:.2f},{y1:.2f}]. "
                         f"Fix spec start/end so planner can route around, "
-                        f"or set spec 'furniture_exclude_actors' to remove it."
+                        f"or set spec 'furniture_exclude_actors' to remove it. "
+                        f"source_collision_policy={policy_hint}."
                     )
 
 

@@ -114,3 +114,28 @@ def test_n_frames_exact():
             n_frames=n,
         )
         assert len(path) == n
+
+
+def test_path_stays_inside_valid_l_shaped_regions():
+    """The apartment valid region is L-shaped. The planner must not cut
+    through the missing top-right rectangle even when it is inside bounds."""
+    valid = [(0.0, 0.0, 2.0, 5.0), (0.0, 0.0, 5.0, 2.0)]
+    path = plan_path_2d(
+        start_xy=(1.0, 4.0), end_xy=(4.0, 1.0),
+        obstacles_xy=[], bounds_xy=(0.0, 0.0, 5.0, 5.0),
+        valid_xy_rects=valid,
+        cell_m=0.10, inflate_m=0.0, n_frames=80,
+    )
+    for x, y in path:
+        in_valid = any(x0 <= x <= x1 and y0 <= y <= y1
+                       for x0, y0, x1, y1 in valid)
+        assert in_valid, f"path point ({x:.2f}, {y:.2f}) left valid region"
+
+
+def test_raises_when_start_outside_valid_region():
+    with pytest.raises(RuntimeError, match="start.*valid"):
+        plan_path_2d(
+            start_xy=(4.0, 4.0), end_xy=(1.0, 1.0),
+            obstacles_xy=[], bounds_xy=(0.0, 0.0, 5.0, 5.0),
+            valid_xy_rects=[(0.0, 0.0, 2.0, 5.0), (0.0, 0.0, 5.0, 2.0)],
+        )

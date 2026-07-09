@@ -21,7 +21,16 @@ from typing import Iterable
 import numpy as np
 
 
-def _bake_grid(x_min, y_min, x_max, y_max, cell_m, obstacles_xy, inflate_m=0.0):
+def _point_in_any_rect(x, y, rects):
+    return any(x0 <= x <= x1 and y0 <= y <= y1 for x0, y0, x1, y1 in rects)
+
+
+def _all_points_in_rects(points, rects):
+    return all(_point_in_any_rect(float(x), float(y), rects) for x, y in points[:, :2])
+
+
+def _bake_grid(x_min, y_min, x_max, y_max, cell_m, obstacles_xy, inflate_m=0.0,
+               valid_xy_rects=None):
     """Return (grid, x_min, y_min, cell_m) where grid[i, j] = True means blocked.
 
     obstacles_xy: iterable of (x0, y0, x1, y1) rectangles in SSOT meters.
@@ -30,6 +39,13 @@ def _bake_grid(x_min, y_min, x_max, y_max, cell_m, obstacles_xy, inflate_m=0.0):
     nx = int(np.ceil((x_max - x_min) / cell_m))
     ny = int(np.ceil((y_max - y_min) / cell_m))
     grid = np.zeros((nx, ny), dtype=bool)
+    if valid_xy_rects is not None:
+        valid = [tuple(map(float, r)) for r in valid_xy_rects]
+        for i in range(nx):
+            for j in range(ny):
+                x, y = _cell_to_xy(i, j, x_min, y_min, cell_m)
+                if not _point_in_any_rect(x, y, valid):
+                    grid[i, j] = True
     for x0, y0, x1, y1 in obstacles_xy:
         lo_i = max(0, int(np.floor((x0 - inflate_m - x_min) / cell_m)))
         hi_i = min(nx, int(np.ceil((x1 + inflate_m - x_min) / cell_m)))
@@ -84,6 +100,10 @@ def _astar(grid, start_ij, goal_ij):
                 continue
             if grid[nx_, ny_]:
                 continue
+            if dx != 0 and dy != 0:
+                # No diagonal corner cutting through blocked/invalid cells.
+                if grid[cur[0] + dx, cur[1]] or grid[cur[0], cur[1] + dy]:
+                    continue
             step = (dx * dx + dy * dy) ** 0.5
             ng = g + step
             neighbor = (nx_, ny_)
@@ -131,7 +151,8 @@ def _resample_arclength(points, n_frames):
 def plan_path_2d(start_xy, end_xy, obstacles_xy: Iterable[tuple],
                   bounds_xy: tuple, cell_m: float = 0.20,
                   inflate_m: float = 0.25, n_frames: int = 75,
-                  chaikin_iters: int = 2, z_m: float | None = None):
+                  chaikin_iters: int = 2, z_m: float | None = None,
+                  valid_xy_rects: Iterable[tuple] | None = None):
     """Plan a smooth 2D path avoiding obstacles.
 
     Args:
@@ -144,14 +165,24 @@ def plan_path_2d(start_xy, end_xy, obstacles_xy: Iterable[tuple],
       n_frames: number of output samples
       chaikin_iters: smoothing iterations (2 = very smooth, 0 = raw A*)
       z_m: Z coordinate to attach to every output point (None keeps 2D)
+      valid_xy_rects: optional union of valid walkable rectangles. Any grid
+        cell outside this union is blocked. This is for non-rectangular rooms
+        like apartment_v1, whose outer bounds include outdoor voids.
 
     Returns:
       np.ndarray of shape (n_frames, 3) if z_m is not None else (n_frames, 2).
       Raises RuntimeError if no path found (caller may re-sample start/end).
     """
     x_min, y_min, x_max, y_max = bounds_xy
+    if valid_xy_rects is not None:
+        valid_xy_rects = [tuple(map(float, r)) for r in valid_xy_rects]
+        if not _point_in_any_rect(start_xy[0], start_xy[1], valid_xy_rects):
+            raise RuntimeError(f"start {start_xy} is outside valid region")
+        if not _point_in_any_rect(end_xy[0], end_xy[1], valid_xy_rects):
+            raise RuntimeError(f"end {end_xy} is outside valid region")
     grid, gx0, gy0, gc = _bake_grid(x_min, y_min, x_max, y_max, cell_m,
-                                     obstacles_xy, inflate_m=inflate_m)
+                                     obstacles_xy, inflate_m=inflate_m,
+                                     valid_xy_rects=valid_xy_rects)
     s_ij = _xy_to_cell(start_xy[0], start_xy[1], gx0, gy0, gc)
     g_ij = _xy_to_cell(end_xy[0], end_xy[1], gx0, gy0, gc)
     if grid[s_ij[0], s_ij[1]]:
@@ -169,8 +200,16 @@ def plan_path_2d(start_xy, end_xy, obstacles_xy: Iterable[tuple],
     xy[0] = start_xy
     xy[-1] = end_xy
 
-    smoothed = _chaikin(xy, iterations=chaikin_iters)
-    resampled = _resample_arclength(smoothed, n_frames)
+    resampled = None
+    for iters in range(chaikin_iters, -1, -1):
+        candidate = _resample_arclength(_chaikin(xy, iterations=iters), n_frames)
+        if valid_xy_rects is None or _all_points_in_rects(candidate, valid_xy_rects):
+            resampled = candidate
+            break
+    if resampled is None:
+        raise RuntimeError(
+            f"no valid smoothed path from {start_xy} to {end_xy} inside valid region"
+        )
     if z_m is not None:
         z_col = np.full((n_frames, 1), z_m, dtype=np.float64)
         return np.concatenate([resampled, z_col], axis=1)

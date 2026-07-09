@@ -71,3 +71,44 @@ def test_scene_seed_is_deterministic():
     for a1, a2 in zip(sc1.animals, sc2.animals):
         assert np.allclose(a1.trajectory_m, a2.trajectory_m)
         assert np.allclose(a1.yaw_deg, a2.yaw_deg)
+
+
+def test_explicit_trajectory_m_is_used_without_replanning(tmp_path):
+    spec = json.loads(SPEC.read_text())
+    spec["sources"] = [spec["sources"][0]]
+    n_frames = spec["render_config"]["n_frames"]
+    explicit = np.column_stack([
+        np.linspace(-3.0, -3.0, n_frames),
+        np.linspace(-4.0, -3.0, n_frames),
+        np.full(n_frames, 0.45),
+    ])
+    spec["sources"][0]["start_pos_m"] = explicit[0].tolist()
+    spec["sources"][0]["end_pos_m"] = explicit[-1].tolist()
+    spec["sources"][0]["trajectory_m"] = explicit.tolist()
+    out = tmp_path / "spec.json"
+    out.write_text(json.dumps(spec))
+
+    scene = compose_two_dog_scene_apartment(out)
+
+    assert len(scene.animals) == 1
+    assert np.allclose(scene.animals[0].trajectory_m, explicit)
+
+
+def test_stationary_source_defaults_to_idle_anim(tmp_path):
+    spec = json.loads(SPEC.read_text())
+    spec["sources"] = [spec["sources"][0]]
+    n_frames = spec["render_config"]["n_frames"]
+    stationary = np.tile(np.asarray([-1.3, -3.2, 0.45], dtype=np.float64),
+                         (n_frames, 1))
+    spec["sources"][0]["start_pos_m"] = stationary[0].tolist()
+    spec["sources"][0]["end_pos_m"] = stationary[-1].tolist()
+    spec["sources"][0]["trajectory_m"] = stationary.tolist()
+    spec["sources"][0]["motion_style"] = "stationary"
+    spec["sources"][0].pop("wanted_anim", None)
+    out = tmp_path / "spec.json"
+    out.write_text(json.dumps(spec))
+
+    scene = compose_two_dog_scene_apartment(out)
+
+    assert len(scene.animals) == 1
+    assert scene.animals[0].wanted_anim == "Idle"

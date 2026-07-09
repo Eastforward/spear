@@ -90,6 +90,78 @@ def verify_all_flags(spec_dict: dict, trajectories: list,
     return result
 
 
+def _source_context(spec_dict: dict, furniture_bboxes, wall_bboxes) -> dict:
+    return dict(
+        mic_pos=tuple(spec_dict["mic"]["pos_m"]),
+        mic_yaw_deg=float(spec_dict["mic"]["yaw_deg"]),
+        fov_h_deg=float(spec_dict["camera_configs"][0]["fov_deg"]),
+        fov_v_deg=float(spec_dict["camera_configs"][0].get("fov_v_deg", 60.0)),
+        furniture_bboxes=furniture_bboxes,
+        wall_bboxes=wall_bboxes,
+        fps=int(spec_dict["render_config"]["fps"]),
+    )
+
+
+def _single_source_flags(traj_xyz, context: dict) -> dict:
+    flags = {}
+    for name, fn in _OR_FLAGS + _AND_FLAGS:
+        flags[name] = bool(fn(traj_xyz=traj_xyz, **context))
+    return flags
+
+
+def verify_flag_details(
+    spec_dict: dict,
+    trajectories: list,
+    furniture_bboxes,
+    wall_bboxes,
+    source_tags: list[str] | None = None,
+) -> dict:
+    """Return aggregate flags plus per-source and pairwise details.
+
+    `verify_all_flags()` remains the backward-compatible flat clip-level API
+    used by dataset coverage. This helper makes that aggregation auditable:
+    source-local flags are reported per tag, and pairwise-only flags live under
+    `pairwise`.
+    """
+    aggregate = verify_all_flags(
+        spec_dict=spec_dict,
+        trajectories=trajectories,
+        furniture_bboxes=furniture_bboxes,
+        wall_bboxes=wall_bboxes,
+    )
+    if source_tags is None:
+        source_tags = [f"source_{i:04d}" for i in range(len(trajectories))]
+    if len(source_tags) != len(trajectories):
+        raise ValueError(
+            f"source_tags length {len(source_tags)} does not match "
+            f"trajectories length {len(trajectories)}"
+        )
+
+    context = _source_context(spec_dict, furniture_bboxes, wall_bboxes)
+    per_source = {
+        str(tag): _single_source_flags(np.asarray(traj), context)
+        for tag, traj in zip(source_tags, trajectories)
+    }
+
+    pairs = []
+    for (tag_a, traj_a), (tag_b, traj_b) in combinations(zip(source_tags, trajectories), 2):
+        pairs.append({
+            "tags": [str(tag_a), str(tag_b)],
+            "sources_pass_each_other": bool(
+                is_sources_pass_each_other(traj_xyz_a=traj_a, traj_xyz_b=traj_b)
+            ),
+        })
+
+    return {
+        "aggregate": aggregate,
+        "per_source": per_source,
+        "pairwise": {
+            "sources_pass_each_other": bool(aggregate["sources_pass_each_other"]),
+            "pairs": pairs,
+        },
+    }
+
+
 def set_flags(flag_dict: dict) -> set:
     """Return the set of flag names that are True."""
     return {k for k, v in flag_dict.items() if v}

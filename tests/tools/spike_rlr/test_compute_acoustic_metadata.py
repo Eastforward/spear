@@ -35,6 +35,11 @@ def test_per_frame_arrays_correct_length():
         assert len(s["source_world_xyz_per_frame"]) == 75
         assert len(s["source_azi_ele_dist_mic_local_per_frame"]) == 75
         assert len(s["source_amp_gain_per_frame"]) == 75
+        assert len(s["source_effective_audio_per_frame"]) == 75
+        assert isinstance(s["effective_audio_frame_count"], int)
+        assert s["effective_audio_frame_count"] == sum(
+            1 for v in s["source_effective_audio_per_frame"] if v
+        )
 
 
 def test_azi_ele_within_ranges():
@@ -67,6 +72,44 @@ def test_source_category_and_is_synthetic():
     assert golden["is_synthetic"] is False
     assert husky["category"] == "music_piano"
     assert husky["is_synthetic"] is True
+
+
+def test_lookup_to_category_includes_direct_music_piano_key():
+    sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
+    from compute_acoustic_metadata import _LOOKUP_TO_CATEGORY
+
+    assert _LOOKUP_TO_CATEGORY["music_piano"] == "music_piano"
+    assert _LOOKUP_TO_CATEGORY["cat_purring"] == "cat_purring"
+
+
+def test_effective_audio_frames_from_gains_uses_threshold():
+    sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
+    from compute_acoustic_metadata import (
+        EFFECTIVE_AUDIO_GAIN_THRESHOLD,
+        effective_audio_frames_from_gains,
+    )
+
+    gains = [
+        0.0,
+        EFFECTIVE_AUDIO_GAIN_THRESHOLD - 0.001,
+        EFFECTIVE_AUDIO_GAIN_THRESHOLD,
+        EFFECTIVE_AUDIO_GAIN_THRESHOLD + 0.2,
+    ]
+
+    active = effective_audio_frames_from_gains(gains)
+
+    assert active == [False, False, True, True]
+
+
+def test_source_synthetic_flag_comes_from_spec():
+    sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
+    from compute_acoustic_metadata import _source_is_synthetic
+
+    assert _source_is_synthetic({"tag": "dog_husky", "is_synthetic": False}) is False
+    assert _source_is_synthetic({"tag": "cat_british_shorthair_v2",
+                                 "is_synthetic": False}) is False
+    assert _source_is_synthetic({"tag": "synth_x", "is_synthetic": True}) is True
+    assert _source_is_synthetic({"tag": "dog_husky"}) is True
 
 
 def test_azi_ele_dist_local_offset_pure_x():

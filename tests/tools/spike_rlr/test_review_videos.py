@@ -33,6 +33,7 @@ def test_overlay_lines_count_per_source_visibility(tmp_path):
                 "source_in_fov_per_frame": [True, True, False, False],
                 "source_visible_from_camera_per_frame": [True, False, False, False],
                 "source_occluded_by_furniture_per_frame": [False, True, False, False],
+                "source_effective_audio_per_frame": [True, False, True, False],
             },
             {
                 "tag": "cat_british_shorthair_v2",
@@ -40,6 +41,7 @@ def test_overlay_lines_count_per_source_visibility(tmp_path):
                 "source_in_fov_per_frame": [False, False, False, False],
                 "source_visible_from_camera_per_frame": [False, False, False, False],
                 "source_occluded_by_furniture_per_frame": [False, False, False, False],
+                "source_effective_audio_per_frame": [False, False, False, False],
             },
         ],
     }))
@@ -47,16 +49,104 @@ def test_overlay_lines_count_per_source_visibility(tmp_path):
     lines = build_overlay_lines(clip)
 
     assert lines[0] == (
-        "clip_0007 | n_src=2 | flags=leaves_camera_fov,stationary"
+        "clip_0007 | n_src=2 | flags=leaveFOV,stat"
     )
     assert lines[1] == (
-        "dog_beagle_v2 dog_bark steady | center-FOV 2/4 | "
-        "center-visible 1/4 (0) | occ 1/4"
+        "BEAGLE dog_bark steady | sound 2/4 | FOV 2/4 | "
+        "centerVis 1/4 (0) | occ 1/4"
     )
     assert lines[2] == (
-        "cat_british_shorthair_v2 cat_purring stationary | "
-        "center-FOV 0/4 | center-visible 0/4 (none) | occ 0/4"
+        "BRITISH cat_purring stationary | "
+        "sound 0/4 | FOV 0/4 | centerVis 0/4 (none) | occ 0/4"
     )
+
+
+def test_overlay_lines_allows_missing_flags_for_deterministic_demo(tmp_path):
+    from build_review_videos import build_overlay_lines
+
+    clip = tmp_path / "clip_demo"
+    clip.mkdir()
+    (clip / "spec.json").write_text(json.dumps({
+        "sources": [
+            {"tag": "dog_beagle_v2", "audio_lookup": "dog_sharp_bark",
+             "motion_style": "walking"},
+        ],
+    }))
+    (clip / "apartment_v1_metadata.json").write_text(json.dumps({
+        "n_frames": 2,
+        "sources": [
+            {
+                "tag": "dog_beagle_v2",
+                "category": "dog_sharp_bark",
+                "source_in_fov_per_frame": [False, True],
+                "source_visible_from_camera_per_frame": [False, True],
+                "source_occluded_by_furniture_per_frame": [False, False],
+                "source_effective_audio_per_frame": [False, True],
+            },
+        ],
+    }))
+
+    lines = build_overlay_lines(clip)
+
+    assert lines[0] == "clip_demo | n_src=1 | flags=none"
+
+
+def test_overlay_lines_includes_per_source_flags_when_available(tmp_path):
+    from build_review_videos import build_overlay_lines
+
+    clip = tmp_path / "clip_demo"
+    clip.mkdir()
+    (clip / "spec.json").write_text(json.dumps({
+        "sources": [
+            {"tag": "dog_golden", "audio_lookup": "silent",
+             "motion_style": "stationary", "mute_audio": True},
+            {"tag": "dog_beagle_v2", "audio_lookup": "dog_sharp_bark",
+             "motion_style": "walking"},
+        ],
+    }))
+    (clip / "flags.json").write_text(json.dumps({
+        "leaves_camera_fov": True,
+        "stationary": True,
+    }))
+    (clip / "flag_details.json").write_text(json.dumps({
+        "per_source": {
+            "dog_golden": {
+                "stationary": True,
+                "leaves_camera_fov": False,
+            },
+            "dog_beagle_v2": {
+                "stationary": False,
+                "leaves_camera_fov": True,
+                "crosses_azimuth_zero": True,
+            },
+        },
+    }))
+    (clip / "apartment_v1_metadata.json").write_text(json.dumps({
+        "n_frames": 2,
+        "sources": [
+            {
+                "tag": "dog_golden",
+                "category": "silent",
+                "source_in_fov_per_frame": [True, True],
+                "source_visible_from_camera_per_frame": [True, True],
+                "source_occluded_by_furniture_per_frame": [False, False],
+                "source_effective_audio_per_frame": [False, False],
+            },
+            {
+                "tag": "dog_beagle_v2",
+                "category": "dog_sharp_bark",
+                "source_in_fov_per_frame": [False, True],
+                "source_visible_from_camera_per_frame": [False, True],
+                "source_occluded_by_furniture_per_frame": [False, False],
+                "source_effective_audio_per_frame": [True, True],
+            },
+        ],
+    }))
+
+    lines = build_overlay_lines(clip)
+
+    assert lines[1].endswith("src=stat")
+    assert lines[2].endswith("src=leaveFOV,crossAz")
 
 
 def test_topdown_tag_style_names_review_animals():

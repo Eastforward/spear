@@ -17,7 +17,7 @@
     "yaw_deg": 180.0,
     "forward": [-1.0, 0.0, 0.0],
     "type_rlr": "binaural_native",
-    "notes": "yaw=180 world (facing -X); mic-forward = -X world. Points into the dining/kitchen room where dog_golden walks. dog_golden lands 100% in FOV; dog_husky is behind mic (audio-only rear cue)."
+    "notes": "yaw=180 world (facing -X); mic-forward = -X world. Demo source paths are kept inside the current obstacle-aware apartment free space."
   },
   "camera_configs": [
     {"name": "view0", "pos_m": [0.5, 0.15, 1.2], "yaw_deg": 180.0, "fov_deg": 90.0}
@@ -41,21 +41,21 @@
       "tag": "dog_golden",
       "audio_lookup": "dog_bark",
       "kind": "moving",
-      "start_pos_m": [-2.5, -2.0, 0.45],
-      "end_pos_m":   [-2.5,  2.0, 0.45],
+      "start_pos_m": [-1.68, 1.55, 0.45],
+      "end_pos_m":   [-3.33, 3.30, 0.45],
       "motion": "linear_uniform",
       "wanted_anim": "Walking",
-      "notes": "Golden walks along -Y to +Y at X=-2.5 (behind mic in the dining/kitchen room). Provides a rear audio cue; visually out of front-camera FOV. Planner inserts small detour if needed."
+      "notes": "Golden follows an obstacle-aware path through the living-room side of the apartment. Planner inserts small detours if needed."
     },
     {
       "tag": "dog_husky",
       "audio_lookup": "wolf_howl",
       "kind": "moving",
-      "start_pos_m": [0.5, -1.0, 0.45],
-      "end_pos_m":   [1.5,  0.3, 0.45],
+      "start_pos_m": [2.68, -3.56, 0.45],
+      "end_pos_m":   [4.45, -3.49, 0.45],
       "motion": "linear_uniform",
       "wanted_anim": "Walking",
-      "notes": "Husky walks from (0.5,-1.0) to (1.5,0.3) — a diagonal in the small free-space corridor directly in front of the camera. ~50% of frames land inside the +X 90-deg FOV cone; the rest give audio-only cues from the side. Planner (A*+Chaikin) curves around the sofa (X>=1.87) and any inflated obstacles automatically."
+      "notes": "Husky follows an obstacle-aware path in the lower/right indoor region. Planner (A*+Chaikin) curves around inflated obstacles automatically."
     }
   ]
 }

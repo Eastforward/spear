@@ -169,9 +169,10 @@ _ANIMATED_Z_LIFT_CM = 0.0
 def _play_anim_on_actor(game, actor, placement):
     """Swap the SkeletalMeshComponent's playing anim to wanted_anim.
 
-    The BP's default is Walking; if wanted_anim is Idle, we look for an
-    UAnimationAsset ending in /Idle under the mesh dir and PlayAnimation
-    it. If we can't find one we leave the default (Walking).
+    Do not rely on the BP default animation: imported review actors may
+    silently differ in default state. Explicitly play the requested
+    UAnimationAsset when it is available, and leave the BP state as fallback
+    if loading fails.
     """
     smc = game.unreal_service.get_component_by_class(
         actor=actor, uclass="USkeletalMeshComponent",
@@ -180,9 +181,6 @@ def _play_anim_on_actor(game, actor, placement):
         return
     smc.SetComponentTickEnabled(bEnabled=True)
     wanted = getattr(placement, "wanted_anim", "Walking") or "Walking"
-    if wanted == "Walking":
-        # BP already set to Walking on import; nothing to do.
-        return
     anim_path = f"/Game/MyAssets/Audioset/Meshes/gate_{placement.tag}/{wanted}"
     try:
         anim = game.unreal_service.load_object(uclass="UAnimationAsset", name=anim_path)

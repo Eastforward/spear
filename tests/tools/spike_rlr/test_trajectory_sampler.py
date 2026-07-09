@@ -30,8 +30,11 @@ def test_stationary_holds_start():
     ctx = _ctx()
     traj = sample_trajectory(src, ctx, np.random.default_rng(0),
                               motion_style="stationary")
-    for xyz in traj:
-        assert np.linalg.norm(np.array(xyz) - np.array(src["start_pos_m"])) < 0.2
+    expected = np.tile(np.asarray(src["start_pos_m"], dtype=np.float64),
+                       (ctx["n_frames"], 1))
+    assert np.allclose(traj, expected)
+    speeds = np.linalg.norm(np.diff(traj, axis=0), axis=1) * ctx["fps"]
+    assert np.allclose(speeds, 0.0)
 
 
 def test_stop_and_go_has_stopped_and_moving_segments():

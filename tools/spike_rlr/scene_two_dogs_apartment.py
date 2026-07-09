@@ -30,6 +30,9 @@ from scene_two_dogs_v2 import (  # noqa: E402
     _linear_between, _motion_yaw_from_trajectory,
 )
 from path_planner import plan_path_2d  # noqa: E402
+from apartment_builtin_obstacles import (  # noqa: E402
+    apartment_builtin_visual_obstacle_bboxes_xy,
+)
 
 DEFAULT_SPEC_PATH = _SPEAR_ROOT / "data" / "apartment_v1_spec.json"
 
@@ -88,6 +91,78 @@ def _shell_wall_bboxes(spec):
     return out
 
 
+def _static_obstacle_bboxes(spec, cats):
+    """Return all 2D obstacles that should block apartment source motion."""
+    return (
+        _kept_furniture_bboxes(spec, cats)
+        + _shell_wall_bboxes(spec)
+        + apartment_builtin_visual_obstacle_bboxes_xy(spec)
+    )
+
+
+def _valid_region_bboxes(spec):
+    """Return coarse indoor walkable rectangles for apartment_v1.
+
+    The apartment shell is L-shaped, but the raw shell extent is one large
+    rectangle that includes the outdoor/top-right void. These two rectangles
+    approximate the actual indoor union:
+      - left/tall room
+      - lower/right room
+
+    Walls remain hard obstacles elsewhere; furniture remains a softer planning
+    obstacle, not a dog-radius hard clearance rule.
+    """
+    shell_map = json.loads((_SPEAR_ROOT / spec["apartment_shell_map"]).read_text())
+    rects = []
+    for a in shell_map["shell_actors"]:
+        if a["shell_label"] in ("shell_floor", "shell_ceiling"):
+            continue
+        rects.append((*_ue_to_ssot_xy(a["bbox_min_ue_cm"], a["bbox_max_ue_cm"]),
+                      a["shell_label"]))
+    geom = [(x0, y0, x1, y1) for x0, y0, x1, y1, _ in rects]
+    min_x = min(r[0] for r in geom)
+    max_x = max(r[2] for r in geom)
+    min_y = min(r[1] for r in geom)
+    max_y = max(r[3] for r in geom)
+
+    vertical = [r for r in geom if (r[3] - r[1]) > 3.0 and (r[2] - r[0]) < 0.8]
+    horizontal = [r for r in geom if (r[2] - r[0]) > 3.0 and (r[3] - r[1]) < 0.8]
+
+    left_wall = min(vertical, key=lambda r: r[0])
+    bottom_wall = min(horizontal, key=lambda r: r[1])
+    top_wall = max(horizontal, key=lambda r: r[3])
+    right_boundary = max(vertical, key=lambda r: r[2])
+
+    inner_verticals = [
+        r for r in vertical
+        if r is not left_wall and r[0] > left_wall[2] + 1.0
+        and r[2] < right_boundary[0] - 1.0
+    ]
+    inner_horizontals = [
+        r for r in horizontal
+        if r is not bottom_wall and r is not top_wall
+        and r[1] > bottom_wall[3] + 1.0
+        and r[3] < top_wall[1] - 1.0
+    ]
+    if not inner_verticals or not inner_horizontals:
+        return [(min_x, min_y, max_x, max_y)]
+
+    inner_v = max(inner_verticals, key=lambda r: r[3] - r[1])
+    inner_h = max(inner_horizontals, key=lambda r: r[2] - r[0])
+
+    left_inner_x = left_wall[2]
+    bottom_inner_y = bottom_wall[3]
+    top_inner_y = top_wall[1]
+    right_inner_x = right_boundary[0]
+    corner_x = inner_v[0]
+    corner_y = inner_h[1]
+
+    return [
+        (left_inner_x, bottom_inner_y, corner_x, top_inner_y),
+        (left_inner_x, bottom_inner_y, right_inner_x, corner_y),
+    ]
+
+
 def _planning_bounds(spec):
     """Return (x_min, y_min, x_max, y_max) for the planner from shell extent."""
     shell_map = json.loads((_SPEAR_ROOT / spec["apartment_shell_map"]).read_text())
@@ -103,7 +178,7 @@ def _build_planned_trajectory(src, spec, cats, n_frames):
     """Plan a smooth start->end trajectory that avoids kept furniture + walls."""
     start = np.asarray(src["start_pos_m"], dtype=np.float64)
     end = np.asarray(src["end_pos_m"], dtype=np.float64)
-    obstacles = _kept_furniture_bboxes(spec, cats) + _shell_wall_bboxes(spec)
+    obstacles = _static_obstacle_bboxes(spec, cats)
     bounds = _planning_bounds(spec)
     z = float(src.get("start_pos_m", [0, 0, 0.45])[2])
     return plan_path_2d(
@@ -116,7 +191,15 @@ def _build_planned_trajectory(src, spec, cats, n_frames):
         n_frames=n_frames,
         chaikin_iters=2,
         z_m=z,
+        valid_xy_rects=_valid_region_bboxes(spec),
     )
+
+
+def _wanted_anim_for_source(src):
+    if src.get("wanted_anim"):
+        return src["wanted_anim"]
+    motion = src.get("motion_style", src.get("motion", ""))
+    return "Idle" if motion == "stationary" else "Walking"
 
 
 _N_FRAMES = None  # set inside compose
@@ -145,7 +228,12 @@ def compose_two_dog_scene_apartment(spec_path=DEFAULT_SPEC_PATH):
         # Try planned (obstacle-avoiding) path first; fall back to straight line
         # ONLY if the spec explicitly opts out (motion == "linear_uniform_raw").
         motion = src.get("motion", "linear_uniform")
-        if motion == "linear_uniform_raw":
+        if "trajectory_m" in src:
+            traj = np.asarray(src["trajectory_m"], dtype=np.float64)
+            assert traj.shape == (n_frames, 3), (
+                f"{tag} trajectory_m must be ({n_frames}, 3), got {traj.shape}"
+            )
+        elif motion == "linear_uniform_raw":
             traj = _linear_between(
                 np.asarray(src["start_pos_m"], dtype=np.float64),
                 np.asarray(src["end_pos_m"], dtype=np.float64),
@@ -161,7 +249,7 @@ def compose_two_dog_scene_apartment(spec_path=DEFAULT_SPEC_PATH):
             is_animated=True,
             trajectory_m=traj,
             yaw_deg=yaw,
-            wanted_anim=src.get("wanted_anim", "Walking"),
+            wanted_anim=_wanted_anim_for_source(src),
         ))
 
     # For the apartment spec there's no "room_size_m" (non-rectangular shell);

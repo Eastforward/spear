@@ -27,6 +27,24 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+sys.path.insert(0, str(REPO_ROOT / "tools" / "spike_rlr"))
+from apartment_builtin_obstacles import apartment_builtin_visual_obstacles  # noqa: E402
+
+
+def _style_for_tag(tag):
+    styles = {
+        "dog_golden": {"color": "#e08820", "label": "GOLDEN"},
+        "dog_husky": {"color": "#1a76c8", "label": "HUSKY"},
+        "dog_beagle_v2": {"color": "#c05a2b", "label": "BEAGLE"},
+        "cat_british_shorthair_v2": {
+            "color": "#6b5fb5",
+            "label": "BRITISH SHORTHAIR",
+        },
+    }
+    if tag in styles:
+        return styles[tag]
+    return {"color": "#2a9d8f", "label": tag.upper()}
+
 
 def _load_scene(spec_path=None):
     """Load scene by dispatching on spec_version.
@@ -250,6 +268,14 @@ def _render_frame_apartment(frame_idx, scene, spec, tmp_dir):
             linewidth=0.8, edgecolor='#a05a1a', facecolor='#f4c880', alpha=0.5,
         ))
 
+    for obs in apartment_builtin_visual_obstacles(spec):
+        x0, y0, x1, y1 = obs.bbox_xy
+        ax.add_patch(mpatches.Rectangle(
+            (x0, y0), x1 - x0, y1 - y0,
+            linewidth=1.0, edgecolor='#6f2c2c', facecolor='#d89090',
+            alpha=0.35, hatch='//',
+        ))
+
     # Mic + camera glued
     mic_pos = spec["mic"]["pos_m"]
     mic_yaw = spec["mic"]["yaw_deg"]
@@ -288,8 +314,9 @@ def _render_frame_apartment(frame_idx, scene, spec, tmp_dir):
     # Animals
     for a in scene.animals:
         pos = a.trajectory_m[frame_idx]
-        color = '#e08820' if a.tag == "dog_golden" else '#1a76c8'
-        label = 'GOLDEN' if a.tag == "dog_golden" else 'HUSKY'
+        style = _style_for_tag(a.tag)
+        color = style["color"]
+        label = style["label"]
         ax.plot(pos[0], pos[1], 'o', markersize=14, color=color,
                 markeredgecolor='black', markeredgewidth=1)
         ax.text(pos[0] + 0.2, pos[1] + 0.15, label, fontsize=8,

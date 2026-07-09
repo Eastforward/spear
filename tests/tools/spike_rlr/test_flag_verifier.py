@@ -7,7 +7,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
 
-from flag_verifier import verify_all_flags, set_flags  # noqa: E402
+from flag_verifier import verify_all_flags, verify_flag_details, set_flags  # noqa: E402
 from flag_definitions import ALL_FLAGS  # noqa: E402
 
 
@@ -69,3 +69,30 @@ def test_per_source_flag_is_or_over_sources():
         furniture_bboxes=obs, wall_bboxes=[],
     )
     assert result["occluded_by_furniture"] is True
+
+
+def test_flag_details_reports_per_source_and_pairwise_flags():
+    spec = _stub_spec()
+    stationary = np.array([[0, 0, 1.2]] * 30)
+    moving = np.linspace([-1, 1.0, 1.2], [1, -1.0, 1.2], num=30)
+
+    details = verify_flag_details(
+        spec_dict=spec,
+        trajectories=[stationary, moving],
+        furniture_bboxes=[],
+        wall_bboxes=[],
+        source_tags=["front_idle", "moving"],
+    )
+
+    assert set(details["aggregate"].keys()) == set(ALL_FLAGS)
+    assert details["per_source"]["front_idle"]["stationary"] is True
+    assert details["per_source"]["front_idle"]["steady_walk"] is False
+    assert details["per_source"]["moving"]["stationary"] is False
+    assert details["per_source"]["moving"]["crosses_azimuth_zero"] is True
+    assert details["pairwise"]["sources_pass_each_other"] is True
+    assert details["pairwise"]["pairs"] == [
+        {
+            "tags": ["front_idle", "moving"],
+            "sources_pass_each_other": True,
+        }
+    ]

@@ -32,6 +32,9 @@ from scene_two_dogs_apartment import (  # noqa: E402
     compose_two_dog_scene_apartment,
     _kept_furniture_bboxes, _shell_wall_bboxes,
 )
+from apartment_builtin_obstacles import (  # noqa: E402
+    apartment_builtin_visual_obstacle_bboxes_xyz,
+)
 from profiling import StageTimer  # noqa: E402
 from visibility import batch_frame_visibility  # noqa: E402
 
@@ -39,10 +42,33 @@ from visibility import batch_frame_visibility  # noqa: E402
 # Mapping from audio_lookup key in the spec -> semantic source category.
 # Plan 3 will expand this via the 8-class audio library.
 _LOOKUP_TO_CATEGORY = {
+    "silent": "silent",
     "dog_bark": "dog_bark",
+    "dog_growl": "dog_growl",
+    "dog_sharp_bark": "dog_sharp_bark",
+    "cat_meow": "cat_meow",
+    "cat_purring": "cat_purring",
+    "music_piano": "music_piano",
     "wolf_howl": "music_piano",   # husky was rewired to synthesized piano
                                     # in tools/spike_rlr/run_audio_pass_rlr.py
 }
+
+
+EFFECTIVE_AUDIO_GAIN_THRESHOLD = 0.05
+
+
+def _source_is_synthetic(src_spec: dict) -> bool:
+    if "is_synthetic" in src_spec:
+        return bool(src_spec["is_synthetic"])
+    return src_spec.get("tag") == "dog_husky"
+
+
+def effective_audio_frames_from_gains(
+    gains: list[float],
+    threshold: float = EFFECTIVE_AUDIO_GAIN_THRESHOLD,
+) -> list[bool]:
+    """Return per-frame wet-audio activity from normalized binaural RMS gain."""
+    return [float(gain) >= float(threshold) for gain in gains]
 
 
 def azi_ele_dist_local(src_xyz, mic_xyz, mic_yaw_deg):
@@ -128,6 +154,7 @@ def compute(spec_path: Path, out_dir: Path, csv_path: Path,
         obstacles_3d = []
         for x0, y0, x1, y1 in furn_xy:
             obstacles_3d.append(((x0, y0, 0.0), (x1, y1, 1.5)))
+        obstacles_3d.extend(apartment_builtin_visual_obstacle_bboxes_xyz(spec))
         for x0, y0, x1, y1 in shell_xy:
             obstacles_3d.append(((x0, y0, 0.0), (x1, y1, 2.8)))
         fov_h = float(spec["camera_configs"][0]["fov_deg"])
@@ -141,9 +168,15 @@ def compute(spec_path: Path, out_dir: Path, csv_path: Path,
         for pl in scene.animals:
             src_spec = [s for s in spec["sources"] if s["tag"] == pl.tag][0]
             audio_lookup = src_spec.get("audio_lookup", "unknown")
-            bin_wav = bin_dir / f"audio_B_rlr_LOW_binaural_native_{pl.tag}_binaural.wav"
+            bin_candidates = [
+                out_dir / f"binaural_{pl.tag}_binaural.wav",
+                bin_dir / f"audio_B_rlr_LOW_binaural_native_{pl.tag}_binaural.wav",
+            ]
+            bin_wav = next((p for p in bin_candidates if p.exists()), bin_candidates[0])
 
-            gains = per_frame_amp_gain(bin_wav, n_frames)
+            muted = bool(src_spec.get("mute_audio") or audio_lookup == "silent")
+            gains = [0.0] * n_frames if muted else per_frame_amp_gain(bin_wav, n_frames)
+            effective_audio = effective_audio_frames_from_gains(gains)
 
             azi_ele_dist = [azi_ele_dist_local(xyz, mic_pos, mic_yaw)
                              for xyz in pl.trajectory_m]
@@ -159,14 +192,17 @@ def compute(spec_path: Path, out_dir: Path, csv_path: Path,
 
             sources_out.append({
                 "tag": pl.tag,
-                "category": _LOOKUP_TO_CATEGORY.get(audio_lookup, "unknown"),
-                "is_synthetic": (pl.tag == "dog_husky"),   # piano synthesized
+                "category": "silent" if muted else _LOOKUP_TO_CATEGORY.get(audio_lookup, "unknown"),
+                "is_synthetic": _source_is_synthetic(src_spec),
                 "drr_db_per_frame": drrs,
                 "source_world_xyz_per_frame": [
                     [float(x) for x in xyz] for xyz in pl.trajectory_m
                 ],
                 "source_azi_ele_dist_mic_local_per_frame": [list(t) for t in azi_ele_dist],
                 "source_amp_gain_per_frame": gains,
+                "source_effective_audio_per_frame": effective_audio,
+                "effective_audio_frame_count": int(np.count_nonzero(effective_audio)),
+                "effective_audio_gain_threshold": EFFECTIVE_AUDIO_GAIN_THRESHOLD,
                 "source_in_fov_per_frame": [bool(x) for x in vis["in_fov"]],
                 "source_occluded_by_furniture_per_frame":
                     [bool(x) for x in vis["occluded_by_furniture"]],

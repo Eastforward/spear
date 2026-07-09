@@ -1,6 +1,6 @@
 {
   "spec_version": "apartment_v2_m1",
-  "description": "Plan 2 M1 dataset spec: apartment_v1 shell + subset furniture, 40 randomized clips, 5s each at 15 fps. Mic uniformly sampled + h-rand + uniform yaw. Sources 0/1/2 at 20/40/40. Rig tags dog_golden (dog_bark, real) + dog_husky (music_piano, synthetic).",
+  "description": "Plan 2 M1 dataset spec: apartment_v1 shell + subset furniture, randomized clips, 5s each at 15 fps. Mic uniformly sampled + h-rand + uniform yaw. Sources 0/1/2 at 20/40/40. Review source pool includes dog_golden, dog_beagle_v2, and cat_british_shorthair_v2.",
 
   "n_clips_default": 40,
   "seed_default": 20260708,
@@ -32,6 +32,21 @@
     "z_m": 0.45,
     "n_sources_distribution": [0.20, 0.40, 0.40]
   },
+
+  "source_pool": [
+    {
+      "tag": "dog_golden",
+      "audio_lookup": "dog_bark"
+    },
+    {
+      "tag": "dog_beagle_v2",
+      "audio_lookup": "dog_bark"
+    },
+    {
+      "tag": "cat_british_shorthair_v2",
+      "audio_lookup": "cat_purring"
+    }
+  ],
 
   "audio_library_path": "data/audio_library_v1.json"
 }

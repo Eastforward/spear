@@ -1,5 +1,5 @@
 {
-  "_doc": "Plan 2 initial audio catalog. dog_bark reuses the Plan 1 file used by dog_golden. music_piano is generated in-code by run_audio_pass_rlr.py's _synth_piano_scale — path is a sentinel string. Plan 3 will replace this with proper FSD50K + Stable Audio Open files.",
+  "_doc": "Plan 2 initial audio catalog. dog_bark reuses the Plan 1 file used by dog_golden and dog_beagle_v2. cat_purring uses a local Omniloc cat purring clip. music_piano is generated in-code by run_audio_pass_rlr.py's _synth_piano_scale — path is a sentinel string. Plan 3 will replace this with proper FSD50K + Stable Audio Open files.",
   "samples": [
     {
       "category": "dog_bark",
@@ -8,6 +8,38 @@
       "duration_s": 5.0,
       "sample_rate": 16000,
       "source": "omniaudio_traindata"
+    },
+    {
+      "category": "dog_growl",
+      "path": "/data/datasets/omniaudio/train-data-az-360-large/Dog Growls_184.wav",
+      "is_synthetic": false,
+      "duration_s": 5.0,
+      "sample_rate": 16000,
+      "source": "omniaudio_traindata"
+    },
+    {
+      "category": "dog_sharp_bark",
+      "path": "/data/datasets/omniaudio/train-data-az-360-large/Tiny Dog Barking in Park_338.wav",
+      "is_synthetic": false,
+      "duration_s": 5.0,
+      "sample_rate": 16000,
+      "source": "omniaudio_traindata"
+    },
+    {
+      "category": "cat_meow",
+      "path": "/data/datasets/omniaudio/train-data-az-360-large/Cat Meowing_293.wav",
+      "is_synthetic": false,
+      "duration_s": 5.0,
+      "sample_rate": 16000,
+      "source": "omniaudio_traindata"
+    },
+    {
+      "category": "cat_purring",
+      "path": "/data/datasets/cy/omniloc/train/audio/cat purring/-A1eKkZVSRw_000070.mp3",
+      "is_synthetic": false,
+      "duration_s": 5.0,
+      "sample_rate": 44100,
+      "source": "omniloc_train"
     },
     {
       "category": "music_piano",
