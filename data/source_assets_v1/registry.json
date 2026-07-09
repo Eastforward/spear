@@ -2,11 +2,19 @@
   "schema_version": "source_assets_v1",
   "assets": [
     {
-      "asset_id": "dog_golden_0001",
+      "asset_id": "cat_british_shorthair_0002",
       "asset_class": "animal",
-      "category": "dog",
-      "family": "golden_retriever",
-      "path": "dog/golden_retriever/dog_golden_0001/asset.json",
+      "category": "cat",
+      "family": "british_shorthair",
+      "path": "cat/british_shorthair/cat_british_shorthair_0002/asset.json",
+      "overall_status": "approved"
+    },
+    {
+      "asset_id": "cat_siamese_0001",
+      "asset_class": "animal",
+      "category": "cat",
+      "family": "siamese",
+      "path": "cat/siamese/cat_siamese_0001/asset.json",
       "overall_status": "approved"
     },
     {
@@ -18,11 +26,19 @@
       "overall_status": "approved"
     },
     {
-      "asset_id": "cat_british_shorthair_0002",
+      "asset_id": "dog_golden_0001",
       "asset_class": "animal",
-      "category": "cat",
-      "family": "british_shorthair",
-      "path": "cat/british_shorthair/cat_british_shorthair_0002/asset.json",
+      "category": "dog",
+      "family": "golden_retriever",
+      "path": "dog/golden_retriever/dog_golden_0001/asset.json",
+      "overall_status": "approved"
+    },
+    {
+      "asset_id": "dog_pug_0001",
+      "asset_class": "animal",
+      "category": "dog",
+      "family": "pug",
+      "path": "dog/pug/dog_pug_0001/asset.json",
       "overall_status": "approved"
     }
   ]

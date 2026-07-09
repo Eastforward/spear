@@ -1,0 +1,121 @@
+{
+  "schema_version": "source_asset_v1",
+  "asset_id": "dog_pug_0001",
+  "legacy_tag": "dog_pug_v1",
+  "asset_class": "animal",
+  "category": "dog",
+  "family": "pug",
+  "variant": {
+    "variant_index": 1,
+    "size": null,
+    "coat_type": null,
+    "intended_color_label": "pug"
+  },
+  "generation": {
+    "source_pipeline": "flux+hunyuan3d",
+    "model": "flux_dev+hunyuan3d-2.1",
+    "seed": 5101,
+    "positive_prompt": "a pug dog in perfect side profile view, its tail held clearly above the horizontal at about 45 degrees upward (not vertical), all four legs spread wide apart with visible gaps between them, standing on a level surface, plain solid white background, product photography, isolated on white",
+    "negative_prompt": null,
+    "text_description": "pug dog",
+    "created_at": "2026-07-09T09:34:42.023550+00:00"
+  },
+  "appearance": {
+    "dominant_colors": [
+      {
+        "role": "coat_primary",
+        "hex": "#A9937C",
+        "rgb": [
+          169,
+          147,
+          124
+        ],
+        "lab": [
+          62.3,
+          4.6,
+          15.2
+        ],
+        "coverage": 0.397,
+        "source": "measured_from_texture"
+      },
+      {
+        "role": "coat_secondary",
+        "hex": "#6E5032",
+        "rgb": [
+          110,
+          80,
+          50
+        ],
+        "lab": [
+          36.5,
+          8.7,
+          22.5
+        ],
+        "coverage": 0.361,
+        "source": "measured_from_texture"
+      },
+      {
+        "role": "coat_tertiary",
+        "hex": "#BBAFA2",
+        "rgb": [
+          187,
+          175,
+          162
+        ],
+        "lab": [
+          72.1,
+          2.1,
+          8.2
+        ],
+        "coverage": 0.242,
+        "source": "measured_from_texture"
+      }
+    ],
+    "color_tags": [
+      "brown",
+      "gray"
+    ],
+    "lightness": 0.554,
+    "saturation": 0.171
+  },
+  "visual_assets": {
+    "reference_image": "tmp/hy3d_batch/approved/dog_pug_v1/reference.png",
+    "mesh_original": "tmp/hy3d_batch/approved/dog_pug_v1/mesh.obj",
+    "mesh_oriented": "tmp/hy3d_batch/approved/dog_pug_v1/mesh_oriented.glb",
+    "mesh_runtime": "tmp/hy3d_batch/approved/dog_pug_v1/mesh_runtime.glb",
+    "diffuse": "tmp/hy3d_batch/approved/dog_pug_v1/hy3d_diffuse.jpg",
+    "roughness": "tmp/hy3d_batch/approved/dog_pug_v1/hy3d_roughness.jpg",
+    "metallic": "tmp/hy3d_batch/approved/dog_pug_v1/hy3d_metallic.jpg",
+    "review_image": "tmp/hy3d_batch/approved/dog_pug_v1/direction_preview_review.png",
+    "direction_json": "tmp/hy3d_batch/approved/dog_pug_v1/direction.json",
+    "runtime_metadata": "tmp/hy3d_batch/approved/dog_pug_v1/mesh_runtime.json"
+  },
+  "rig": {
+    "skeleton_family": "quaternius_dog",
+    "animations": [
+      "Idle",
+      "Walking"
+    ],
+    "loop_required": true
+  },
+  "audio": {
+    "default_lookup": "dog_bark",
+    "allowed_lookups": [
+      "dog_bark",
+      "dog_growl",
+      "dog_sharp_bark",
+      "silent"
+    ]
+  },
+  "review": {
+    "overall_status": "approved",
+    "appearance_status": "approved",
+    "direction_status": "approved",
+    "texture_status": "approved",
+    "rig_status": "approved",
+    "audio_mapping_status": "approved",
+    "approved_by": "jzy",
+    "approved_at": "2026-07-09T09:42:24.492551+00:00",
+    "notes": null
+  }
+}

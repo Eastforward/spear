@@ -113,3 +113,57 @@ def test_sync_candidate_manifest_review_updates_direction_status(tmp_path):
     assert manifest["review"]["overall_status"] == "needs_runtime_gate"
     assert manifest["review"]["approved_by"] == "jzy"
     assert manifest["visual_assets"]["mesh_oriented"].endswith("mesh_oriented.glb")
+
+
+def test_sync_candidate_manifest_review_rewrites_paths_after_pending_move(tmp_path):
+    pending_tag_dir = tmp_path / "pending" / "dog_beagle_v2"
+    pending_tag_dir.mkdir(parents=True)
+    for name in (
+        "mesh.obj",
+        "mesh_oriented.glb",
+        "hy3d_diffuse.jpg",
+        "hy3d_roughness.jpg",
+        "hy3d_metallic.jpg",
+        "reference.png",
+        "direction.json",
+        "direction_preview_review.png",
+    ):
+        (pending_tag_dir / name).write_bytes(b"x")
+    write_hy3d_candidate_manifest(
+        pending_tag_dir,
+        tag="dog_beagle_v2",
+        species="dog",
+        breed="beagle",
+        seed=4101,
+        positive_prompt="a beagle dog",
+        created_at="2026-07-09T00:00:00+00:00",
+    )
+
+    approved_tag_dir = tmp_path / "approved" / "dog_beagle_v2"
+    approved_tag_dir.parent.mkdir()
+    pending_tag_dir.rename(approved_tag_dir)
+    direction = {
+        "human_approved": True,
+        "human_approved_by": "jzy",
+        "human_approved_at": "2026-07-09T01:02:03+00:00",
+        "mesh_oriented": str((approved_tag_dir / "mesh_oriented.glb").resolve()),
+    }
+
+    sync_candidate_manifest_review(approved_tag_dir, direction)
+
+    manifest = json.loads(
+        (approved_tag_dir / CANDIDATE_MANIFEST_NAME).read_text()
+    )
+    visual_assets = manifest["visual_assets"]
+    for key in (
+        "reference_image",
+        "mesh_original",
+        "mesh_oriented",
+        "diffuse",
+        "roughness",
+        "metallic",
+        "review_image",
+        "direction_json",
+    ):
+        assert str(tmp_path / "pending") not in visual_assets[key]
+        assert str(approved_tag_dir) in visual_assets[key]

@@ -5,6 +5,7 @@ Dog rig -- medium canid/pig/goat/sheep:                   dog, goat, sheep, pig
 Wolf rig -- large ungulates:                              horse, cattle, yak, donkey
 """
 
+import json
 import os
 import sys
 
@@ -99,6 +100,51 @@ DOG_RIG = f"{QUATERNIUS_DIR}/Dog.glb"
 QUATERNIUS_FORWARD_YAW_OFFSET_DEG = 0.0
 
 
+def _animated_entry(tag, rig):
+    return {
+        "rig": rig,
+        "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG,
+        **_approved_or_batch_mesh(tag),
+    }
+
+
+def _manifest_driven_animated_entries():
+    """Discover approved Hunyuan dog/cat candidate manifests.
+
+    New generated assets should not require a code edit just to pass the gate.
+    The candidate manifest records the skeleton family chosen during asset
+    generation; direction approval and file validity are still enforced by
+    _approved_or_batch_mesh/assert_inputs_exist.
+    """
+    skeleton_to_rig = {
+        "quaternius_dog": DOG_RIG,
+        "quaternius_cat": CAT_RIG,
+    }
+    entries = {}
+    if not os.path.isdir(HY3D_APPROVED_DIR):
+        return entries
+    for name in sorted(os.listdir(HY3D_APPROVED_DIR)):
+        tag_dir = os.path.join(HY3D_APPROVED_DIR, name)
+        if not os.path.isdir(tag_dir):
+            continue
+        manifest_path = os.path.join(tag_dir, "source_asset_candidate.json")
+        if not os.path.exists(manifest_path):
+            continue
+        try:
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        rig = skeleton_to_rig.get((manifest.get("rig") or {}).get("skeleton_family"))
+        if rig is None:
+            continue
+        tag = manifest.get("legacy_tag") or name
+        if tag != name:
+            continue
+        entries[tag] = _animated_entry(tag, rig)
+    return entries
+
+
 # 2026-07-06: quaternius_farm rigs (Horse/Cow/Zebra) have real Walk anims
 # but use SEMANTIC bone names (FrontFoot.R, Tail4, Head...) instead of the
 # Bone.NNN template shared by animalpack Cat/Dog/Wolf. robust_skin_transfer
@@ -109,13 +155,20 @@ ANIMATED_RIG_MAP = {
     # 2026-07-06: Cat.glb gate check on cat_persian looked natural once the
     # orbit camera was pulled back and actor scaled to 0.3 -- the "spikes"
     # I initially saw were the persian's long tail fur, not corrupt geometry.
-    "cat_persian":     {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("cat_persian")},
-    "cat_tabby":       {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("cat_tabby")},
-    "cat_british_shorthair_v2": {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("cat_british_shorthair_v2")},
-    "chipmunk":        {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("chipmunk")},
-    "dog_golden":      {"rig": DOG_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("dog_golden")},
-    "dog_beagle_v2":   {"rig": DOG_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("dog_beagle_v2")},
+    "cat_persian": _animated_entry("cat_persian", CAT_RIG),
+    "cat_tabby": _animated_entry("cat_tabby", CAT_RIG),
+    "cat_british_shorthair_v2": _animated_entry(
+        "cat_british_shorthair_v2", CAT_RIG
+    ),
+    "chipmunk": _animated_entry("chipmunk", CAT_RIG),
+    "dog_golden": _animated_entry("dog_golden", DOG_RIG),
+    "dog_beagle_v2": _animated_entry("dog_beagle_v2", DOG_RIG),
 }
+ANIMATED_RIG_MAP.update({
+    tag: entry
+    for tag, entry in _manifest_driven_animated_entries().items()
+    if tag not in ANIMATED_RIG_MAP
+})
 
 # Import-time guard: every animated tag MUST declare its walking yaw offset.
 # Adding a new rig without this field will fail loudly the first time

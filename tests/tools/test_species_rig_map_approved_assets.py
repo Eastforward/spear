@@ -156,6 +156,65 @@ print(json.dumps({"diffuse": entry.get("diffuse")}))
     assert entry["diffuse"] == str(diffuse)
 
 
+def test_approved_candidate_manifest_animals_are_discovered(tmp_path):
+    approved = tmp_path / "approved"
+    for tag, skeleton in (
+        ("dog_pug_v1", "quaternius_dog"),
+        ("cat_siamese_v1", "quaternius_cat"),
+    ):
+        tag_dir = approved / tag
+        tag_dir.mkdir(parents=True)
+        mesh = tag_dir / "mesh_oriented.glb"
+        diffuse = tag_dir / "hy3d_diffuse.jpg"
+        mesh.write_bytes(f"{tag} approved mesh".encode())
+        diffuse.write_bytes(f"{tag} diffuse".encode())
+        mesh_sha = hashlib.sha256(mesh.read_bytes()).hexdigest()
+        (tag_dir / "direction.json").write_text(json.dumps({
+            "algorithm_version": "auto_orient_v1",
+            "human_approved": True,
+            "human_approved_by": "test",
+            "human_approved_at": "2026-07-09T00:00:00Z",
+            "quarantined": False,
+            "mesh_sha256": mesh_sha,
+            "detection": {
+                "head_direction_original_mesh_frame": [1, 0, 0],
+                "rotation_applied_to_align_to_plus_x": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            },
+        }))
+        (tag_dir / "source_asset_candidate.json").write_text(json.dumps({
+            "schema_version": "source_asset_v1",
+            "legacy_tag": tag,
+            "asset_class": "animal",
+            "category": tag.split("_", 1)[0],
+            "rig": {"skeleton_family": skeleton},
+        }))
+
+    code = """
+import json
+import sys
+sys.path.insert(0, "/data/jzy/code/AVEngine/external/SPEAR/tools")
+import species_rig_map
+print(json.dumps({
+    "dog": species_rig_map.assert_inputs_exist("dog_pug_v1"),
+    "cat": species_rig_map.assert_inputs_exist("cat_siamese_v1"),
+}))
+"""
+    env = {**os.environ, "HY3D_APPROVED_DIR": str(approved)}
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    entries = json.loads(proc.stdout)
+
+    assert entries["dog"]["mesh"] == str(approved / "dog_pug_v1" / "mesh_oriented.glb")
+    assert entries["cat"]["mesh"] == str(approved / "cat_siamese_v1" / "mesh_oriented.glb")
+    assert entries["dog"]["rig"].endswith("quaternius_animalpack/Dog.glb")
+    assert entries["cat"]["rig"].endswith("quaternius_animalpack/Cat.glb")
+
+
 def test_approved_animated_inputs_reject_missing_diffuse_for_untextured_mesh(tmp_path):
     approved = tmp_path / "approved"
     batch = tmp_path / "batch"

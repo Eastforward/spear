@@ -219,11 +219,13 @@ def sync_candidate_manifest_review(
 
     visual_assets = manifest.setdefault("visual_assets", {})
     for key, name in (
+        ("reference_image", "reference.png"),
         ("mesh_original", "mesh.obj"),
         ("mesh_oriented", "mesh_oriented.glb"),
         ("diffuse", "hy3d_diffuse.jpg"),
         ("roughness", "hy3d_roughness.jpg"),
         ("metallic", "hy3d_metallic.jpg"),
+        ("review_image", "direction_preview_review.png"),
         ("direction_json", "direction.json"),
         ("runtime_metadata", "mesh_runtime.json"),
         ("mesh_runtime", "mesh_runtime.glb"),

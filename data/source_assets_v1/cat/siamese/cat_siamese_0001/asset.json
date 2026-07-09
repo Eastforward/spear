@@ -1,0 +1,119 @@
+{
+  "schema_version": "source_asset_v1",
+  "asset_id": "cat_siamese_0001",
+  "legacy_tag": "cat_siamese_v1",
+  "asset_class": "animal",
+  "category": "cat",
+  "family": "siamese",
+  "variant": {
+    "variant_index": 1,
+    "size": null,
+    "coat_type": null,
+    "intended_color_label": "siamese"
+  },
+  "generation": {
+    "source_pipeline": "flux+hunyuan3d",
+    "model": "flux_dev+hunyuan3d-2.1",
+    "seed": 5102,
+    "positive_prompt": "a siamese cat in perfect side profile view, its tail held clearly above the horizontal at about 45 degrees upward (not vertical), all four legs spread wide apart with visible gaps between them, standing on a level surface, plain solid white background, product photography, isolated on white",
+    "negative_prompt": null,
+    "text_description": "siamese cat",
+    "created_at": "2026-07-09T09:38:16.439979+00:00"
+  },
+  "appearance": {
+    "dominant_colors": [
+      {
+        "role": "coat_primary",
+        "hex": "#513220",
+        "rgb": [
+          81,
+          50,
+          32
+        ],
+        "lab": [
+          24.1,
+          11.8,
+          17.2
+        ],
+        "coverage": 0.409,
+        "source": "measured_from_texture"
+      },
+      {
+        "role": "coat_secondary",
+        "hex": "#A07E63",
+        "rgb": [
+          160,
+          126,
+          99
+        ],
+        "lab": [
+          55.4,
+          9.3,
+          19.7
+        ],
+        "coverage": 0.329,
+        "source": "measured_from_texture"
+      },
+      {
+        "role": "coat_tertiary",
+        "hex": "#BDAFA0",
+        "rgb": [
+          189,
+          175,
+          160
+        ],
+        "lab": [
+          72.2,
+          2.5,
+          9.5
+        ],
+        "coverage": 0.261,
+        "source": "measured_from_texture"
+      }
+    ],
+    "color_tags": [
+      "brown"
+    ],
+    "lightness": 0.469,
+    "saturation": 0.183
+  },
+  "visual_assets": {
+    "reference_image": "tmp/hy3d_batch/approved/cat_siamese_v1/reference.png",
+    "mesh_original": "tmp/hy3d_batch/approved/cat_siamese_v1/mesh.obj",
+    "mesh_oriented": "tmp/hy3d_batch/approved/cat_siamese_v1/mesh_oriented.glb",
+    "mesh_runtime": "tmp/hy3d_batch/approved/cat_siamese_v1/mesh_runtime.glb",
+    "diffuse": "tmp/hy3d_batch/approved/cat_siamese_v1/hy3d_diffuse.jpg",
+    "roughness": "tmp/hy3d_batch/approved/cat_siamese_v1/hy3d_roughness.jpg",
+    "metallic": "tmp/hy3d_batch/approved/cat_siamese_v1/hy3d_metallic.jpg",
+    "review_image": "tmp/hy3d_batch/approved/cat_siamese_v1/direction_preview_review.png",
+    "direction_json": "tmp/hy3d_batch/approved/cat_siamese_v1/direction.json",
+    "runtime_metadata": "tmp/hy3d_batch/approved/cat_siamese_v1/mesh_runtime.json"
+  },
+  "rig": {
+    "skeleton_family": "quaternius_cat",
+    "animations": [
+      "Idle",
+      "Walking"
+    ],
+    "loop_required": true
+  },
+  "audio": {
+    "default_lookup": "cat_purring",
+    "allowed_lookups": [
+      "cat_meow",
+      "cat_purring",
+      "silent"
+    ]
+  },
+  "review": {
+    "overall_status": "approved",
+    "appearance_status": "approved",
+    "direction_status": "approved",
+    "texture_status": "approved",
+    "rig_status": "approved",
+    "audio_mapping_status": "approved",
+    "approved_by": "jzy",
+    "approved_at": "2026-07-09T09:42:10.469795+00:00",
+    "notes": null
+  }
+}
