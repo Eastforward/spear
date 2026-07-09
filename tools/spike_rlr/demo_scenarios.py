@@ -43,7 +43,7 @@ from scene_two_dogs_apartment import (  # noqa: E402
     _static_obstacle_bboxes,
     _valid_region_bboxes,
 )
-from source_asset_registry import resolve_source_pool_entry  # noqa: E402
+from source_asset_registry import approved_assets, resolve_source_pool_entry  # noqa: E402
 from speech_audio import pick_speech_sample  # noqa: E402
 from visibility import batch_frame_visibility  # noqa: E402
 
@@ -53,6 +53,29 @@ DEFAULT_BASE_SPEC = _SPEAR_ROOT / "data" / "apartment_v1_spec.json"
 
 class UnsatisfiableScenarioError(RuntimeError):
     """Raised when no deterministic candidate satisfies the requested event."""
+
+
+def _resolve_approved_human_entry(
+    human_asset_id: str | None,
+    registry_root: str | Path | None,
+) -> dict:
+    if human_asset_id is None:
+        candidates = approved_assets(
+            registry_root=registry_root,
+            asset_class="human",
+            category="human",
+        )
+        if not candidates:
+            raise UnsatisfiableScenarioError(
+                "No approved human source assets are available in the source "
+                "asset registry. Review/promote a human asset before running "
+                "a human speech demo."
+            )
+        human_asset_id = sorted(asset["asset_id"] for asset in candidates)[0]
+    return resolve_source_pool_entry(
+        {"asset_id": human_asset_id},
+        registry_root=registry_root,
+    )
 
 
 def _load_apartment_planning_context(spec: dict) -> tuple[list, tuple, list]:
@@ -619,7 +642,8 @@ def compose_visible_human_speech_demo(
     base_spec_path: str | Path = DEFAULT_BASE_SPEC,
     out_spec_path: str | Path | None = None,
     *,
-    human_asset_id: str = "human_male_blue_hoodie_0002",
+    human_asset_id: str | None = None,
+    registry_root: str | Path | None = None,
     speech_root: str | Path | None = None,
 ) -> dict:
     """One visible stationary human speaker using real speech audio."""
@@ -647,7 +671,8 @@ def compose_visible_human_speech_demo(
     spec["source_height_m"] = speech_z_m
     spec["source_collision_policy"] = "walls_only_center"
 
-    human_entry = resolve_source_pool_entry({"asset_id": human_asset_id})
+    human_entry = _resolve_approved_human_entry(human_asset_id, registry_root)
+    human_asset_id = human_entry["asset_id"]
     human_pos = np.asarray([-1.5, 1.5, speech_z_m], dtype=np.float64)
     human_traj = np.asarray(_constant_trajectory(human_pos, n_frames), dtype=np.float64)
     facing_yaw = float(
@@ -719,7 +744,8 @@ def compose_visible_moving_human_speech_demo(
     base_spec_path: str | Path = DEFAULT_BASE_SPEC,
     out_spec_path: str | Path | None = None,
     *,
-    human_asset_id: str = "human_male_blue_hoodie_0002",
+    human_asset_id: str | None = None,
+    registry_root: str | Path | None = None,
     speech_root: str | Path | None = None,
 ) -> dict:
     """One visible human speaker walking left-to-right in front of camera."""
@@ -747,7 +773,8 @@ def compose_visible_moving_human_speech_demo(
     spec["source_height_m"] = speech_z_m
     spec["source_collision_policy"] = "full_static_aabb_center"
 
-    human_entry = resolve_source_pool_entry({"asset_id": human_asset_id})
+    human_entry = _resolve_approved_human_entry(human_asset_id, registry_root)
+    human_asset_id = human_entry["asset_id"]
     start = _listener_local_point(
         mic,
         yaw,
@@ -851,6 +878,8 @@ def main():
         ],
     )
     ap.add_argument("--speech-root")
+    ap.add_argument("--human-asset-id")
+    ap.add_argument("--registry-root")
     args = ap.parse_args()
     builders = {
         "front_idle_rear_left_to_right": compose_front_idle_rear_left_to_right_demo,
@@ -863,6 +892,8 @@ def main():
             args.base_spec,
             args.out,
             speech_root=args.speech_root,
+            human_asset_id=args.human_asset_id,
+            registry_root=args.registry_root,
         )
     else:
         spec = builders[args.scenario](args.base_spec, args.out)

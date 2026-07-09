@@ -81,6 +81,17 @@ def test_approved_assets_can_filter_by_category():
     assert all(asset["review"]["overall_status"] == "approved" for asset in dogs)
 
 
+def test_rejected_hunyuan_humans_are_not_approved_sources():
+    humans = approved_assets(category="human")
+
+    assert "human_male_blue_hoodie_0002" not in {
+        asset["asset_id"] for asset in humans
+    }
+    assert "human_female_red_jacket_0002" not in {
+        asset["asset_id"] for asset in humans
+    }
+
+
 def test_resolve_source_pool_entry_uses_asset_default_audio():
     resolved = resolve_source_pool_entry({"asset_id": "dog_beagle_0002"})
 

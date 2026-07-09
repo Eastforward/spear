@@ -79,18 +79,18 @@
     "saturation": 0.223
   },
   "visual_assets": {
-    "reference_image": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/reference.png",
-    "mesh_original": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh.obj",
-    "mesh_oriented": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh_oriented.glb",
-    "mesh_runtime": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh_runtime.glb",
-    "mesh_runtime_walking": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh_runtime_walking.glb",
-    "mesh_runtime_standing_idle": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh_runtime_standing_idle.glb",
-    "diffuse": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/hy3d_diffuse.jpg",
-    "roughness": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/hy3d_roughness.jpg",
-    "metallic": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/hy3d_metallic.jpg",
-    "review_image": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/direction_preview_review.png",
-    "direction_json": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/direction.json",
-    "runtime_metadata": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh_runtime.json"
+    "reference_image": "tmp/hy3d_batch/rejected/human_female_red_jacket_v2/reference.png",
+    "mesh_original": "tmp/hy3d_batch/rejected/human_female_red_jacket_v2/mesh.obj",
+    "mesh_oriented": "tmp/hy3d_batch/rejected/human_female_red_jacket_v2/mesh_oriented.glb",
+    "mesh_runtime": "tmp/hy3d_batch/rejected/human_female_red_jacket_v2/mesh_runtime.glb",
+    "mesh_runtime_walking": "tmp/hy3d_batch/rejected/human_female_red_jacket_v2/mesh_runtime_walking.glb",
+    "mesh_runtime_standing_idle": "tmp/hy3d_batch/rejected/human_female_red_jacket_v2/mesh_runtime_standing_idle.glb",
+    "diffuse": "tmp/hy3d_batch/rejected/human_female_red_jacket_v2/hy3d_diffuse.jpg",
+    "roughness": "tmp/hy3d_batch/rejected/human_female_red_jacket_v2/hy3d_roughness.jpg",
+    "metallic": "tmp/hy3d_batch/rejected/human_female_red_jacket_v2/hy3d_metallic.jpg",
+    "review_image": "tmp/hy3d_batch/rejected/human_female_red_jacket_v2/direction_preview_review.png",
+    "direction_json": "tmp/hy3d_batch/rejected/human_female_red_jacket_v2/direction.json",
+    "runtime_metadata": "tmp/hy3d_batch/rejected/human_female_red_jacket_v2/mesh_runtime.json"
   },
   "rig": {
     "skeleton_family": "mixamo_humanoid",
@@ -109,7 +109,7 @@
         "role": "idle",
         "motion_style": "stationary",
         "loop": true,
-        "glb_path": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh_runtime_standing_idle.glb",
+        "glb_path": "tmp/hy3d_batch/rejected/human_female_red_jacket_v2/mesh_runtime_standing_idle.glb",
         "source_glb": "tmp/human_mixamo_runtime_v2/human_female_red_jacket_v2_standing_idle_nearest_zm90_fixed.glb",
         "source_fbx": "raw/Standing_Idle.fbx",
         "sha256": "b1778495e4d215db22f38a9cee6483e58caefc29fddacf4b5d6bfacbe397a299"
@@ -118,7 +118,7 @@
         "role": "walk",
         "motion_style": "walking",
         "loop": true,
-        "glb_path": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh_runtime_walking.glb",
+        "glb_path": "tmp/hy3d_batch/rejected/human_female_red_jacket_v2/mesh_runtime_walking.glb",
         "source_glb": "tmp/human_mixamo_runtime_v2/human_female_red_jacket_v2_walking_nearest_zm90_fixed.glb",
         "source_fbx": "raw/Walking.fbx",
         "sha256": "865e630ff4ff166db2605780b106064796c086aca8658f85461efd96b945f709"
@@ -135,14 +135,16 @@
     ]
   },
   "review": {
-    "overall_status": "approved",
+    "overall_status": "rejected",
     "appearance_status": "approved",
     "direction_status": "approved",
     "texture_status": "approved",
-    "rig_status": "approved",
+    "rig_status": "rejected",
     "audio_mapping_status": "approved",
     "approved_by": "jzy",
     "approved_at": "2026-07-09T12:52:07.401996+00:00",
-    "notes": "human asset: animal auto-orient skipped; use review UI manual rotation"
+    "rejected_by": "codex",
+    "rejected_at": "2026-07-09T13:31:45Z",
+    "notes": "rejected after moving-human review: Mixamo bones exist, but Flux/Hunyuan full-body hand topology is too low-detail for nearest Mixamo skin transfer; diagnostics showed hand vertices dominated by a few thumb/finger groups and hands render as broken/empty white pieces"
   }
 }

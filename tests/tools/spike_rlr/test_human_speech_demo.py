@@ -1,7 +1,9 @@
+import json
 import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 import soundfile as sf
 
 REPO = Path(__file__).resolve().parents[3]
@@ -17,6 +19,55 @@ def _write_wav(path: Path, duration_s: float = 2.0, sample_rate: int = 16000) ->
 
 def _source(spec, tag):
     return next(src for src in spec["sources"] if src["tag"] == tag)
+
+
+def _write_approved_human_registry(root: Path, asset_id: str = "human_fixture_0001") -> None:
+    asset = {
+        "schema_version": "source_asset_v1",
+        "asset_id": asset_id,
+        "legacy_tag": "human_fixture_v1",
+        "asset_class": "human",
+        "category": "human",
+        "family": "fixture",
+        "variant": {"variant_index": 1},
+        "generation": {"text_description": "fixture human"},
+        "appearance": {"dominant_colors": []},
+        "visual_assets": {},
+        "rig": {
+            "skeleton_family": "mixamo_humanoid",
+            "animations": ["Standing_Idle", "Walking"],
+            "loop_required": True,
+            "actor_scale": 1.0,
+            "actor_z_lift_cm": 14.0,
+            "walking_forward_yaw_offset_deg": 90.0,
+        },
+        "audio": {"default_lookup": "speech", "allowed_lookups": ["speech"]},
+        "review": {
+            "overall_status": "approved",
+            "appearance_status": "approved",
+            "direction_status": "approved",
+            "texture_status": "approved",
+            "rig_status": "approved",
+            "audio_mapping_status": "approved",
+            "approved_by": "test",
+            "approved_at": "2026-07-09T00:00:00+00:00",
+            "notes": None,
+        },
+    }
+    asset_path = root / "human" / "fixture" / asset_id / "asset.json"
+    asset_path.parent.mkdir(parents=True)
+    asset_path.write_text(json.dumps(asset), encoding="utf-8")
+    (root / "registry.json").write_text(json.dumps({
+        "schema_version": "source_assets_v1",
+        "assets": [{
+            "asset_id": asset_id,
+            "asset_class": "human",
+            "category": "human",
+            "family": "fixture",
+            "path": f"human/fixture/{asset_id}/asset.json",
+            "overall_status": "approved",
+        }],
+    }), encoding="utf-8")
 
 
 def test_visible_human_speech_demo_uses_registered_human_and_real_speech(tmp_path):
@@ -39,15 +90,19 @@ def test_visible_human_speech_demo_uses_registered_human_and_real_speech(tmp_pat
         "This is a visible human speech demo.\n",
         encoding="utf-8",
     )
+    registry_root = tmp_path / "registry"
+    _write_approved_human_registry(registry_root)
 
     out_spec = tmp_path / "clip" / "spec.json"
     spec = compose_visible_human_speech_demo(
         REPO / "data" / "apartment_v1_spec.json",
         out_spec_path=out_spec,
         speech_root=speech_root,
+        human_asset_id="human_fixture_0001",
+        registry_root=registry_root,
     )
 
-    src = _source(spec, "human_male_blue_hoodie_v2")
+    src = _source(spec, "human_fixture_v1")
     traj = np.asarray(src["trajectory_m"], dtype=float)
     report = verify_constraints([
         constraint_front_of_camera(src["tag"], traj, spec["mic"]["pos_m"], spec["mic"]["yaw_deg"]),
@@ -64,7 +119,7 @@ def test_visible_human_speech_demo_uses_registered_human_and_real_speech(tmp_pat
 
     assert report["passed"], report
     assert bool(vis["in_fov"].all())
-    assert src["asset_id"] == "human_male_blue_hoodie_0002"
+    assert src["asset_id"] == "human_fixture_0001"
     assert src["asset_class"] == "human"
     assert src["category"] == "human"
     assert src["audio_lookup"] == "speech"
@@ -114,15 +169,19 @@ def test_visible_moving_human_speech_demo_walks_left_to_right_with_real_speech(t
         "This is a moving human speech demo.\n",
         encoding="utf-8",
     )
+    registry_root = tmp_path / "registry"
+    _write_approved_human_registry(registry_root)
 
     out_spec = tmp_path / "clip" / "spec.json"
     spec = compose_visible_moving_human_speech_demo(
         REPO / "data" / "apartment_v1_spec.json",
         out_spec_path=out_spec,
         speech_root=speech_root,
+        human_asset_id="human_fixture_0001",
+        registry_root=registry_root,
     )
 
-    src = _source(spec, "human_male_blue_hoodie_v2")
+    src = _source(spec, "human_fixture_v1")
     traj = np.asarray(src["trajectory_m"], dtype=float)
     report = verify_constraints([
         constraint_front_of_camera(src["tag"], traj, spec["mic"]["pos_m"], spec["mic"]["yaw_deg"]),
@@ -131,7 +190,7 @@ def test_visible_moving_human_speech_demo_walks_left_to_right_with_real_speech(t
     ])
 
     assert report["passed"], report
-    assert src["asset_id"] == "human_male_blue_hoodie_0002"
+    assert src["asset_id"] == "human_fixture_0001"
     assert src["audio_lookup"] == "speech"
     assert src["audio_path"] == str(wav)
     assert src["wanted_anim"] == "Walking"
@@ -178,3 +237,48 @@ def test_human_visual_marker_falls_back_when_ue_bounds_are_implausible():
         0.62,
         0.95,
     ]
+
+
+def test_human_demo_requires_approved_human_asset(tmp_path):
+    from demo_scenarios import (
+        UnsatisfiableScenarioError,
+        compose_visible_human_speech_demo,
+    )
+
+    registry_root = tmp_path / "registry"
+    rejected_asset = {
+        "schema_version": "source_asset_v1",
+        "asset_id": "human_bad_hands_0001",
+        "legacy_tag": "human_bad_hands_v1",
+        "asset_class": "human",
+        "category": "human",
+        "family": "fixture",
+        "variant": {"variant_index": 1},
+        "generation": {"text_description": "human with failed hands"},
+        "appearance": {"dominant_colors": []},
+        "visual_assets": {},
+        "rig": {"skeleton_family": "mixamo_humanoid", "animations": [], "loop_required": True},
+        "audio": {"default_lookup": "speech", "allowed_lookups": ["speech"]},
+        "review": {"overall_status": "rejected"},
+    }
+    asset_path = registry_root / "human" / "fixture" / "human_bad_hands_0001" / "asset.json"
+    asset_path.parent.mkdir(parents=True)
+    asset_path.write_text(json.dumps(rejected_asset), encoding="utf-8")
+    (registry_root / "registry.json").write_text(json.dumps({
+        "schema_version": "source_assets_v1",
+        "assets": [{
+            "asset_id": "human_bad_hands_0001",
+            "asset_class": "human",
+            "category": "human",
+            "family": "fixture",
+            "path": "human/fixture/human_bad_hands_0001/asset.json",
+            "overall_status": "rejected",
+        }],
+    }), encoding="utf-8")
+
+    with pytest.raises(UnsatisfiableScenarioError, match="No approved human"):
+        compose_visible_human_speech_demo(
+            REPO / "data" / "apartment_v1_spec.json",
+            out_spec_path=tmp_path / "clip" / "spec.json",
+            registry_root=registry_root,
+        )
