@@ -154,6 +154,8 @@ def _visual_assets(tag_dir: Path) -> dict[str, str | None]:
         "mesh_original": "mesh.obj",
         "mesh_oriented": "mesh_oriented.glb",
         "mesh_runtime": "mesh_runtime.glb",
+        "mesh_runtime_walking": "mesh_runtime_walking.glb",
+        "mesh_runtime_standing_idle": "mesh_runtime_standing_idle.glb",
         "diffuse": "hy3d_diffuse.jpg",
         "roughness": "hy3d_roughness.jpg",
         "metallic": "hy3d_metallic.jpg",
@@ -166,6 +168,24 @@ def _visual_assets(tag_dir: Path) -> dict[str, str | None]:
         path = tag_dir / name
         out[key] = _repo_path(path) if path.exists() else None
     return out
+
+
+def _apply_runtime_metadata(asset: dict[str, Any], tag_dir: Path) -> None:
+    runtime_path = tag_dir / "mesh_runtime.json"
+    if not runtime_path.exists():
+        return
+    runtime = _read_json(runtime_path)
+    if (
+        asset.get("category") != "human"
+        or runtime.get("schema_version") != "human_mixamo_runtime_v1"
+    ):
+        return
+
+    animations = runtime.get("animations") or {}
+    rig = asset.setdefault("rig", {})
+    rig["runtime_type"] = runtime.get("runtime_type")
+    rig["default_animation"] = runtime.get("default_animation")
+    rig["animation_assets"] = animations
 
 
 def _registry_entry_for(asset: dict[str, Any], asset_path: Path, registry_root: Path) -> dict[str, Any]:
@@ -210,6 +230,7 @@ def promote_source_asset(
     appearance = measure_dominant_colors(tag_dir / "hy3d_diffuse.jpg")
     asset["appearance"] = appearance
     asset["visual_assets"] = _visual_assets(tag_dir)
+    _apply_runtime_metadata(asset, tag_dir)
 
     direction = _read_json(tag_dir / "direction.json")
     review = asset.setdefault("review", {})

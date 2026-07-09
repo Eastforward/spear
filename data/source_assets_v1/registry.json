@@ -40,6 +40,14 @@
       "family": "pug",
       "path": "dog/pug/dog_pug_0001/asset.json",
       "overall_status": "approved"
+    },
+    {
+      "asset_id": "human_male_blue_hoodie_0001",
+      "asset_class": "human",
+      "category": "human",
+      "family": "male_blue_hoodie",
+      "path": "human/male_blue_hoodie/human_male_blue_hoodie_0001/asset.json",
+      "overall_status": "approved"
     }
   ]
 }

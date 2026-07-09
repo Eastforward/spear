@@ -5,6 +5,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
 
+import source_asset_manifest as manifest_mod  # noqa: E402
 from source_asset_manifest import (  # noqa: E402
     CANDIDATE_MANIFEST_NAME,
     asset_id_for_tag,
@@ -115,6 +116,7 @@ def test_build_hy3d_candidate_manifest_uses_human_speech_and_mixamo_defaults(tmp
 def test_sync_candidate_manifest_review_updates_direction_status(tmp_path):
     tag_dir = tmp_path / "approved" / "dog_beagle_v2"
     tag_dir.mkdir(parents=True)
+    (tag_dir / "mesh_oriented.glb").write_bytes(b"x")
     path = write_hy3d_candidate_manifest(
         tag_dir,
         tag="dog_beagle_v2",
@@ -193,3 +195,32 @@ def test_sync_candidate_manifest_review_rewrites_paths_after_pending_move(tmp_pa
     ):
         assert str(tmp_path / "pending") not in visual_assets[key]
         assert str(approved_tag_dir) in visual_assets[key]
+
+
+def test_sync_candidate_manifest_review_normalizes_direction_mesh_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(manifest_mod, "REPO_ROOT", tmp_path)
+    tag_dir = tmp_path / "approved" / "human_male_blue_hoodie_v1"
+    tag_dir.mkdir(parents=True)
+    for name in ("mesh.obj", "mesh_oriented.glb"):
+        (tag_dir / name).write_bytes(b"x")
+    path = write_hy3d_candidate_manifest(
+        tag_dir,
+        tag="human_male_blue_hoodie_v1",
+        species="human",
+        breed="male blue hoodie",
+        seed=7001,
+        positive_prompt="synthetic adult male human speaker in a blue hoodie",
+        created_at="2026-07-09T00:00:00+00:00",
+    )
+    direction = {
+        "human_approved": True,
+        "mesh_oriented": str((tag_dir / "mesh_oriented.glb").resolve()),
+    }
+
+    sync_candidate_manifest_review(tag_dir, direction)
+
+    manifest = json.loads(path.read_text())
+    assert (
+        manifest["visual_assets"]["mesh_oriented"]
+        == "approved/human_male_blue_hoodie_v1/mesh_oriented.glb"
+    )

@@ -220,6 +220,9 @@ def test_approve_syncs_source_asset_candidate_manifest(workspace):
     manifest = json.loads(candidate.read_text())
     assert manifest["review"]["direction_status"] == "approved"
     assert manifest["review"]["overall_status"] == "needs_runtime_gate"
+    for key in ("mesh_original", "mesh_oriented", "direction_json"):
+        assert str(workspace["pending"]) not in manifest["visual_assets"][key]
+        assert str(workspace["approved"]) in manifest["visual_assets"][key]
 
 
 def test_reject_moves_to_rejected(workspace):

@@ -582,11 +582,11 @@ def create_app(pending_dir, approved_dir, rejected_dir, host="127.0.0.1", port=8
         dj["mesh_oriented"] = str((dst / "mesh_oriented.glb").resolve())
         dj["mesh_sha256"] = _sha256_file(oriented_src)
         dj_path.write_text(json.dumps(dj, indent=2))
-        sync_candidate_manifest_review(src, dj)
 
         if dst.exists():
             shutil.rmtree(dst)
         shutil.move(str(src), str(dst))
+        sync_candidate_manifest_review(dst, dj)
         print(f"[review_ui] MOVED {tag}  ->  {dst.resolve()}", flush=True)
         print(f"[review_ui]   direction.json.human_approved = "
               f"{updates.get('human_approved')}", flush=True)

@@ -222,23 +222,28 @@ def sync_candidate_manifest_review(
     manifest["review"]["notes"] = direction.get("human_notes")
 
     visual_assets = manifest.setdefault("visual_assets", {})
-    for key, name in (
-        ("reference_image", "reference.png"),
-        ("mesh_original", "mesh.obj"),
-        ("mesh_oriented", "mesh_oriented.glb"),
-        ("diffuse", "hy3d_diffuse.jpg"),
-        ("roughness", "hy3d_roughness.jpg"),
-        ("metallic", "hy3d_metallic.jpg"),
-        ("review_image", "direction_preview_review.png"),
-        ("direction_json", "direction.json"),
-        ("runtime_metadata", "mesh_runtime.json"),
-        ("mesh_runtime", "mesh_runtime.glb"),
+    for key, names in (
+        ("reference_image", ("reference.png",)),
+        ("mesh_original", ("mesh.obj", "mesh.glb")),
+        ("mesh_oriented", ("mesh_oriented.glb",)),
+        ("diffuse", ("hy3d_diffuse.jpg",)),
+        ("roughness", ("hy3d_roughness.jpg",)),
+        ("metallic", ("hy3d_metallic.jpg",)),
+        ("review_image", ("direction_preview_review.png",)),
+        ("direction_json", ("direction.json",)),
+        ("runtime_metadata", ("mesh_runtime.json",)),
+        ("mesh_runtime", ("mesh_runtime.glb",)),
     ):
-        value = _path_for_manifest(tag_dir / name)
+        value = _path_for_manifest(_first_existing(tag_dir, names))
         if value is not None:
             visual_assets[key] = value
     if direction.get("mesh_oriented"):
-        visual_assets["mesh_oriented"] = direction["mesh_oriented"]
+        direction_mesh = Path(direction["mesh_oriented"])
+        if not direction_mesh.is_absolute():
+            direction_mesh = REPO_ROOT / direction_mesh
+        value = _path_for_manifest(direction_mesh)
+        if value is not None:
+            visual_assets["mesh_oriented"] = value
 
     path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return path
