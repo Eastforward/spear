@@ -1,0 +1,85 @@
+{
+  "schema_version": "source_asset_v1",
+  "asset_id": "cat_british_shorthair_0002",
+  "legacy_tag": "cat_british_shorthair_v2",
+  "asset_class": "animal",
+  "category": "cat",
+  "family": "british_shorthair",
+  "variant": {
+    "variant_index": 2,
+    "size": "small",
+    "coat_type": "short",
+    "intended_color_label": "brown gray british shorthair"
+  },
+  "generation": {
+    "source_pipeline": "hunyuan3d",
+    "model": "hunyuan3d-2.1",
+    "seed": null,
+    "positive_prompt": null,
+    "negative_prompt": null,
+    "text_description": "british shorthair cat with a brown gray short coat",
+    "created_at": "2026-07-08"
+  },
+  "appearance": {
+    "dominant_colors": [
+      {
+        "role": "coat_primary",
+        "hex": "#6D594A",
+        "rgb": [109, 89, 74],
+        "lab": [39.4, 5.7, 11.8],
+        "coverage": 0.238,
+        "source": "measured_from_texture"
+      },
+      {
+        "role": "coat_secondary",
+        "hex": "#AA917A",
+        "rgb": [170, 145, 122],
+        "lab": [61.8, 5.8, 15.7],
+        "coverage": 0.228,
+        "source": "measured_from_texture"
+      },
+      {
+        "role": "coat_tertiary",
+        "hex": "#20140E",
+        "rgb": [32, 20, 14],
+        "lab": [7.6, 5.1, 5.5],
+        "coverage": 0.203,
+        "source": "measured_from_texture"
+      }
+    ],
+    "color_tags": ["gray", "brown"],
+    "lightness": 0.234,
+    "saturation": 0.175
+  },
+  "visual_assets": {
+    "mesh_original": "tmp/hy3d_batch/approved/cat_british_shorthair_v2/mesh.glb",
+    "mesh_oriented": "tmp/hy3d_batch/approved/cat_british_shorthair_v2/mesh_oriented.glb",
+    "mesh_runtime": "tmp/hy3d_batch/approved/cat_british_shorthair_v2/mesh_runtime.glb",
+    "diffuse": "tmp/hy3d_batch/approved/cat_british_shorthair_v2/hy3d_diffuse.jpg",
+    "roughness": "tmp/hy3d_batch/approved/cat_british_shorthair_v2/hy3d_roughness.jpg",
+    "metallic": "tmp/hy3d_batch/approved/cat_british_shorthair_v2/hy3d_metallic.jpg",
+    "review_image": "tmp/hy3d_batch/approved/cat_british_shorthair_v2/direction_preview_review.png",
+    "direction_json": "tmp/hy3d_batch/approved/cat_british_shorthair_v2/direction.json",
+    "runtime_metadata": "tmp/hy3d_batch/approved/cat_british_shorthair_v2/mesh_runtime.json"
+  },
+  "rig": {
+    "skeleton_family": "quaternius_cat",
+    "animations": ["Idle", "Walking"],
+    "loop_required": true
+  },
+  "audio": {
+    "default_lookup": "cat_purring",
+    "allowed_lookups": ["cat_meow", "cat_purring", "silent"]
+  },
+  "review": {
+    "overall_status": "approved",
+    "appearance_status": "approved",
+    "direction_status": "approved",
+    "texture_status": "approved",
+    "rig_status": "approved",
+    "audio_mapping_status": "approved",
+    "approved_by": "jzy",
+    "approved_at": "2026-07-08T13:23:02.868070+00:00",
+    "notes": null
+  }
+}

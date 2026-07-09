@@ -13,6 +13,7 @@ from scene_generator import (  # noqa: E402
     sample_scene, sample_source_position_in_camera_sector,
 )
 from audio_library import load_library  # noqa: E402
+from source_asset_registry import resolve_source_pool  # noqa: E402
 
 
 BOUNDS = (-4.0, -5.0, 6.0, 6.0)  # x_min, y_min, x_max, y_max
@@ -166,6 +167,45 @@ def test_sample_scene_uses_configured_source_pool(tmp_path, monkeypatch):
     }
 
 
+def test_sample_scene_resolves_asset_id_source_pool(tmp_path):
+    p = tmp_path / "cat.json"
+    p.write_text(json.dumps({"samples": [
+        {"category": "dog_bark", "path": "dog.wav", "is_synthetic": False,
+         "duration_s": 1.0, "sample_rate": 16000, "source": "T"},
+        {"category": "cat_purring", "path": "cat.mp3", "is_synthetic": False,
+         "duration_s": 1.0, "sample_rate": 16000, "source": "T"},
+    ]}))
+    lib = load_library(p)
+    template = {
+        "bounds_xy": list(BOUNDS),
+        "obstacles": [],
+        "valid_regions": [BOUNDS],
+        "distance_range_m": [0.5, 6.0],
+        "mic_height_range_m": [0.5, 1.8],
+        "source_height_m": 0.45,
+        "n_sources_override": 2,
+        "source_pool": [
+            {"asset_id": "dog_beagle_0002"},
+            {"asset_id": "cat_british_shorthair_0002"},
+        ],
+    }
+
+    scene = sample_scene(template, lib, np.random.default_rng(10))
+
+    assert {s["asset_id"] for s in scene.source_specs} == {
+        "dog_beagle_0002",
+        "cat_british_shorthair_0002",
+    }
+    assert {s["tag"] for s in scene.source_specs} == {
+        "dog_beagle_v2",
+        "cat_british_shorthair_v2",
+    }
+    assert {s["audio_lookup"] for s in scene.source_specs} == {
+        "dog_bark",
+        "cat_purring",
+    }
+
+
 def test_sample_scene_supports_n_sources_override(tmp_path, monkeypatch):
     p = tmp_path / "cat.json"
     p.write_text(json.dumps({"samples": [
@@ -236,9 +276,15 @@ def test_sample_scene_can_target_camera_sector_sources(tmp_path):
 def test_apartment_m1_spec_declares_review_source_pool():
     spec = json.loads((REPO / "data" / "apartment_v2_m1_dataset_spec.json").read_text())
     pool = spec["source_pool"]
-    tags = {s["tag"] for s in pool}
+    assert {s["asset_id"] for s in pool} == {
+        "dog_golden_0001",
+        "dog_beagle_0002",
+        "cat_british_shorthair_0002",
+    }
+    resolved_pool = resolve_source_pool(pool)
+    tags = {s["tag"] for s in resolved_pool}
     assert {"dog_golden", "dog_beagle_v2", "cat_british_shorthair_v2"} <= tags
-    audio_by_tag = {s["tag"]: s["audio_lookup"] for s in pool}
+    audio_by_tag = {s["tag"]: s["audio_lookup"] for s in resolved_pool}
     assert audio_by_tag["dog_beagle_v2"] == "dog_bark"
     assert audio_by_tag["cat_british_shorthair_v2"] == "cat_purring"
 

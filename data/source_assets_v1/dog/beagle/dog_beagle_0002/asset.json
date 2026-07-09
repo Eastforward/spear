@@ -1,0 +1,85 @@
+{
+  "schema_version": "source_asset_v1",
+  "asset_id": "dog_beagle_0002",
+  "legacy_tag": "dog_beagle_v2",
+  "asset_class": "animal",
+  "category": "dog",
+  "family": "beagle",
+  "variant": {
+    "variant_index": 2,
+    "size": "small_medium",
+    "coat_type": "short",
+    "intended_color_label": "tricolor beagle"
+  },
+  "generation": {
+    "source_pipeline": "hunyuan3d",
+    "model": "hunyuan3d-2.1",
+    "seed": null,
+    "positive_prompt": null,
+    "negative_prompt": null,
+    "text_description": "beagle dog with tricolor coat",
+    "created_at": "2026-07-08"
+  },
+  "appearance": {
+    "dominant_colors": [
+      {
+        "role": "coat_primary",
+        "hex": "#BAB1A7",
+        "rgb": [186, 177, 167],
+        "lab": [72.7, 1.5, 6.2],
+        "coverage": 0.254,
+        "source": "measured_from_texture"
+      },
+      {
+        "role": "coat_secondary",
+        "hex": "#211712",
+        "rgb": [33, 23, 18],
+        "lab": [8.8, 4.1, 5.1],
+        "coverage": 0.218,
+        "source": "measured_from_texture"
+      },
+      {
+        "role": "coat_tertiary",
+        "hex": "#A0714B",
+        "rgb": [160, 113, 75],
+        "lab": [51.6, 14.1, 28.4],
+        "coverage": 0.2,
+        "source": "measured_from_texture"
+      }
+    ],
+    "color_tags": ["white", "black", "brown"],
+    "lightness": 0.29,
+    "saturation": 0.167
+  },
+  "visual_assets": {
+    "mesh_original": "tmp/hy3d_batch/approved/dog_beagle_v2/mesh.glb",
+    "mesh_oriented": "tmp/hy3d_batch/approved/dog_beagle_v2/mesh_oriented.glb",
+    "mesh_runtime": "tmp/hy3d_batch/approved/dog_beagle_v2/mesh_runtime.glb",
+    "diffuse": "tmp/hy3d_batch/approved/dog_beagle_v2/hy3d_diffuse.jpg",
+    "roughness": "tmp/hy3d_batch/approved/dog_beagle_v2/hy3d_roughness.jpg",
+    "metallic": "tmp/hy3d_batch/approved/dog_beagle_v2/hy3d_metallic.jpg",
+    "review_image": "tmp/hy3d_batch/approved/dog_beagle_v2/direction_preview_review.png",
+    "direction_json": "tmp/hy3d_batch/approved/dog_beagle_v2/direction.json",
+    "runtime_metadata": "tmp/hy3d_batch/approved/dog_beagle_v2/mesh_runtime.json"
+  },
+  "rig": {
+    "skeleton_family": "quaternius_dog",
+    "animations": ["Idle", "Walking"],
+    "loop_required": true
+  },
+  "audio": {
+    "default_lookup": "dog_bark",
+    "allowed_lookups": ["dog_bark", "dog_growl", "dog_sharp_bark", "silent"]
+  },
+  "review": {
+    "overall_status": "approved",
+    "appearance_status": "approved",
+    "direction_status": "approved",
+    "texture_status": "approved",
+    "rig_status": "approved",
+    "audio_mapping_status": "approved",
+    "approved_by": "jzy",
+    "approved_at": "2026-07-08T13:23:42.650696+00:00",
+    "notes": null
+  }
+}

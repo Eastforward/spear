@@ -1,0 +1,85 @@
+{
+  "schema_version": "source_asset_v1",
+  "asset_id": "dog_golden_0001",
+  "legacy_tag": "dog_golden",
+  "asset_class": "animal",
+  "category": "dog",
+  "family": "golden_retriever",
+  "variant": {
+    "variant_index": 1,
+    "size": "medium",
+    "coat_type": "long",
+    "intended_color_label": "golden"
+  },
+  "generation": {
+    "source_pipeline": "hunyuan3d",
+    "model": "hunyuan3d-2.1",
+    "seed": null,
+    "positive_prompt": null,
+    "negative_prompt": null,
+    "text_description": "golden retriever dog with a golden brown coat",
+    "created_at": "2026-07-08"
+  },
+  "appearance": {
+    "dominant_colors": [
+      {
+        "role": "coat_primary",
+        "hex": "#AE845A",
+        "rgb": [174, 132, 90],
+        "lab": [58.3, 10.8, 28.8],
+        "coverage": 0.261,
+        "source": "measured_from_texture"
+      },
+      {
+        "role": "coat_secondary",
+        "hex": "#985F29",
+        "rgb": [152, 95, 41],
+        "lab": [45.7, 18.3, 39.4],
+        "coverage": 0.252,
+        "source": "measured_from_texture"
+      },
+      {
+        "role": "coat_tertiary",
+        "hex": "#5F3719",
+        "rgb": [95, 55, 25],
+        "lab": [27.4, 14.9, 25.8],
+        "coverage": 0.217,
+        "source": "measured_from_texture"
+      }
+    ],
+    "color_tags": ["golden", "brown"],
+    "lightness": 0.282,
+    "saturation": 0.361
+  },
+  "visual_assets": {
+    "mesh_original": "tmp/hy3d_batch/approved/dog_golden/mesh.glb",
+    "mesh_oriented": "tmp/hy3d_batch/approved/dog_golden/mesh_oriented.glb",
+    "mesh_runtime": "tmp/hy3d_batch/approved/dog_golden/mesh_runtime.glb",
+    "diffuse": "tmp/hy3d_batch/approved/dog_golden/hy3d_diffuse.jpg",
+    "roughness": "tmp/hy3d_batch/approved/dog_golden/hy3d_roughness.jpg",
+    "metallic": "tmp/hy3d_batch/approved/dog_golden/hy3d_metallic.jpg",
+    "review_image": "tmp/hy3d_batch/approved/dog_golden/direction_preview_review.png",
+    "direction_json": "tmp/hy3d_batch/approved/dog_golden/direction.json",
+    "runtime_metadata": "tmp/hy3d_batch/approved/dog_golden/mesh_runtime.json"
+  },
+  "rig": {
+    "skeleton_family": "quaternius_dog",
+    "animations": ["Idle", "Walking"],
+    "loop_required": true
+  },
+  "audio": {
+    "default_lookup": "dog_bark",
+    "allowed_lookups": ["dog_bark", "dog_growl", "dog_sharp_bark", "silent"]
+  },
+  "review": {
+    "overall_status": "approved",
+    "appearance_status": "approved",
+    "direction_status": "approved",
+    "texture_status": "approved",
+    "rig_status": "approved",
+    "audio_mapping_status": "approved",
+    "approved_by": "jzy",
+    "approved_at": "2026-07-08T04:57:39.573811+00:00",
+    "notes": null
+  }
+}

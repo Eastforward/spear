@@ -15,6 +15,8 @@ from typing import List, Optional
 
 import numpy as np
 
+from source_asset_registry import resolve_source_pool
+
 
 @dataclass
 class SceneSample:
@@ -174,10 +176,10 @@ def sample_scene(spec_template: dict, audio_lib, rng) -> SceneSample:
     mic_h_range = tuple(spec_template.get("mic_height_range_m", (0.5, 1.8)))
     source_z = float(spec_template.get("source_height_m", 0.45))
     source_position_mode = spec_template.get("source_position_mode", "random")
-    source_pool = spec_template.get("source_pool") or [
+    source_pool = resolve_source_pool(spec_template.get("source_pool") or [
         {"tag": "dog_golden", "audio_lookup": "dog_bark"},
         {"tag": "dog_husky", "audio_lookup": "music_piano"},
-    ]
+    ])
     scene_max_tries = int(spec_template.get(
         "scene_max_tries",
         50 if source_position_mode == "camera_sector" else 1,
@@ -247,7 +249,7 @@ def sample_scene(spec_template: dict, audio_lib, rng) -> SceneSample:
                         z_m=source_z,
                         valid_regions=valid_regions,
                     )
-                source_specs.append({
+                source_spec = {
                     "tag": tag,
                     "audio_lookup": audio_cat,
                     "audio_path": str(audio_sample.path),
@@ -255,7 +257,16 @@ def sample_scene(spec_template: dict, audio_lib, rng) -> SceneSample:
                     "category": audio_sample.category,
                     "start_pos_m": list(start),
                     "end_pos_m": list(end),
-                })
+                }
+                if "asset_id" in pool_entry:
+                    source_spec["asset_id"] = pool_entry["asset_id"]
+                if "asset_class" in pool_entry:
+                    source_spec["asset_class"] = pool_entry["asset_class"]
+                if "category" in pool_entry:
+                    source_spec["asset_category"] = pool_entry["category"]
+                if "family" in pool_entry:
+                    source_spec["asset_family"] = pool_entry["family"]
+                source_specs.append(source_spec)
         except RuntimeError as exc:
             last_error = exc
             continue
