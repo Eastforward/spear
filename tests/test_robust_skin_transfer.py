@@ -17,6 +17,11 @@ from tools.robust_skin_transfer import (
     REGION_TORSO,
     SkeletonCapsule,
     coarse_region_labels,
+    filter_gltf_animation_channels_json,
+    ground_artifact_vertex_mask,
+    low_limb_bridge_component_face_mask,
+    low_limb_bridge_face_mask,
+    reverse_keyframe_time,
     graph_region_labels_from_capsules,
     inpaint_missing_weights,
     keep_top_k_normalized,
@@ -77,6 +82,7 @@ class RobustSkinTransferTest(unittest.TestCase):
                 [7.0, 1.0, -0.5],
                 [3.0, 1.0, 0.5],
                 [5.0, 5.0, 0.0],
+                [1.0, 1.0, 0.5],
             ],
             dtype=np.float64,
         )
@@ -93,6 +99,7 @@ class RobustSkinTransferTest(unittest.TestCase):
         self.assertEqual(labels[3], REGION_FRONT_RIGHT_LEG)
         self.assertEqual(labels[4], REGION_HIND_LEFT_LEG)
         self.assertEqual(labels[5], REGION_TORSO)
+        self.assertEqual(labels[6], REGION_HIND_LEFT_LEG)
 
     def test_transfer_weights_by_region_ignores_nearer_incompatible_face(self):
         source_vertices = np.array(
@@ -278,6 +285,204 @@ class RobustSkinTransferTest(unittest.TestCase):
         self.assertTrue(np.all(out[4:] == labels[4:]))
         self.assertEqual(stats["changed_vertices"], 2)
         self.assertEqual(stats["regularized_components"], 1)
+
+    def test_ground_artifact_vertex_mask_flags_only_low_flat_wide_components(self):
+        vertices = np.array(
+            [
+                [-1.0, -1.0, 0.0],
+                [1.0, -1.0, 0.0],
+                [1.0, 1.0, 0.02],
+                [-1.0, 1.0, 0.02],
+                [0.0, 0.0, 0.0],
+                [0.15, 0.0, 0.0],
+                [0.0, 0.15, 0.20],
+                [0.0, 0.0, 0.75],
+                [0.2, 0.0, 0.85],
+                [0.0, 0.2, 0.95],
+            ],
+            dtype=np.float64,
+        )
+        faces = np.array(
+            [
+                [0, 1, 2],
+                [0, 2, 3],
+                [4, 5, 6],
+                [7, 8, 9],
+            ],
+            dtype=np.int64,
+        )
+
+        artifact = ground_artifact_vertex_mask(
+            vertices=vertices,
+            faces=faces,
+            up_axis=2,
+            max_center_height_ratio=0.05,
+            max_component_height_ratio=0.05,
+            min_horizontal_spread_ratio=0.5,
+            min_vertices=4,
+        )
+
+        self.assertTrue(np.all(artifact[:4]))
+        self.assertFalse(np.any(artifact[4:]))
+
+    def test_low_limb_bridge_face_mask_flags_only_low_cross_limb_faces(self):
+        vertices = np.array(
+            [
+                [0.0, -0.4, 0.08],
+                [0.0, 0.4, 0.08],
+                [0.2, 0.0, 0.10],
+                [0.8, -0.4, 0.12],
+                [0.9, -0.2, 0.14],
+                [0.7, -0.3, 0.15],
+                [0.0, -0.4, 0.80],
+                [0.0, 0.4, 0.80],
+                [0.2, 0.0, 0.82],
+                [0.4, 0.0, 0.20],
+                [0.5, 0.0, 0.22],
+                [0.6, 0.0, 0.18],
+            ],
+            dtype=np.float64,
+        )
+        faces = np.array(
+            [
+                [0, 1, 2],   # low front-left/front-right bridge
+                [3, 4, 5],   # same limb; keep
+                [6, 7, 8],   # cross-limb but high; keep
+                [9, 10, 11], # low torso patch; keep
+            ],
+            dtype=np.int64,
+        )
+        labels = np.array(
+            [
+                REGION_FRONT_LEFT_LEG,
+                REGION_FRONT_RIGHT_LEG,
+                REGION_FRONT_LEFT_LEG,
+                REGION_HIND_LEFT_LEG,
+                REGION_HIND_LEFT_LEG,
+                REGION_HIND_LEFT_LEG,
+                REGION_FRONT_LEFT_LEG,
+                REGION_FRONT_RIGHT_LEG,
+                REGION_FRONT_LEFT_LEG,
+                REGION_TORSO,
+                REGION_TORSO,
+                REGION_TORSO,
+            ],
+            dtype=np.int64,
+        )
+
+        bridge = low_limb_bridge_face_mask(
+            vertices=vertices,
+            faces=faces,
+            vertex_regions=labels,
+            up_axis=2,
+            max_center_height_ratio=0.35,
+        )
+
+        np.testing.assert_array_equal(bridge, np.array([True, False, False, False]))
+
+    def test_low_limb_bridge_component_face_mask_flags_small_mixed_limb_island(self):
+        vertices = np.array(
+            [
+                [0.0, -0.5, 0.10],
+                [0.2, -0.5, 0.12],
+                [0.2, -0.2, 0.10],
+                [0.0, -0.2, 0.12],
+                [1.0, 0.0, 0.70],
+                [1.2, 0.0, 0.72],
+                [1.2, 0.2, 0.70],
+                [1.0, 0.2, 0.72],
+                [2.0, -0.5, 0.10],
+                [2.2, -0.5, 0.12],
+                [2.2, -0.2, 0.10],
+                [2.0, -0.2, 0.12],
+            ],
+            dtype=np.float64,
+        )
+        faces = np.array(
+            [
+                [0, 1, 2],
+                [0, 2, 3],
+                [4, 5, 6],
+                [4, 6, 7],
+                [8, 9, 10],
+                [8, 10, 11],
+            ],
+            dtype=np.int64,
+        )
+        labels = np.array(
+            [
+                REGION_FRONT_LEFT_LEG,
+                REGION_FRONT_LEFT_LEG,
+                REGION_HIND_LEFT_LEG,
+                REGION_HIND_LEFT_LEG,
+                REGION_TORSO,
+                REGION_TORSO,
+                REGION_FRONT_LEFT_LEG,
+                REGION_HIND_LEFT_LEG,
+                REGION_FRONT_RIGHT_LEG,
+                REGION_FRONT_RIGHT_LEG,
+                REGION_FRONT_RIGHT_LEG,
+                REGION_FRONT_RIGHT_LEG,
+            ],
+            dtype=np.int64,
+        )
+
+        bridge = low_limb_bridge_component_face_mask(
+            vertices=vertices,
+            faces=faces,
+            vertex_regions=labels,
+            up_axis=2,
+            max_center_height_ratio=0.35,
+            max_component_faces=8,
+            min_limb_regions=2,
+            min_limb_vertex_fraction=0.5,
+            max_anchor_vertex_fraction=0.40,
+        )
+
+        np.testing.assert_array_equal(
+            bridge,
+            np.array([True, True, False, False, False, False]),
+        )
+
+    def test_reverse_keyframe_time_swaps_handles_across_frame_range(self):
+        key, left, right = reverse_keyframe_time(
+            frame=12.0,
+            handle_left=10.0,
+            handle_right=15.0,
+            start=1.0,
+            end=41.0,
+        )
+
+        self.assertEqual(key, 30.0)
+        self.assertEqual(left, 27.0)
+        self.assertEqual(right, 32.0)
+
+    def test_filter_gltf_animation_channels_json_removes_unwanted_paths(self):
+        gltf = {
+            "animations": [
+                {
+                    "channels": [
+                        {"sampler": 0, "target": {"node": 1, "path": "translation"}},
+                        {"sampler": 1, "target": {"node": 1, "path": "rotation"}},
+                        {"sampler": 2, "target": {"node": 1, "path": "scale"}},
+                        {"sampler": 3, "target": {"node": 1, "path": "weights"}},
+                    ]
+                },
+                {"channels": [{"sampler": 0, "target": {"node": 2, "path": "scale"}}]},
+            ]
+        }
+
+        removed = filter_gltf_animation_channels_json(
+            gltf,
+            keep_paths={"translation", "rotation"},
+        )
+
+        self.assertEqual(removed, 3)
+        self.assertEqual(
+            [channel["target"]["path"] for channel in gltf["animations"][0]["channels"]],
+            ["translation", "rotation"],
+        )
+        self.assertEqual(gltf["animations"][1]["channels"], [])
 
 
 if __name__ == "__main__":

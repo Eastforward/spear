@@ -16,7 +16,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import struct
 import sys
 
 import bpy
@@ -40,14 +42,59 @@ from tools.robust_skin_transfer import (  # noqa: E402
     SkeletonCapsule,
     coarse_region_labels,
     face_region_labels,
+    filter_gltf_animation_channels_json,
     graph_region_labels_from_capsules,
+    ground_artifact_vertex_mask,
     inpaint_missing_weights,
     keep_top_k_normalized,
+    low_limb_bridge_component_face_mask,
+    low_limb_bridge_face_mask,
     mesh_bounds,
     regularize_regions_by_connected_components,
+    reverse_keyframe_time,
     target_region_labels_from_source_proximity,
     transfer_weights_by_region,
 )
+
+
+GLB_JSON_CHUNK = 0x4E4F534A
+
+
+def postprocess_glb_animation_channels(path, keep_paths):
+    with open(path, "rb") as f:
+        data = f.read()
+    magic, version, _ = struct.unpack_from("<4sII", data, 0)
+    if magic != b"glTF":
+        raise ValueError(f"not a GLB file: {path}")
+
+    offset = 12
+    chunks = []
+    while offset < len(data):
+        chunk_length, chunk_type = struct.unpack_from("<II", data, offset)
+        offset += 8
+        chunks.append((chunk_type, data[offset:offset + chunk_length]))
+        offset += chunk_length
+    if not chunks or chunks[0][0] != GLB_JSON_CHUNK:
+        raise ValueError(f"GLB missing JSON chunk: {path}")
+
+    raw_json = chunks[0][1].rstrip(b" \t\r\n\x00")
+    gltf = json.loads(raw_json.decode("utf-8"))
+    removed = filter_gltf_animation_channels_json(gltf, keep_paths=keep_paths)
+    if removed == 0:
+        return 0
+
+    new_json = json.dumps(gltf, separators=(",", ":")).encode("utf-8")
+    new_json += b" " * ((4 - len(new_json) % 4) % 4)
+    chunks[0] = (GLB_JSON_CHUNK, new_json)
+
+    total_length = 12 + sum(8 + len(chunk) for _, chunk in chunks)
+    out = bytearray(struct.pack("<4sII", b"glTF", version, total_length))
+    for chunk_type, chunk in chunks:
+        out += struct.pack("<II", len(chunk), chunk_type)
+        out += chunk
+    with open(path, "wb") as f:
+        f.write(out)
+    return removed
 
 
 def parse_argv():
@@ -58,11 +105,11 @@ def parse_argv():
         argv = []
     p = argparse.ArgumentParser()
     p.add_argument("--rig-glb", required=True,
-                   help="Original animated GLB providing armature, animations, and source weights.")
+                   help="Original animated GLB/FBX providing armature, animations, and source weights.")
     p.add_argument("--new-mesh", required=True,
                    help="Target textured mesh (.obj/.glb/.gltf).")
-    p.add_argument("--new-diffuse", required=True,
-                   help="Diffuse texture to assign to the target mesh.")
+    p.add_argument("--new-diffuse", default="",
+                   help="Optional diffuse texture to assign to the target mesh.")
     p.add_argument("--output", required=True)
     p.add_argument("--auto-align", default="yes", choices=["yes", "no"])
     p.add_argument("--align-mode", default="uniform", choices=["uniform", "nonuniform"],
@@ -97,8 +144,45 @@ def parse_argv():
                         "1.0 keeps source animation; 0.5 halves foot rotation.")
     p.add_argument("--foot-bones", default="Bone.010,Bone.013,Bone.016,Bone.019",
                    help="Comma-separated distal foot bones for --dampen-foot-rotations.")
+    p.add_argument("--dampen-head-rotations", type=float, default=0.0,
+                   help="Scale head/neck rotations toward identity. 0 freezes source head bob.")
+    p.add_argument("--head-bones", default="Bone.002,Bone.003,Bone.003_end")
+    p.add_argument("--dampen-tail-rotations", type=float, default=0.0,
+                   help="Scale tail rotations toward identity. 0 keeps tail rigid relative to body.")
+    p.add_argument("--tail-bones", default="Bone.004,Bone.005,Bone.006,Bone.007,Bone.007_end")
+    p.add_argument("--reverse-actions", default="no", choices=["yes", "no"],
+                   help="Reverse matching action keyframes in time, useful for backwards walk clips.")
+    p.add_argument("--reverse-action-hints", default="Walking",
+                   help="Comma-separated action name substrings used by --reverse-actions.")
+    p.add_argument("--animation-export-mode", default="actions", choices=["actions", "nla"],
+                   help="Use actions for GLB sources; use nla when importing multi-action FBX rigs.")
+    p.add_argument("--ue-safe-animation-channels", default="yes", choices=["yes", "no"],
+                   help="Post-process exported GLB animations for UE Interchange stability.")
+    p.add_argument("--ue-animation-keep-paths", default="translation,rotation",
+                   help="Comma-separated glTF animation target paths kept by --ue-safe-animation-channels.")
     p.add_argument("--backface-culling", default="no", choices=["yes", "no"],
                    help="Use single-sided material export. Usually keep no for Hunyuan fur shells.")
+    p.add_argument("--remove-ground-artifacts", default="yes", choices=["yes", "no"],
+                   help="Delete low, flat disconnected floor/shadow cards before skin transfer.")
+    p.add_argument("--ground-artifact-max-center-height-ratio", type=float, default=0.035)
+    p.add_argument("--ground-artifact-max-component-height-ratio", type=float, default=0.015)
+    p.add_argument("--ground-artifact-min-horizontal-spread-ratio", type=float, default=0.12)
+    p.add_argument("--ground-artifact-min-vertices", type=int, default=20)
+    p.add_argument("--remove-limb-bridges", default="yes", choices=["yes", "no"],
+                   help="Cut low cross-limb faces from the weight-transfer graph.")
+    p.add_argument("--delete-limb-bridge-faces", default="yes", choices=["yes", "no"],
+                   help="Also remove low cross-limb bridge faces from the rendered mesh.")
+    p.add_argument("--limb-bridge-max-center-height-ratio", type=float, default=0.35)
+    p.add_argument("--remove-limb-bridge-components", default="yes", choices=["yes", "no"],
+                   help="Remove small low mixed-limb components left after bridge-face cuts.")
+    p.add_argument("--limb-bridge-component-min-direct-faces", type=int, default=200,
+                   help="Only run component cleanup when the direct bridge-face cut is at least this large.")
+    p.add_argument("--limb-bridge-component-max-center-height-ratio", type=float, default=0.42)
+    p.add_argument("--limb-bridge-component-min-faces", type=int, default=2)
+    p.add_argument("--limb-bridge-component-max-faces", type=int, default=700)
+    p.add_argument("--limb-bridge-component-min-limb-regions", type=int, default=2)
+    p.add_argument("--limb-bridge-component-min-limb-fraction", type=float, default=0.50)
+    p.add_argument("--limb-bridge-component-max-anchor-fraction", type=float, default=0.40)
     return p.parse_args(argv)
 
 
@@ -112,6 +196,16 @@ def import_mesh_only(path):
     else:
         raise SystemExit(f"unsupported mesh format {ext}")
     return [o for o in bpy.data.objects if o not in before and o.type == "MESH"]
+
+
+def import_rig_scene(path):
+    ext = os.path.splitext(path)[1].lower()
+    if ext in (".glb", ".gltf"):
+        bpy.ops.import_scene.gltf(filepath=path)
+    elif ext == ".fbx":
+        bpy.ops.import_scene.fbx(filepath=path)
+    else:
+        raise SystemExit(f"unsupported rig format {ext}")
 
 
 def object_bbox_world(obj):
@@ -236,17 +330,23 @@ def armature_region_capsules(armature_obj, region_bounds, source_world_diag):
     return capsules
 
 
-def triangulated_faces(obj):
+def triangulated_faces_with_polygon_indices(obj):
     faces = []
+    polygon_indices = []
     for poly in obj.data.polygons:
         verts = list(poly.vertices)
         if len(verts) < 3:
             continue
         for i in range(1, len(verts) - 1):
             faces.append((verts[0], verts[i], verts[i + 1]))
+            polygon_indices.append(poly.index)
     if not faces:
         raise SystemExit(f"mesh {obj.name} has no faces")
-    return np.asarray(faces, dtype=np.int64)
+    return np.asarray(faces, dtype=np.int64), np.asarray(polygon_indices, dtype=np.int64)
+
+
+def triangulated_faces(obj):
+    return triangulated_faces_with_polygon_indices(obj)[0]
 
 
 def source_vertex_weights(src_obj):
@@ -284,6 +384,139 @@ def write_vertex_groups(obj, group_names, weights, min_weight):
             written += 1
     print(f"[weights] wrote {written} assignments across {len(groups)} groups "
           f"(zero_rows={zero_rows})", flush=True)
+
+
+def delete_vertices_by_mask(obj, mask, reason):
+    mask = np.asarray(mask, dtype=bool)
+    count = int(mask.sum())
+    if count == 0:
+        print(f"[cleanup] {reason}: no vertices removed", flush=True)
+        return 0
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    for poly in obj.data.polygons:
+        poly.select = False
+    for edge in obj.data.edges:
+        edge.select = False
+    for vertex in obj.data.vertices:
+        vertex.select = bool(mask[vertex.index])
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.delete(type="VERT")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    obj.data.update()
+    bpy.context.view_layer.update()
+    print(f"[cleanup] {reason}: removed {count} vertices", flush=True)
+    return count
+
+
+def delete_faces_by_mask(obj, mask, polygon_indices, reason):
+    mask = np.asarray(mask, dtype=bool)
+    polygon_indices = np.asarray(polygon_indices, dtype=np.int64)
+    if len(mask) != len(polygon_indices):
+        raise ValueError("face mask and polygon index arrays must have the same length")
+    selected_polygons = {int(poly_index) for poly_index in polygon_indices[mask]}
+    count = len(selected_polygons)
+    if count == 0:
+        print(f"[cleanup] {reason}: no faces removed", flush=True)
+        return 0
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    selected_edges = set()
+    for vertex in obj.data.vertices:
+        vertex.select = False
+    for edge in obj.data.edges:
+        edge.select = False
+    for poly in obj.data.polygons:
+        selected = poly.index in selected_polygons
+        poly.select = selected
+        if selected:
+            selected_edges.update(poly.edge_keys)
+    edge_keys = {tuple(sorted(edge.vertices)): edge.index for edge in obj.data.edges}
+    for edge_key in selected_edges:
+        edge_index = edge_keys.get(tuple(sorted(edge_key)))
+        if edge_index is not None:
+            obj.data.edges[edge_index].select = True
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.delete(type="EDGE_FACE")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    obj.data.update()
+    bpy.context.view_layer.update()
+    print(f"[cleanup] {reason}: removed {count} faces and selected boundary edges", flush=True)
+    return count
+
+
+def remove_ground_artifacts(mesh_obj, args):
+    if args.remove_ground_artifacts != "yes":
+        print("[cleanup] ground artifacts disabled", flush=True)
+        return 0
+    apply_transforms(mesh_obj)
+    vertices = mesh_vertices_local(mesh_obj)
+    faces = triangulated_faces(mesh_obj)
+    artifact = ground_artifact_vertex_mask(
+        vertices=vertices,
+        faces=faces,
+        up_axis=2,
+        max_center_height_ratio=args.ground_artifact_max_center_height_ratio,
+        max_component_height_ratio=args.ground_artifact_max_component_height_ratio,
+        min_horizontal_spread_ratio=args.ground_artifact_min_horizontal_spread_ratio,
+        min_vertices=args.ground_artifact_min_vertices,
+    )
+    return delete_vertices_by_mask(mesh_obj, artifact, "ground artifacts")
+
+
+def filter_limb_bridge_faces(vertices, faces, target_regions, args, mesh_obj=None, polygon_indices=None):
+    if args.remove_limb_bridges != "yes":
+        print("[cleanup] limb bridge graph cut disabled", flush=True)
+        return faces, 0
+    bridge = low_limb_bridge_face_mask(
+        vertices=vertices,
+        faces=faces,
+        vertex_regions=target_regions,
+        up_axis=2,
+        max_center_height_ratio=args.limb_bridge_max_center_height_ratio,
+    )
+    face_count = int(bridge.sum())
+    component_count = 0
+    if (
+        args.remove_limb_bridge_components == "yes"
+        and face_count >= int(args.limb_bridge_component_min_direct_faces)
+    ):
+        keep_indices = np.flatnonzero(~bridge)
+        if len(keep_indices):
+            component_bridge = low_limb_bridge_component_face_mask(
+                vertices=vertices,
+                faces=faces[keep_indices],
+                vertex_regions=target_regions,
+                up_axis=2,
+                max_center_height_ratio=args.limb_bridge_component_max_center_height_ratio,
+                min_component_faces=args.limb_bridge_component_min_faces,
+                max_component_faces=args.limb_bridge_component_max_faces,
+                min_limb_regions=args.limb_bridge_component_min_limb_regions,
+                min_limb_vertex_fraction=args.limb_bridge_component_min_limb_fraction,
+                max_anchor_vertex_fraction=args.limb_bridge_component_max_anchor_fraction,
+            )
+            bridge[keep_indices[component_bridge]] = True
+            component_count = int(component_bridge.sum())
+    elif args.remove_limb_bridge_components == "yes":
+        print(f"[cleanup] limb bridge component cut skipped: direct={face_count} "
+              f"< min_direct={args.limb_bridge_component_min_direct_faces}", flush=True)
+    else:
+        print("[cleanup] limb bridge component cut disabled", flush=True)
+    count = int(bridge.sum())
+    if count == 0:
+        print("[cleanup] limb bridge graph cut: no faces cut", flush=True)
+        return faces, 0
+    print(f"[cleanup] limb bridge graph cut: cut {count} faces from weight graph "
+          f"(direct={face_count}, components={component_count})", flush=True)
+    if args.delete_limb_bridge_faces == "yes":
+        if mesh_obj is None or polygon_indices is None:
+            raise ValueError("mesh_obj and polygon_indices are required to delete bridge geometry")
+        delete_faces_by_mask(mesh_obj, bridge, polygon_indices, "limb bridge geometry")
+    return faces[~bridge], count
 
 
 def assign_texture(mesh_obj, diffuse_path, use_backface_culling=False):
@@ -379,6 +612,55 @@ def dampen_bone_rotation_actions(bone_names, factor):
           f"changed_keys={changed}", flush=True)
 
 
+def reverse_matching_actions(action_hints):
+    hints = [hint.strip().lower() for hint in action_hints.split(",") if hint.strip()]
+    if not hints:
+        print("[anim] reverse requested without action hints; skipped", flush=True)
+        return
+    changed = 0
+    reversed_actions = []
+    for action in bpy.data.actions:
+        if not any(hint in action.name.lower() for hint in hints):
+            continue
+        start, end = action.frame_range
+        for fc in action.fcurves:
+            for key in fc.keyframe_points:
+                frame, left, right = reverse_keyframe_time(
+                    frame=key.co.x,
+                    handle_left=key.handle_left.x,
+                    handle_right=key.handle_right.x,
+                    start=start,
+                    end=end,
+                )
+                key.co.x = frame
+                key.handle_left.x = left
+                key.handle_right.x = right
+                changed += 1
+            fc.update()
+        reversed_actions.append(action.name)
+    print(f"[anim] reversed actions={reversed_actions} changed_keys={changed}", flush=True)
+
+
+def stash_armature_actions_for_gltf(armature_obj):
+    armature_obj.animation_data_create()
+    while armature_obj.animation_data.nla_tracks:
+        armature_obj.animation_data.nla_tracks.remove(armature_obj.animation_data.nla_tracks[0])
+    action_names = []
+    bone_prefix = 'pose.bones["'
+    for action in bpy.data.actions:
+        if not any(fc.data_path.startswith(bone_prefix) for fc in action.fcurves):
+            continue
+        start, end = action.frame_range
+        track = armature_obj.animation_data.nla_tracks.new()
+        track.name = action.name
+        strip = track.strips.new(action.name, int(round(start)), action)
+        strip.name = action.name
+        strip.action_frame_start = start
+        strip.action_frame_end = end
+        action_names.append(action.name)
+    print(f"[anim] stashed actions for glTF export: {action_names}", flush=True)
+
+
 def robust_transfer(src_mesh, tgt_mesh, armature_obj, args):
     src_vertices = mesh_vertices_world(src_mesh)
     src_faces = triangulated_faces(src_mesh)
@@ -389,8 +671,9 @@ def robust_transfer(src_mesh, tgt_mesh, armature_obj, args):
 
     apply_transforms(tgt_mesh)
     tgt_vertices = mesh_vertices_local(tgt_mesh)
-    tgt_faces = triangulated_faces(tgt_mesh)
+    tgt_faces, tgt_polygon_indices = triangulated_faces_with_polygon_indices(tgt_mesh)
     coarse_target_regions = coarse_region_labels(dog_region_coords(tgt_vertices), bounds=bounds)
+    weight_graph_faces = tgt_faces
 
     diag = float(np.linalg.norm(mesh_bounds(src_vertices)[1] - mesh_bounds(src_vertices)[0]))
     max_distance = None if args.max_distance_ratio <= 0 else diag * args.max_distance_ratio
@@ -414,9 +697,13 @@ def robust_transfer(src_mesh, tgt_mesh, armature_obj, args):
             target_vertices=tgt_vertices,
             coarse_target_regions=coarse_target_regions,
         )
+        weight_graph_faces, _ = filter_limb_bridge_faces(
+            tgt_vertices, tgt_faces, target_regions, args,
+            mesh_obj=tgt_mesh, polygon_indices=tgt_polygon_indices,
+        )
         if args.segmentation_mode == "proximity-components":
             target_regions, component_stats = regularize_regions_by_connected_components(
-                faces=tgt_faces,
+                faces=weight_graph_faces,
                 labels=target_regions,
                 eligible_regions={
                     REGION_TAIL,
@@ -435,8 +722,14 @@ def robust_transfer(src_mesh, tgt_mesh, armature_obj, args):
             print(f"[segmentation] mode=proximity-components stats={component_stats}", flush=True)
         else:
             print("[segmentation] mode=proximity", flush=True)
+    if args.segmentation_mode == "skeleton-graph":
+        weight_graph_faces, _ = filter_limb_bridge_faces(
+            tgt_vertices, tgt_faces, target_regions, args,
+            mesh_obj=tgt_mesh, polygon_indices=tgt_polygon_indices,
+        )
     print(f"[transfer] source verts={len(src_vertices)} faces={len(src_faces)} "
-          f"target verts={len(tgt_vertices)} faces={len(tgt_faces)} groups={len(group_names)}", flush=True)
+          f"target verts={len(tgt_vertices)} faces={len(tgt_faces)} "
+          f"weight_graph_faces={len(weight_graph_faces)} groups={len(group_names)}", flush=True)
     print(f"[transfer] bbox_diag={diag:.4f} max_distance={max_distance}", flush=True)
 
     transferred, matched, stats = transfer_weights_by_region(
@@ -452,7 +745,7 @@ def robust_transfer(src_mesh, tgt_mesh, armature_obj, args):
     print(f"[transfer] stats={stats}", flush=True)
 
     filled_weights, filled_mask, n_iters = inpaint_missing_weights(
-        tgt_faces,
+        weight_graph_faces,
         transferred,
         matched,
         max_iterations=96,
@@ -466,16 +759,18 @@ def robust_transfer(src_mesh, tgt_mesh, armature_obj, args):
 
 def main():
     args = parse_argv()
-    for path in (args.rig_glb, args.new_mesh, args.new_diffuse):
+    for path in (args.rig_glb, args.new_mesh):
         if not os.path.exists(path):
             raise SystemExit(f"MISSING {path}")
+    if args.new_diffuse and not os.path.exists(args.new_diffuse):
+        raise SystemExit(f"MISSING {args.new_diffuse}")
     out_dir = os.path.dirname(args.output)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
-    bpy.ops.import_scene.gltf(filepath=args.rig_glb)
+    import_rig_scene(args.rig_glb)
     original_meshes = [o for o in bpy.data.objects if o.type == "MESH"]
     original_armatures = [o for o in bpy.data.objects if o.type == "ARMATURE"]
     if not original_meshes or not original_armatures:
@@ -502,14 +797,26 @@ def main():
     if args.auto_align == "yes":
         align_bbox(tgt_mesh, src_mesh, args.align_mode)
 
-    assign_texture(tgt_mesh, args.new_diffuse, use_backface_culling=(args.backface_culling == "yes"))
+    remove_ground_artifacts(tgt_mesh, args)
+    if args.new_diffuse:
+        assign_texture(tgt_mesh, args.new_diffuse, use_backface_culling=(args.backface_culling == "yes"))
+    else:
+        print("[texture] no --new-diffuse provided; keeping imported material", flush=True)
     if args.weight_mode == "auto":
         auto_weight_to_armature(tgt_mesh, armature)
     else:
         robust_transfer(src_mesh, tgt_mesh, armature, args)
         parent_to_armature(tgt_mesh, armature)
+    if args.reverse_actions == "yes":
+        reverse_matching_actions(args.reverse_action_hints)
+    head_bones = [b.strip() for b in args.head_bones.split(",") if b.strip()]
+    dampen_bone_rotation_actions(head_bones, args.dampen_head_rotations)
+    tail_bones = [b.strip() for b in args.tail_bones.split(",") if b.strip()]
+    dampen_bone_rotation_actions(tail_bones, args.dampen_tail_rotations)
     foot_bones = [b.strip() for b in args.foot_bones.split(",") if b.strip()]
     dampen_bone_rotation_actions(foot_bones, args.dampen_foot_rotations)
+    if args.animation_export_mode == "nla":
+        stash_armature_actions_for_gltf(armature)
 
     src_name = src_mesh.name
     bpy.data.objects.remove(src_mesh, do_unlink=True)
@@ -525,11 +832,18 @@ def main():
         export_format="GLB",
         use_selection=True,
         export_animations=True,
+        export_animation_mode="NLA_TRACKS" if args.animation_export_mode == "nla" else "ACTIONS",
+        export_nla_strips=args.animation_export_mode == "nla",
+        export_extra_animations=True,
         export_skins=True,
         export_texcoords=True,
         export_normals=True,
         export_image_format="AUTO",
     )
+    if args.ue_safe_animation_channels == "yes":
+        keep_paths = [p.strip() for p in args.ue_animation_keep_paths.split(",") if p.strip()]
+        removed = postprocess_glb_animation_channels(args.output, keep_paths)
+        print(f"[anim] UE-safe GLB channel filter keep={keep_paths} removed={removed}", flush=True)
     print(f"ROBUST_SWAP_OK output={args.output} verts={len(tgt_mesh.data.vertices)}", flush=True)
 
 

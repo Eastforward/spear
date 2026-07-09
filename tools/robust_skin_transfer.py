@@ -90,10 +90,12 @@ def coarse_region_labels(
     bounds: tuple[np.ndarray, np.ndarray] | None = None,
     *,
     tail_x: float = 0.16,
+    tail_ground_y: float = 0.30,
     tail_raised_x: float = 0.32,
     tail_raised_y: float = 0.55,
     head_x: float = 0.64,
     leg_y: float = 0.36,
+    leg_rear_x: float = 0.02,
     front_x: float = 0.50,
 ) -> np.ndarray:
     """Label dog-like mesh points in source-rig coordinates.
@@ -104,12 +106,11 @@ def coarse_region_labels(
     leg face, then the inpainting pass smooths small gaps.
 
     Two definitions of "tail region":
-      1. `x <= tail_x`:                 the low-X strip (original tail zone)
+      1. `x <= tail_x AND y >= tail_ground_y`: rear strip above the feet.
       2. `x <= tail_raised_x AND y >= tail_raised_y`: covers a raised/curled
-         tail whose tip has moved forward and up. This is essential when the
-         Hunyuan-generated mesh has a tail-up pose while the source Dog has
-         a hanging tail — the raised tip's X falls beyond `tail_x` and would
-         otherwise be misclassified as torso and get non-tail bone weights.
+         tail whose tip has moved forward and up. Low rear paws often extend
+         into the old tail-X strip on cats and short-legged dogs, so low points
+         are allowed to become hind legs instead of being protected as tail.
     """
     uvw = _normalized_xyz(vertices, bounds)
     x = uvw[:, 0]
@@ -117,11 +118,13 @@ def coarse_region_labels(
     z = uvw[:, 2]
     labels = np.full(len(vertices), REGION_TORSO, dtype=np.int64)
 
-    tail_mask = (x <= tail_x) | ((x <= tail_raised_x) & (y >= tail_raised_y))
+    tail_mask = ((x <= tail_x) & (y >= tail_ground_y)) | (
+        (x <= tail_raised_x) & (y >= tail_raised_y)
+    )
     labels[tail_mask] = REGION_TAIL
     labels[(x >= head_x) & (y >= leg_y)] = REGION_HEAD
 
-    leg_mask = (y < leg_y) & (x > tail_x)
+    leg_mask = (y < leg_y) & (x >= leg_rear_x)
     left = z >= 0.5
     front = x >= front_x
     labels[leg_mask & front & left] = REGION_FRONT_LEFT_LEG
@@ -226,6 +229,245 @@ def regularize_regions_by_connected_components(
         "changed_vertices": int(changed_vertices),
         "skipped_components": int(skipped_components),
     }
+
+
+def _connected_components_from_faces(faces: np.ndarray, n_vertices: int) -> list[list[int]]:
+    parent = list(range(n_vertices))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(a: int, b: int) -> None:
+        ra = find(a)
+        rb = find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for tri in np.asarray(faces, dtype=np.int64):
+        if len(tri) < 3:
+            continue
+        a = int(tri[0])
+        for b in tri[1:]:
+            union(a, int(b))
+
+    components: dict[int, list[int]] = {}
+    for vertex_index in range(n_vertices):
+        components.setdefault(find(vertex_index), []).append(vertex_index)
+    return list(components.values())
+
+
+def ground_artifact_vertex_mask(
+    *,
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    up_axis: int = 2,
+    max_center_height_ratio: float = 0.035,
+    max_component_height_ratio: float = 0.015,
+    min_horizontal_spread_ratio: float = 0.12,
+    min_vertices: int = 20,
+) -> np.ndarray:
+    """Flag low, flat disconnected components that look like generated floor cards."""
+    vertices = np.asarray(vertices, dtype=np.float64)
+    faces = np.asarray(faces, dtype=np.int64)
+    artifact = np.zeros(len(vertices), dtype=bool)
+    if len(vertices) == 0:
+        return artifact
+
+    mn_all = vertices.min(axis=0)
+    mx_all = vertices.max(axis=0)
+    ext_all = np.maximum(mx_all - mn_all, 1e-12)
+    horizontal_axes = [axis for axis in range(vertices.shape[1]) if axis != int(up_axis)]
+    horizontal_extent = max(float(ext_all[axis]) for axis in horizontal_axes)
+    if horizontal_extent <= 1e-12:
+        return artifact
+
+    for component in _connected_components_from_faces(faces, len(vertices)):
+        if len(component) < int(min_vertices):
+            continue
+        arr = vertices[component]
+        mn = arr.min(axis=0)
+        mx = arr.max(axis=0)
+        ext = mx - mn
+        center = (mn + mx) * 0.5
+        center_height_ratio = float((center[up_axis] - mn_all[up_axis]) / ext_all[up_axis])
+        component_height_ratio = float(ext[up_axis] / ext_all[up_axis])
+        spread_ratio = max(float(ext[axis]) for axis in horizontal_axes) / horizontal_extent
+        if (
+            center_height_ratio <= max_center_height_ratio
+            and component_height_ratio <= max_component_height_ratio
+            and spread_ratio >= min_horizontal_spread_ratio
+        ):
+            artifact[component] = True
+    return artifact
+
+
+def low_limb_bridge_face_mask(
+    *,
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    vertex_regions: np.ndarray,
+    up_axis: int = 2,
+    max_center_height_ratio: float = 0.35,
+) -> np.ndarray:
+    """Flag low faces that visibly bridge two separately animated limbs."""
+    vertices = np.asarray(vertices, dtype=np.float64)
+    faces = np.asarray(faces, dtype=np.int64)
+    vertex_regions = np.asarray(vertex_regions, dtype=np.int64)
+    bridge = np.zeros(len(faces), dtype=bool)
+    if len(vertices) == 0 or len(faces) == 0:
+        return bridge
+
+    limb_regions = {
+        REGION_FRONT_LEFT_LEG,
+        REGION_FRONT_RIGHT_LEG,
+        REGION_HIND_LEFT_LEG,
+        REGION_HIND_RIGHT_LEG,
+    }
+    mn = vertices.min(axis=0)
+    mx = vertices.max(axis=0)
+    height = max(float(mx[up_axis] - mn[up_axis]), 1e-12)
+
+    for face_index, tri in enumerate(faces):
+        center = vertices[tri].mean(axis=0)
+        center_height_ratio = float((center[up_axis] - mn[up_axis]) / height)
+        if center_height_ratio > max_center_height_ratio:
+            continue
+        face_regions = {int(vertex_regions[int(vertex_index)]) for vertex_index in tri}
+        if len(face_regions & limb_regions) >= 2:
+            bridge[face_index] = True
+    return bridge
+
+
+def low_limb_bridge_component_face_mask(
+    *,
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    vertex_regions: np.ndarray,
+    up_axis: int = 2,
+    max_center_height_ratio: float = 0.42,
+    min_component_faces: int = 2,
+    max_component_faces: int = 700,
+    min_limb_regions: int = 2,
+    min_limb_vertex_fraction: float = 0.50,
+    max_anchor_vertex_fraction: float = 0.40,
+) -> np.ndarray:
+    """Flag small low connected components that remain as cross-limb scraps.
+
+    This is intentionally stricter than `low_limb_bridge_face_mask`: a component
+    must be low, small, mostly limb-labeled, and include multiple limb regions.
+    That avoids deleting paws or fur shells that belong to only one limb.
+    """
+    vertices = np.asarray(vertices, dtype=np.float64)
+    faces = np.asarray(faces, dtype=np.int64)
+    vertex_regions = np.asarray(vertex_regions, dtype=np.int64)
+    bridge = np.zeros(len(faces), dtype=bool)
+    if len(vertices) == 0 or len(faces) == 0:
+        return bridge
+
+    limb_regions = {
+        REGION_FRONT_LEFT_LEG,
+        REGION_FRONT_RIGHT_LEG,
+        REGION_HIND_LEFT_LEG,
+        REGION_HIND_RIGHT_LEG,
+    }
+    anchor_regions = {REGION_TAIL, REGION_TORSO, REGION_HEAD}
+    mn_all = vertices.min(axis=0)
+    mx_all = vertices.max(axis=0)
+    height = max(float(mx_all[up_axis] - mn_all[up_axis]), 1e-12)
+
+    n_vertices = len(vertices)
+    parent = list(range(n_vertices))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(a: int, b: int) -> None:
+        ra = find(a)
+        rb = find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for tri in faces:
+        if len(tri) < 3:
+            continue
+        a = int(tri[0])
+        for b in tri[1:]:
+            union(a, int(b))
+
+    component_faces: dict[int, list[int]] = defaultdict(list)
+    component_vertices: dict[int, set[int]] = defaultdict(set)
+    for face_index, tri in enumerate(faces):
+        if len(tri) < 3:
+            continue
+        root = find(int(tri[0]))
+        component_faces[root].append(face_index)
+        component_vertices[root].update(int(i) for i in tri)
+
+    for root, face_indices in component_faces.items():
+        face_count = len(face_indices)
+        if face_count < int(min_component_faces) or face_count > int(max_component_faces):
+            continue
+        component = np.fromiter(component_vertices[root], dtype=np.int64)
+        if component.size == 0:
+            continue
+        arr = vertices[component]
+        mn = arr.min(axis=0)
+        mx = arr.max(axis=0)
+        center_height_ratio = float((((mn + mx) * 0.5)[up_axis] - mn_all[up_axis]) / height)
+        if center_height_ratio > max_center_height_ratio:
+            continue
+
+        labels = vertex_regions[component]
+        limb_mask = np.isin(labels, list(limb_regions))
+        anchor_mask = np.isin(labels, list(anchor_regions))
+        limb_labels = {int(region) for region in labels[limb_mask]}
+        limb_fraction = float(np.mean(limb_mask))
+        anchor_fraction = float(np.mean(anchor_mask))
+        if (
+            len(limb_labels) >= int(min_limb_regions)
+            and limb_fraction >= float(min_limb_vertex_fraction)
+            and anchor_fraction <= float(max_anchor_vertex_fraction)
+        ):
+            bridge[face_indices] = True
+    return bridge
+
+
+def reverse_keyframe_time(
+    *,
+    frame: float,
+    handle_left: float,
+    handle_right: float,
+    start: float,
+    end: float,
+) -> tuple[float, float, float]:
+    """Mirror one keyframe and its Bezier handles across an action frame range."""
+    total = float(start) + float(end)
+    return total - float(frame), total - float(handle_right), total - float(handle_left)
+
+
+def filter_gltf_animation_channels_json(
+    gltf: dict,
+    *,
+    keep_paths: set[str] | list[str] | tuple[str, ...],
+) -> int:
+    """Remove animation channels whose target path is not in `keep_paths`."""
+    keep_paths = {str(path) for path in keep_paths}
+    removed = 0
+    for animation in gltf.get("animations", []):
+        channels = animation.get("channels", [])
+        filtered = [
+            channel for channel in channels
+            if channel.get("target", {}).get("path") in keep_paths
+        ]
+        removed += len(channels) - len(filtered)
+        animation["channels"] = filtered
+    return removed
 
 
 def _segment_distances(vertices: np.ndarray, start: np.ndarray, end: np.ndarray) -> np.ndarray:
