@@ -73,6 +73,7 @@ def test_visible_human_speech_demo_uses_registered_human_and_real_speech(tmp_pat
     assert src["motion_style"] == "stationary"
     assert "facing_yaw_deg" in src
     assert src["actor_scale"] == 1.0
+    assert src["actor_z_lift_cm"] == 14.0
     assert src["walking_forward_yaw_offset_deg"] == 90.0
     assert src["source_role"] == "visible_human_speaker"
     assert spec["event_constraint_report"]["passed"]

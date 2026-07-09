@@ -44,7 +44,7 @@ def test_prepare_human_mixamo_runtime_writes_legacy_and_per_animation_files(tmp_
     assert metadata["runtime_type"] == "mixamo_humanoid_nearest_skin_transfer"
     assert metadata["default_animation"] == "Walking"
     assert metadata["recommended_actor_scale"] == 1.0
-    assert metadata["recommended_actor_z_lift_cm"] == 0.0
+    assert metadata["recommended_actor_z_lift_cm"] == 14.0
     assert metadata["recommended_walking_forward_yaw_offset_deg"] == 90.0
     assert metadata["legacy_runtime"] == metadata["animations"]["Walking"]["glb_path"]
     assert metadata["animations"]["Walking"]["role"] == "walk"
@@ -73,5 +73,6 @@ def test_prepare_human_mixamo_runtime_is_idempotent_with_existing_runtime_files(
 
     metadata = json.loads(metadata_path.read_text())
     assert metadata["recommended_actor_scale"] == 1.0
+    assert metadata["recommended_actor_z_lift_cm"] == 14.0
     assert metadata["recommended_walking_forward_yaw_offset_deg"] == 90.0
     assert (tag_dir / "mesh_runtime.glb").read_bytes() == b"walking rigged glb"

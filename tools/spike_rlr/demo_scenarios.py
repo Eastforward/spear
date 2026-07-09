@@ -238,7 +238,7 @@ def _human_speech_source(
         src["facing_yaw_deg"] = float(facing_yaw_deg) % 360.0
     src.setdefault("walking_forward_yaw_offset_deg", 90.0)
     src.setdefault("actor_scale", 1.0)
-    src.setdefault("actor_z_lift_cm", 0.0)
+    src.setdefault("actor_z_lift_cm", 14.0)
     return src
 
 

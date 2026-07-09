@@ -122,7 +122,7 @@
     },
     "walking_forward_yaw_offset_deg": 90.0,
     "actor_scale": 1.0,
-    "actor_z_lift_cm": 0.0
+    "actor_z_lift_cm": 14.0
   },
   "audio": {
     "default_lookup": "speech",

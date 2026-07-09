@@ -53,7 +53,7 @@ def prepare_human_mixamo_runtime(
     idle_glb: Path | str,
     mixamo_root: Path | str | None = None,
     recommended_actor_scale: float = 1.0,
-    recommended_actor_z_lift_cm: float = 0.0,
+    recommended_actor_z_lift_cm: float = 14.0,
     recommended_walking_forward_yaw_offset_deg: float = 90.0,
 ) -> Path:
     """Copy verified Mixamo-skinned GLBs into an approved human tag directory.

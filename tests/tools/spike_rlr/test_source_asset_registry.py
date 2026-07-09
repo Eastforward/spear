@@ -167,7 +167,7 @@ def test_resolve_source_pool_entry_carries_runtime_render_hints(tmp_path):
             "loop_required": True,
             "walking_forward_yaw_offset_deg": 90.0,
             "actor_scale": 1.0,
-            "actor_z_lift_cm": 0.0,
+            "actor_z_lift_cm": 14.0,
         },
         "audio": {"default_lookup": "speech", "allowed_lookups": ["speech"]},
     }
@@ -181,5 +181,5 @@ def test_resolve_source_pool_entry_carries_runtime_render_hints(tmp_path):
     assert resolved["tag"] == "human_fixture_v1"
     assert resolved["audio_lookup"] == "speech"
     assert resolved["actor_scale"] == 1.0
-    assert resolved["actor_z_lift_cm"] == 0.0
+    assert resolved["actor_z_lift_cm"] == 14.0
     assert resolved["walking_forward_yaw_offset_deg"] == 90.0
