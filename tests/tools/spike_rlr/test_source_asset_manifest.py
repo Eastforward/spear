@@ -86,6 +86,32 @@ def test_write_hy3d_candidate_manifest(tmp_path):
     assert manifest["audio"]["default_lookup"] == "cat_purring"
 
 
+def test_build_hy3d_candidate_manifest_uses_human_speech_and_mixamo_defaults(tmp_path):
+    tag_dir = tmp_path / "pending" / "human_male_blue_hoodie_v1"
+    tag_dir.mkdir(parents=True)
+    (tag_dir / "mesh.obj").write_text("v 0 0 0\n")
+
+    manifest = build_hy3d_candidate_manifest(
+        tag_dir,
+        tag="human_male_blue_hoodie_v1",
+        species="human",
+        breed="male blue hoodie",
+        seed=7001,
+        positive_prompt="synthetic adult male human speaker in a blue hoodie",
+        flux_model="flux_dev",
+        created_at="2026-07-09T00:00:00+00:00",
+    )
+
+    assert manifest["asset_id"] == "human_male_blue_hoodie_0001"
+    assert manifest["asset_class"] == "human"
+    assert manifest["category"] == "human"
+    assert manifest["family"] == "male_blue_hoodie"
+    assert manifest["rig"]["skeleton_family"] == "mixamo_humanoid"
+    assert manifest["rig"]["animations"] == ["Standing_Idle", "Walking"]
+    assert manifest["rig"]["loop_required"] is True
+    assert manifest["audio"]["default_lookup"] == "speech"
+
+
 def test_sync_candidate_manifest_review_updates_direction_status(tmp_path):
     tag_dir = tmp_path / "approved" / "dog_beagle_v2"
     tag_dir.mkdir(parents=True)

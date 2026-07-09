@@ -324,3 +324,14 @@ def test_audio_library_has_cat_purring_sample():
     sample = lib.sample("cat_purring", np.random.default_rng(0))
     assert sample.path.exists()
     assert sample.is_synthetic is False
+
+
+def test_audio_library_has_speech_sample():
+    lib = load_library(REPO / "data" / "audio_library_v1.json")
+
+    assert "speech" in lib.categories
+    sample = lib.sample("speech", np.random.default_rng(0))
+    assert sample.path.exists()
+    assert sample.is_synthetic is False
+    assert sample.source.startswith("LibriTTS")
+    assert 1.0 <= sample.duration_s <= 8.0

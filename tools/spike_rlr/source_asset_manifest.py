@@ -60,23 +60,27 @@ def _category_defaults(category: str) -> dict[str, Any]:
     if category == "dog":
         return {
             "skeleton_family": "quaternius_dog",
+            "animations": ["Idle", "Walking"],
             "default_lookup": "dog_bark",
             "allowed_lookups": ["dog_bark", "dog_growl", "dog_sharp_bark", "silent"],
         }
     if category == "cat":
         return {
             "skeleton_family": "quaternius_cat",
+            "animations": ["Idle", "Walking"],
             "default_lookup": "cat_purring",
             "allowed_lookups": ["cat_meow", "cat_purring", "silent"],
         }
     if category == "human":
         return {
             "skeleton_family": "mixamo_humanoid",
+            "animations": ["Standing_Idle", "Walking"],
             "default_lookup": "speech",
             "allowed_lookups": ["speech", "talking", "conversation", "silent"],
         }
     return {
         "skeleton_family": "unknown",
+        "animations": [],
         "default_lookup": "silent",
         "allowed_lookups": ["silent"],
     }
@@ -148,7 +152,7 @@ def build_hy3d_candidate_manifest(
         },
         "rig": {
             "skeleton_family": defaults["skeleton_family"],
-            "animations": ["Idle", "Walking"],
+            "animations": defaults["animations"],
             "loop_required": True,
         },
         "audio": {

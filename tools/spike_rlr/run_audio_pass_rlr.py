@@ -37,6 +37,7 @@ import numpy as np
 import soundfile as sf
 
 from animal_audio import is_synthetic_audio_path, resolve_animal_audio_path
+from speech_audio import is_speech_lookup, resolve_speech_audio_path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -262,6 +263,13 @@ def _load_dry_source(tag, sample_rate, duration_s, seed=42, source_spec=None):
         audio_lookup = source_spec.get("audio_lookup")
         if explicit_path and is_synthetic_audio_path(explicit_path):
             override = str(explicit_path)
+        elif audio_lookup and is_speech_lookup(audio_lookup):
+            wav_path = str(resolve_speech_audio_path(
+                audio_lookup,
+                explicit_path=explicit_path,
+                root=source_spec.get("speech_root"),
+            ))
+            print(f"[audio] {tag}: using speech lookup {audio_lookup} -> {os.path.basename(wav_path)}")
         elif explicit_path:
             wav_path = str(resolve_animal_audio_path(
                 tag,

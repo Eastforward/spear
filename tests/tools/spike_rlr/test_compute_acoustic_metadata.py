@@ -83,6 +83,7 @@ def test_lookup_to_category_includes_direct_music_piano_key():
 
     assert _LOOKUP_TO_CATEGORY["music_piano"] == "music_piano"
     assert _LOOKUP_TO_CATEGORY["cat_purring"] == "cat_purring"
+    assert _LOOKUP_TO_CATEGORY["speech"] == "speech"
 
 
 def test_effective_audio_frames_from_gains_uses_threshold():

@@ -38,7 +38,7 @@ import trimesh
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "spike_rlr"))
 
-from detect_head_axis import detect_head_axis  # noqa: E402
+from detect_head_axis import HeadDetectionResult, detect_head_axis  # noqa: E402
 from preview_render import render_direction_preview  # noqa: E402
 
 
@@ -59,6 +59,18 @@ def _find_mesh_file(tag_dir: Path) -> Path:
         if p.exists():
             return p
     raise FileNotFoundError(f"no mesh.glb or mesh.obj in {tag_dir}")
+
+
+def _candidate_category(tag_dir: Path) -> str | None:
+    path = tag_dir / "source_asset_candidate.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    category = data.get("category")
+    return str(category).lower() if category else None
 
 
 def _load_and_concat(mesh_path: Path):
@@ -109,6 +121,57 @@ def _rotation_matrix_align(from_vec, to_vec):
     return np.eye(3) + K + K @ K * ((1 - c) / (s * s))
 
 
+def _manual_human_orientation_result() -> HeadDetectionResult:
+    return HeadDetectionResult(
+        head_direction=np.array([1.0, 0.0, 0.0]),
+        signals={"manual_human_orientation_required": 1},
+        total_votes=0,
+        unanimous=False,
+        confidence=0.0,
+        pc1_axis=np.array([1.0, 0.0, 0.0]),
+        pc2_axis=np.array([0.0, 1.0, 0.0]),
+    )
+
+
+def _write_manual_human_orientation(tag_dir: Path, mesh_path: Path) -> str:
+    result = _manual_human_orientation_result()
+    stale_oriented = tag_dir / "mesh_oriented.glb"
+    if stale_oriented.exists():
+        stale_oriented.unlink()
+
+    preview_path = tag_dir / "direction_preview.png"
+    render_direction_preview(mesh_path, result, preview_path)
+
+    payload = {
+        "mesh_source": _rel_or_abs(mesh_path),
+        "mesh_oriented": None,
+        "algorithm_version": ALGORITHM_VERSION,
+        "orientation_strategy": "manual_human_orientation_v1",
+        "auto_orientation_skipped": True,
+        "detected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "detection": {
+            "head_direction_original_mesh_frame": result.head_direction.tolist(),
+            "rotation_applied_to_align_to_plus_x": np.eye(3).tolist(),
+            "signals": result.signals,
+            "total_votes": result.total_votes,
+            "unanimous": result.unanimous,
+            "confidence": result.confidence,
+        },
+        "human_approved": False,
+        "human_approved_by": None,
+        "human_approved_at": None,
+        "human_notes": "human asset: animal auto-orient skipped; use review UI manual rotation",
+        "human_override": None,
+        "quarantined": False,
+    }
+    (tag_dir / "direction.json").write_text(json.dumps(payload, indent=2))
+    print(
+        f"  {tag_dir.name}: human category -> skipped animal auto-orient; "
+        f"wrote direction.json for manual review"
+    )
+    return "processed"
+
+
 def process_one(tag_dir: Path, force: bool = False):
     dj_path = tag_dir / "direction.json"
     if dj_path.exists() and not force:
@@ -116,6 +179,9 @@ def process_one(tag_dir: Path, force: bool = False):
         return "skipped"
 
     mesh_path = _find_mesh_file(tag_dir)
+    if _candidate_category(tag_dir) == "human":
+        return _write_manual_human_orientation(tag_dir, mesh_path)
+
     mesh = _load_and_concat(mesh_path)
     verts = np.array(mesh.vertices)
     result = detect_head_axis(verts)

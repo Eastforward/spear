@@ -48,6 +48,9 @@ _LOOKUP_TO_CATEGORY = {
     "dog_sharp_bark": "dog_sharp_bark",
     "cat_meow": "cat_meow",
     "cat_purring": "cat_purring",
+    "speech": "speech",
+    "talking": "speech",
+    "conversation": "conversation",
     "music_piano": "music_piano",
     "wolf_howl": "music_piano",   # legacy debug lookup; current animal specs
                                     # should use species-correct audio lookups.

@@ -1,28 +1,42 @@
 """Task 7: text-to-image reference generator for the Hunyuan pipeline.
 
 Uses diffusers' Flux pipeline (or SDXL fallback) to produce a clean
-white-background dog photo suitable for Hunyuan3D-Paint's multiview
-diffusion. Applies a fixed prompt template that biases toward Hunyuan-
-friendly output (standing side view, plain background).
+white-background reference image suitable for Hunyuan3D-Paint's multiview
+diffusion. Applies a prompt template that biases toward Hunyuan-friendly
+output (full body, clean background).
 
 Runs in the hunyuan3d env; the same GPU that Hunyuan later uses. Prints
 FLUX_GEN_OK on success.
 """
 import argparse
 import os
-import sys
 
 # Force real HF endpoint for the model resolution / snapshot check —
 # same reason as tools/prefetch_t2i_models.py. Must happen before any
 # huggingface_hub import.
 os.environ["HF_ENDPOINT"] = "https://huggingface.co"
 
-import torch
+
+ANIMAL_TEMPLATE = (
+    "{prompt}, full body, standing side view, "
+    "plain white background, studio photo, photorealistic, "
+    "detailed fur, professional pet photography"
+)
+HUMAN_TEMPLATE = (
+    "{prompt}, full body, standing upright, plain white background, "
+    "studio photo, photorealistic, neutral pose, clear face, "
+    "full head to feet visible, no logo, no text, no watermark"
+)
+RAW_TEMPLATE = "{prompt}"
+TEMPLATES = {
+    "animal": ANIMAL_TEMPLATE,
+    "human": HUMAN_TEMPLATE,
+    "raw": RAW_TEMPLATE,
+}
 
 
-TEMPLATE = ("{prompt}, full body, standing side view, "
-            "plain white background, studio photo, photorealistic, "
-            "detailed fur, professional pet photography")
+def build_prompt(prompt: str, *, template: str = "animal") -> str:
+    return TEMPLATES[template].format(prompt=prompt)
 
 
 def parse_args():
@@ -36,6 +50,9 @@ def parse_args():
     p.add_argument("--width", type=int, default=1024)
     p.add_argument("--height", type=int, default=1024)
     p.add_argument("--steps", type=int, default=None)
+    p.add_argument("--template", default="animal",
+                   choices=sorted(TEMPLATES),
+                   help="Prompt wrapper. Use human for synthetic people; animal preserves the historical pet/fur bias.")
     p.add_argument("--no-rembg", action="store_true",
                    help="Skip background removal (Hunyuan pipeline actually adds white bg itself)")
     return p.parse_args()
@@ -65,6 +82,7 @@ def resolve_model(model):
 
 
 def load_pipeline(model):
+    import torch
     from diffusers import FluxPipeline, StableDiffusionXLPipeline
     if model == "flux_dev":
         return FluxPipeline.from_pretrained(
@@ -84,9 +102,10 @@ def main():
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
 
     model = resolve_model(args.model)
-    prompt = TEMPLATE.format(prompt=args.prompt)
+    prompt = build_prompt(args.prompt, template=args.template)
     print(f"[flux_gen] model={model} prompt={prompt!r}", flush=True)
 
+    import torch
     pipe = load_pipeline(model).to("cuda")
     pipe.set_progress_bar_config(disable=False)
 

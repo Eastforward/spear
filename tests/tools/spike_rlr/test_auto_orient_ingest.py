@@ -81,6 +81,30 @@ def test_ingest_writes_oriented_mesh_with_head_at_plus_x(tmp_path):
         f"oriented mesh head still not at +X: {result.head_direction}"
 
 
+def test_ingest_uses_manual_orientation_for_human_manifest(tmp_path):
+    pending = tmp_path / "pending"
+    tag_dir = _write_synth_pending(pending, "human_test", head_axis="+X")
+    (tag_dir / "source_asset_candidate.json").write_text(json.dumps({
+        "schema_version": "source_asset_v1",
+        "asset_id": "human_test_0001",
+        "category": "human",
+    }))
+
+    r = subprocess.run(
+        [PYTHON, str(INGEST), "--pending-dir", str(pending)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, f"ingest failed:\n{r.stdout}\n---\n{r.stderr}"
+
+    d = json.loads((tag_dir / "direction.json").read_text())
+    assert d["auto_orientation_skipped"] is True
+    assert d["orientation_strategy"] == "manual_human_orientation_v1"
+    assert d["detection"]["confidence"] == 0.0
+    assert d["detection"]["signals"]["manual_human_orientation_required"] == 1
+    assert d["human_approved"] is False
+    assert not (tag_dir / "mesh_oriented.glb").exists()
+
+
 def test_ingest_skips_existing_direction_json(tmp_path):
     """If direction.json already exists, ingest should skip that tag by default."""
     pending = tmp_path / "pending"
