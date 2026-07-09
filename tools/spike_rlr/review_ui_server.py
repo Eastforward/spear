@@ -385,6 +385,18 @@ def _read_rotation_history(tag_dir: Path) -> list:
         return []
 
 
+def _asset_category(tag_dir: Path) -> str | None:
+    path = tag_dir / "source_asset_candidate.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    category = data.get("category")
+    return str(category).lower() if category else None
+
+
 def _apply_rotation_and_regen_preview(tag_dir: Path):
     """Regenerate mesh_current.glb from mesh.glb rotated by the stored rotation,
     then re-render preview PNG."""
@@ -400,7 +412,8 @@ def _apply_rotation_and_regen_preview(tag_dir: Path):
     hist = _read_rotation_history(tag_dir)
     hist_str = " + ".join(hist) if hist else "identity"
     render_review_preview(current_path, preview_path,
-                           note=f"Accumulated rotation: {hist_str}")
+                           note=f"Accumulated rotation: {hist_str}",
+                           asset_category=_asset_category(tag_dir))
 
 
 def _review_preview_stale(tag_dir: Path) -> bool:

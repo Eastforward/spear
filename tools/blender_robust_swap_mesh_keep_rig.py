@@ -53,6 +53,7 @@ from tools.robust_skin_transfer import (  # noqa: E402
     regularize_regions_by_connected_components,
     reverse_keyframe_time,
     target_region_labels_from_source_proximity,
+    transfer_weights_by_nearest_surface,
     transfer_weights_by_region,
 )
 
@@ -125,9 +126,10 @@ def parse_argv():
                    help="Maximum bone influences to keep per target vertex.")
     p.add_argument("--min-weight", type=float, default=1e-5,
                    help="Do not write vertex-group weights below this value.")
-    p.add_argument("--weight-mode", default="region", choices=["region", "auto"],
+    p.add_argument("--weight-mode", default="region", choices=["region", "auto", "nearest"],
                    help="region copies compatible source weights; auto uses Blender automatic weights "
-                        "against the original armature after alignment.")
+                        "against the original armature after alignment; nearest copies from nearest "
+                        "source mesh surface without animal semantic regions.")
     p.add_argument("--segmentation-mode", default="proximity",
                    choices=["proximity", "skeleton-graph", "proximity-components"],
                    help="Target anatomical segmentation mode used by --weight-mode region.")
@@ -757,6 +759,40 @@ def robust_transfer(src_mesh, tgt_mesh, armature_obj, args):
     write_vertex_groups(tgt_mesh, group_names, final_weights, args.min_weight)
 
 
+def nearest_transfer(src_mesh, tgt_mesh, armature_obj, args):
+    src_vertices = mesh_vertices_world(src_mesh)
+    src_faces = triangulated_faces(src_mesh)
+    group_names, src_weights = source_vertex_weights(src_mesh)
+
+    apply_transforms(tgt_mesh)
+    tgt_vertices = mesh_vertices_local(tgt_mesh)
+    tgt_faces = triangulated_faces(tgt_mesh)
+
+    diag = float(np.linalg.norm(mesh_bounds(src_vertices)[1] - mesh_bounds(src_vertices)[0]))
+    max_distance = None if args.max_distance_ratio <= 0 else diag * args.max_distance_ratio
+    transferred, matched, stats = transfer_weights_by_nearest_surface(
+        source_vertices=src_vertices,
+        source_faces=src_faces,
+        source_weights=src_weights,
+        target_vertices=tgt_vertices,
+        max_distance=max_distance,
+        candidate_count=args.candidate_count,
+    )
+    print(f"[nearest-transfer] stats={stats} bbox_diag={diag:.4f} "
+          f"max_distance={max_distance}", flush=True)
+    filled_weights, filled_mask, n_iters = inpaint_missing_weights(
+        tgt_faces,
+        transferred,
+        matched,
+        max_iterations=96,
+    )
+    print(f"[nearest-inpaint] filled={int(filled_mask.sum())}/{len(filled_mask)} "
+          f"iterations={n_iters}", flush=True)
+    final_weights = keep_top_k_normalized(filled_weights, k=args.top_k)
+    write_vertex_groups(tgt_mesh, group_names, final_weights, args.min_weight)
+    parent_to_armature(tgt_mesh, armature_obj)
+
+
 def main():
     args = parse_argv()
     for path in (args.rig_glb, args.new_mesh):
@@ -804,6 +840,8 @@ def main():
         print("[texture] no --new-diffuse provided; keeping imported material", flush=True)
     if args.weight_mode == "auto":
         auto_weight_to_armature(tgt_mesh, armature)
+    elif args.weight_mode == "nearest":
+        nearest_transfer(src_mesh, tgt_mesh, armature, args)
     else:
         robust_transfer(src_mesh, tgt_mesh, armature, args)
         parent_to_armature(tgt_mesh, armature)

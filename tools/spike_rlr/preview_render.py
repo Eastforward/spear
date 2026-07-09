@@ -221,8 +221,31 @@ def _project_wire_segments_2d(verts, faces, axes_pair):
     )
 
 
+def _review_labels(asset_category: str | None = None) -> dict[str, str]:
+    if str(asset_category or "").lower() == "human":
+        return {
+            "forward_text": "FACE ->",
+            "back_text": "<- BACK",
+            "main_xlabel": "world +X  (FACE/FORWARD should point right ->)",
+            "main_ylabel": "world +Y  (UP - human should stand upright)",
+            "top_xlabel": "+X (face/forward ->)",
+            "main_title": "SIDE view  (shows upright posture)",
+            "top_title": "TOP-DOWN\n(confirms forward direction)",
+        }
+    return {
+        "forward_text": "HEAD ->",
+        "back_text": "<- TAIL",
+        "main_xlabel": "world +X  (HEAD should point right ->)",
+        "main_ylabel": "world +Y  (UP - animal should stand upright)",
+        "top_xlabel": "+X (head ->)",
+        "main_title": "SIDE view  (this is what shows 'standing vs lying')",
+        "top_title": "TOP-DOWN\n(confirms head direction)",
+    }
+
+
 def render_review_preview(mesh_path, out_png_path,
-                           note: str = "") -> None:
+                           note: str = "",
+                           asset_category: str | None = None) -> None:
     """Render a review-oriented preview optimized for a human to judge
     'is the mesh standing up AND facing right?' at a glance.
 
@@ -243,12 +266,14 @@ def render_review_preview(mesh_path, out_png_path,
       mesh_path: path to .glb / .obj
       out_png_path: where to write .png
       note: optional annotation text under the title
+      asset_category: optional source category, e.g. "human" for human labels
     """
     from matplotlib.collections import LineCollection, PolyCollection
 
     mesh_path = Path(mesh_path)
     out_png_path = Path(out_png_path)
     m = _load_mesh(mesh_path)
+    labels = _review_labels(asset_category)
 
     bbox_size = m.bounds[1] - m.bounds[0]
     R = 0.55 * bbox_size.max()
@@ -275,23 +300,24 @@ def render_review_preview(mesh_path, out_png_path,
     ax_main.set_xlim(-R * 1.5, R * 1.5)
     ax_main.set_ylim(-R * 1.4, R * 1.5)
     ax_main.set_aspect("equal")
-    ax_main.set_xlabel("world +X  (HEAD should point right →)",
-                        fontsize=13, color="#0a0", fontweight="bold")
-    ax_main.set_ylabel("world +Y  (UP — animal should stand upright)",
-                        fontsize=12, color="#00a", fontweight="bold")
+    ax_main.set_xlabel(labels["main_xlabel"],
+                       fontsize=13, color="#0a0", fontweight="bold")
+    ax_main.set_ylabel(labels["main_ylabel"],
+                       fontsize=12, color="#00a", fontweight="bold")
     ax_main.grid(True, alpha=0.3, linestyle="--")
-    ax_main.set_title("SIDE view  (this is what shows 'standing vs lying')",
-                       fontsize=11, pad=8)
+    ax_main.set_title(labels["main_title"], fontsize=11, pad=8)
 
     # Giant green HEAD arrow on right side
     ax_main.annotate(
         "", xy=(R * 1.25, 0), xytext=(R * 0.9, 0),
         arrowprops=dict(arrowstyle="-|>", color="#0a0", lw=6, mutation_scale=40),
     )
-    ax_main.text(R * 1.28, 0, "HEAD →", color="#0a0", fontsize=17,
-                 fontweight="bold", va="center")
-    ax_main.text(-R * 1.28, 0, "← TAIL", color="#a00", fontsize=12,
-                 fontweight="bold", va="center", ha="right")
+    ax_main.text(R * 0.78, R * 0.13, labels["forward_text"],
+                 color="#0a0", fontsize=15, fontweight="bold",
+                 va="center", ha="left")
+    ax_main.text(-R * 1.12, R * 0.08, labels["back_text"],
+                 color="#a00", fontsize=12, fontweight="bold",
+                 va="center", ha="right")
 
     # Blue UP arrow on top
     ax_main.annotate(
@@ -318,12 +344,11 @@ def render_review_preview(mesh_path, out_png_path,
     ax_top.set_xlim(-R * 1.4, R * 1.4)
     ax_top.set_ylim(-R * 1.4, R * 1.4)
     ax_top.set_aspect("equal")
-    ax_top.set_xlabel("+X (head →)", fontsize=10, color="#0a0",
-                       fontweight="bold")
+    ax_top.set_xlabel(labels["top_xlabel"], fontsize=10, color="#0a0",
+                      fontweight="bold")
     ax_top.set_ylabel("+Z", fontsize=9, color="#666")
     ax_top.grid(True, alpha=0.3, linestyle="--")
-    ax_top.set_title("TOP-DOWN\n(confirms head direction)",
-                      fontsize=10, pad=6)
+    ax_top.set_title(labels["top_title"], fontsize=10, pad=6)
 
     # Small green arrow on inset too
     ax_top.annotate(

@@ -95,6 +95,42 @@ def test_tag_view_regenerates_stale_review_preview(workspace):
     assert preview.stat().st_mtime > 1
 
 
+def test_tag_view_passes_human_category_to_review_preview(tmp_path, monkeypatch):
+    from auto_orient_ingest import process_one
+    from review_ui_server import create_app
+    import review_ui_server
+    from test_auto_orient_ingest import _write_synth_pending
+
+    pending = tmp_path / "pending"
+    approved = tmp_path / "approved"
+    rejected = tmp_path / "rejected"
+    for d in (pending, approved, rejected):
+        d.mkdir(parents=True)
+    tag_dir = _write_synth_pending(pending, "human_test_srv", head_axis="+X")
+    (tag_dir / "source_asset_candidate.json").write_text(json.dumps({
+        "schema_version": "source_asset_v1",
+        "asset_id": "human_test_0001",
+        "category": "human",
+    }))
+    process_one(tag_dir)
+
+    seen = {}
+
+    def fake_render_review_preview(mesh_path, out_png_path, note="", asset_category=None):
+        seen["asset_category"] = asset_category
+        Path(out_png_path).write_bytes(b"\x89PNG\r\n\x1a\nfake")
+
+    monkeypatch.setattr(
+        review_ui_server, "render_review_preview", fake_render_review_preview
+    )
+    app = create_app(pending, approved, rejected)
+    client = app.test_client()
+
+    assert client.get("/tag/human_test_srv").status_code == 200
+
+    assert seen["asset_category"] == "human"
+
+
 def test_rotate_updates_rotation_json_and_regens_preview(workspace):
     from review_ui_server import create_app
     app = create_app(workspace["pending"], workspace["approved"], workspace["rejected"])

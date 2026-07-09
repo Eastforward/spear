@@ -85,6 +85,26 @@ def test_review_preview_written(tmp_path):
         assert f.read(8) == b"\x89PNG\r\n\x1a\n"
 
 
+def test_review_labels_use_human_terms_for_human_assets():
+    from preview_render import _review_labels
+
+    labels = _review_labels("human")
+
+    assert labels["forward_text"] == "FACE ->"
+    assert labels["back_text"] == "<- BACK"
+    assert "human should stand upright" in labels["main_ylabel"]
+
+
+def test_review_labels_keep_animal_terms_by_default():
+    from preview_render import _review_labels
+
+    labels = _review_labels(None)
+
+    assert labels["forward_text"] == "HEAD ->"
+    assert labels["back_text"] == "<- TAIL"
+    assert "animal should stand upright" in labels["main_ylabel"]
+
+
 def test_preview_face_sampling_caps_large_mesh():
     """Audit PNGs must not try to draw every triangle of Hunyuan meshes."""
     from preview_render import _preview_face_indices

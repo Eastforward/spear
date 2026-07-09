@@ -27,6 +27,7 @@ from tools.robust_skin_transfer import (
     keep_top_k_normalized,
     regularize_regions_by_connected_components,
     target_region_labels_from_source_proximity,
+    transfer_weights_by_nearest_surface,
     transfer_weights_by_region,
 )
 
@@ -142,6 +143,55 @@ class RobustSkinTransferTest(unittest.TestCase):
         self.assertTrue(matched[0])
         self.assertLess(out[0, 0], 0.01)
         self.assertGreater(out[0, 1], 0.99)
+
+    def test_transfer_weights_by_nearest_surface_interpolates_face_weights(self):
+        source_vertices = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+        source_faces = np.array([[0, 1, 2]], dtype=np.int64)
+        source_weights = np.eye(3, dtype=np.float64)
+        target_vertices = np.array([[0.25, 0.25, 0.0]], dtype=np.float64)
+
+        out, matched, stats = transfer_weights_by_nearest_surface(
+            source_vertices=source_vertices,
+            source_faces=source_faces,
+            source_weights=source_weights,
+            target_vertices=target_vertices,
+        )
+
+        self.assertTrue(matched[0])
+        self.assertTrue(np.allclose(out[0], [0.5, 0.25, 0.25]))
+        self.assertEqual(stats["matched"], 1)
+
+    def test_transfer_weights_by_nearest_surface_respects_max_distance(self):
+        source_vertices = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+        source_faces = np.array([[0, 1, 2]], dtype=np.int64)
+        source_weights = np.eye(3, dtype=np.float64)
+        target_vertices = np.array([[0.25, 0.25, 2.0]], dtype=np.float64)
+
+        out, matched, stats = transfer_weights_by_nearest_surface(
+            source_vertices=source_vertices,
+            source_faces=source_faces,
+            source_weights=source_weights,
+            target_vertices=target_vertices,
+            max_distance=0.5,
+        )
+
+        self.assertFalse(matched[0])
+        self.assertTrue(np.allclose(out[0], 0.0))
+        self.assertEqual(stats["over_distance"], 1)
 
     def test_target_region_labels_use_source_proximity_but_protect_head_tail(self):
         source_vertices = np.array(

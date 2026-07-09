@@ -805,6 +805,78 @@ def target_region_labels_from_source_proximity(
     return labels
 
 
+def transfer_weights_by_nearest_surface(
+    *,
+    source_vertices: np.ndarray,
+    source_faces: np.ndarray,
+    source_weights: np.ndarray,
+    target_vertices: np.ndarray,
+    max_distance: float | None = None,
+    candidate_count: int = 24,
+) -> tuple[np.ndarray, np.ndarray, dict[str, object]]:
+    """Transfer skin weights from the nearest source surface triangle.
+
+    This is intentionally category-agnostic. It is useful for humanoid smoke
+    tests where source and target meshes are already aligned to the same
+    skeleton but dog/cat semantic regions are invalid.
+    """
+    source_vertices = np.asarray(source_vertices, dtype=np.float64)
+    source_faces = np.asarray(source_faces, dtype=np.int64)
+    source_weights = normalize_rows(source_weights)
+    target_vertices = np.asarray(target_vertices, dtype=np.float64)
+
+    face_vertices = source_vertices[source_faces]
+    face_centers = face_vertices.mean(axis=1)
+    out = np.zeros((len(target_vertices), source_weights.shape[1]), dtype=np.float64)
+    matched = np.zeros(len(target_vertices), dtype=bool)
+    over_distance = 0
+    no_candidates = 0
+    n_take_all = min(max(1, int(candidate_count)), len(source_faces))
+
+    for i, p in enumerate(target_vertices):
+        if len(source_faces) == 0:
+            no_candidates += 1
+            continue
+        center_d2 = np.sum((face_centers - p) ** 2, axis=1)
+        if n_take_all < len(source_faces):
+            candidates = np.argpartition(center_d2, n_take_all - 1)[:n_take_all]
+        else:
+            candidates = np.arange(len(source_faces), dtype=np.int64)
+
+        best_dist = float("inf")
+        best_weight = None
+        for face_idx in candidates:
+            tri = face_vertices[int(face_idx)]
+            bary, dist = _closest_point_barycentric(p, tri[0], tri[1], tri[2])
+            if dist >= best_dist:
+                continue
+            src_face = source_faces[int(face_idx)]
+            best_dist = dist
+            best_weight = (
+                bary[0] * source_weights[src_face[0]]
+                + bary[1] * source_weights[src_face[1]]
+                + bary[2] * source_weights[src_face[2]]
+            )
+
+        if best_weight is None:
+            no_candidates += 1
+            continue
+        if max_distance is not None and best_dist > max_distance:
+            over_distance += 1
+            continue
+        out[i] = best_weight
+        matched[i] = True
+
+    stats = {
+        "target_vertices": int(len(target_vertices)),
+        "matched": int(matched.sum()),
+        "unmatched": int((~matched).sum()),
+        "no_candidates": int(no_candidates),
+        "over_distance": int(over_distance),
+    }
+    return normalize_rows(out), matched, stats
+
+
 def transfer_weights_by_region(
     *,
     source_vertices: np.ndarray,
