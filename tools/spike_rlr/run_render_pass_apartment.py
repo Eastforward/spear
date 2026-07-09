@@ -125,6 +125,37 @@ def _actor_visual_center_ssot_m(actor):
     return _apartment_ue_cm_to_ssot_m((origin["x"], origin["y"], origin["z"]))
 
 
+def _placement_visual_fallback_ssot_m(placement, frame_i: int) -> list[float]:
+    if getattr(placement, "trajectory_m", None) is not None:
+        point = np.asarray(placement.trajectory_m[frame_i], dtype=np.float64)
+    elif getattr(placement, "static_pos_m", None) is not None:
+        point = np.asarray(placement.static_pos_m, dtype=np.float64)
+    else:
+        point = np.zeros(3, dtype=np.float64)
+    return [float(v) for v in point[:3]]
+
+
+def _sanitize_actor_visual_center_ssot_m(center, placement, frame_i: int) -> list[float]:
+    """Reject implausible UE actor bounds centers before review overlay.
+
+    Imported Mixamo humanoids can report skeletal bounds far outside the
+    apartment even when the rendered mesh is placed correctly. In that case
+    the acoustic/source trajectory is a better marker anchor than a bogus
+    50-meter-tall bounds center.
+    """
+    fallback = _placement_visual_fallback_ssot_m(placement, frame_i)
+    try:
+        arr = np.asarray(center, dtype=np.float64)
+    except Exception:
+        return fallback
+    if arr.shape != (3,) or not np.all(np.isfinite(arr)):
+        return fallback
+    horizontal_delta_m = float(np.linalg.norm(arr[:2] - np.asarray(fallback[:2])))
+    if horizontal_delta_m > 2.0 or arr[2] < -0.5 or arr[2] > 4.0:
+        return fallback
+    return [float(v) for v in arr]
+
+
 def _absolute_apartment_render_scene(scene):
     """Adapt apartment_v1 absolute SSOT trajectories for the shared actor
     spawner, whose apartment transform is relative to scene.mic_pos_m.
@@ -322,9 +353,15 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
                                             "apartment", render_scene)
                     for actor, placement in zip(actors, scene.animals):
                         try:
-                            center = _actor_visual_center_ssot_m(actor)
+                            center = _sanitize_actor_visual_center_ssot_m(
+                                _actor_visual_center_ssot_m(actor),
+                                placement,
+                                frame_i,
+                            )
                         except Exception:
-                            center = tuple(float(v) for v in placement.trajectory_m[frame_i])
+                            center = _placement_visual_fallback_ssot_m(
+                                placement, frame_i
+                            )
                         visual_centers[placement.tag].append(
                             [float(v) for v in center]
                         )

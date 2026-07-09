@@ -106,7 +106,7 @@
         "motion_style": "stationary",
         "loop": true,
         "glb_path": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/mesh_runtime_standing_idle.glb",
-        "source_glb": "tmp/human_mixamo_smoke/human_male_blue_hoodie_standing_idle_nearest.glb",
+        "source_glb": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/mesh_runtime_standing_idle.glb",
         "source_fbx": "raw/Standing_Idle.fbx",
         "sha256": "fb0a6fa6324bf918d93acc28a92a76f8ff19a70d7e06b516b7b59254e77e0dcd"
       },
@@ -115,11 +115,14 @@
         "motion_style": "walking",
         "loop": true,
         "glb_path": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/mesh_runtime_walking.glb",
-        "source_glb": "tmp/human_mixamo_smoke/human_male_blue_hoodie_walking_nearest.glb",
+        "source_glb": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v1/mesh_runtime_walking.glb",
         "source_fbx": "raw/Walking.fbx",
         "sha256": "537d44e30fd0b8682b2f6ebebf6676d3b98e10afb1572609e562aed09915df91"
       }
-    }
+    },
+    "walking_forward_yaw_offset_deg": 90.0,
+    "actor_scale": 1.0,
+    "actor_z_lift_cm": 0.0
   },
   "audio": {
     "default_lookup": "speech",

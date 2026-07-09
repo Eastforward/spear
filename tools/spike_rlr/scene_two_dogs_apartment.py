@@ -54,6 +54,12 @@ def _forward_yaw_offset_for_tag(tag):
     return ANIMATED_RIG_MAP[tag]["walking_forward_yaw_offset_deg"]
 
 
+def _forward_yaw_offset_for_source(src):
+    if src.get("walking_forward_yaw_offset_deg") is not None:
+        return float(src["walking_forward_yaw_offset_deg"])
+    return _forward_yaw_offset_for_tag(src["tag"])
+
+
 def _kept_furniture_bboxes(spec, cats):
     """Return list of (x0, y0, x1, y1) XY-rectangles for furniture kept in
     this clip's furniture_mode."""
@@ -241,15 +247,23 @@ def compose_two_dog_scene_apartment(spec_path=DEFAULT_SPEC_PATH):
             )
         else:
             traj = _build_planned_trajectory(src, spec, cats, n_frames)
-        motion_yaw = _motion_yaw_from_trajectory(traj)
-        offset = _forward_yaw_offset_for_tag(tag)
-        yaw = (motion_yaw + offset) % 360.0
+        offset = _forward_yaw_offset_for_source(src)
+        if "facing_yaw_deg" in src:
+            yaw = np.full(
+                n_frames,
+                (float(src["facing_yaw_deg"]) + offset) % 360.0,
+            )
+        else:
+            motion_yaw = _motion_yaw_from_trajectory(traj)
+            yaw = (motion_yaw + offset) % 360.0
         animals.append(AnimalPlacement(
             tag=tag,
             is_animated=True,
             trajectory_m=traj,
             yaw_deg=yaw,
             wanted_anim=_wanted_anim_for_source(src),
+            actor_scale=src.get("actor_scale"),
+            actor_z_lift_cm=src.get("actor_z_lift_cm"),
         ))
 
     # For the apartment spec there's no "room_size_m" (non-rectangular shell);

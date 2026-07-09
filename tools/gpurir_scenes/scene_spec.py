@@ -94,6 +94,10 @@ class AnimalPlacement:
     # For rig-based animals (dogs/cats/chipmunk): which anim to play on the
     # spawned actor. Default "Walking"; use "Idle" for a stationary dog.
     wanted_anim: str = "Walking"
+    # Runtime render hints for non-Quaternius animated rigs such as Mixamo
+    # humans. Leave None for legacy dog/cat defaults.
+    actor_scale: Optional[float] = None
+    actor_z_lift_cm: Optional[float] = None
 
 
 @dataclass

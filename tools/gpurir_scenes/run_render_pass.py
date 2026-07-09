@@ -166,6 +166,22 @@ _STATIC_Z_LIFT_BY_TAG_CM = {
 _ANIMATED_Z_LIFT_CM = 0.0
 
 
+def _actor_scale_for_placement(placement):
+    scale = getattr(placement, "actor_scale", None)
+    if scale is not None:
+        return float(scale)
+    return 0.15 if placement.is_animated else 1.0
+
+
+def _actor_z_lift_cm_for_placement(placement):
+    z_lift = getattr(placement, "actor_z_lift_cm", None)
+    if z_lift is not None:
+        return float(z_lift)
+    if placement.is_animated:
+        return _ANIMATED_Z_LIFT_CM
+    return _STATIC_Z_LIFT_BY_TAG_CM.get(placement.tag, 50.0)
+
+
 def _play_anim_on_actor(game, actor, placement):
     """Swap the SkeletalMeshComponent's playing anim to wanted_anim.
 
@@ -193,10 +209,10 @@ def _spawn_animal(game, placement, room, spec):
     bp = game.unreal_service.load_class(uclass="AActor", name=_bp_path(placement))
     if placement.is_animated:
         p0 = placement.trajectory_m[0]
-        z_lift = _ANIMATED_Z_LIFT_CM
+        z_lift = _actor_z_lift_cm_for_placement(placement)
     else:
         p0 = placement.static_pos_m
-        z_lift = _STATIC_Z_LIFT_BY_TAG_CM.get(placement.tag, 50.0)
+        z_lift = _actor_z_lift_cm_for_placement(placement)
     x_cm, y_cm, z_cm = _world_from_scene(p0, room, spec, actor_z_lift_cm=z_lift)
     actor = game.unreal_service.spawn_actor(
         uclass=bp,
@@ -208,7 +224,7 @@ def _spawn_animal(game, placement, room, spec):
     #     Previously 0.3 gave 1.4m tall dogs (way too big).
     #   Static Hunyuan meshes: 1.0 (Interchange glTF converts meters->cm,
     #     so a 1.7m sheep mesh becomes 170 UE-cm at scale 1.0).
-    scale = 0.15 if placement.is_animated else 1.0
+    scale = _actor_scale_for_placement(placement)
     actor.SetActorScale3D(NewScale3D={"X": scale, "Y": scale, "Z": scale})
     if not placement.is_animated:
         # Static Hunyuan meshes are Y-up (Flux side-profile); need Roll=-90
@@ -231,7 +247,12 @@ def _spawn_animal(game, placement, room, spec):
 def _step_animated(actor, placement, frame_i, room, spec):
     p = placement.trajectory_m[frame_i]
     y_world = float(placement.yaw_deg[frame_i])
-    x_cm, y_cm, z_cm = _world_from_scene(p, room, spec, actor_z_lift_cm=_ANIMATED_Z_LIFT_CM)
+    x_cm, y_cm, z_cm = _world_from_scene(
+        p,
+        room,
+        spec,
+        actor_z_lift_cm=_actor_z_lift_cm_for_placement(placement),
+    )
     actor.K2_SetActorLocationAndRotation(
         NewLocation={"X": x_cm, "Y": y_cm, "Z": z_cm},
         NewRotation={"Roll": 0.0, "Pitch": 0.0, "Yaw": _yaw_world_to_ue(y_world, room)},

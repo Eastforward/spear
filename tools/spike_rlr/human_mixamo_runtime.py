@@ -36,6 +36,8 @@ def _copy(src: Path, dst: Path) -> None:
     if not src.exists():
         raise FileNotFoundError(src)
     dst.parent.mkdir(parents=True, exist_ok=True)
+    if src.resolve() == dst.resolve():
+        return
     shutil.copy2(src, dst)
 
 
@@ -50,6 +52,9 @@ def prepare_human_mixamo_runtime(
     walking_glb: Path | str,
     idle_glb: Path | str,
     mixamo_root: Path | str | None = None,
+    recommended_actor_scale: float = 1.0,
+    recommended_actor_z_lift_cm: float = 0.0,
+    recommended_walking_forward_yaw_offset_deg: float = 90.0,
 ) -> Path:
     """Copy verified Mixamo-skinned GLBs into an approved human tag directory.
 
@@ -74,6 +79,11 @@ def prepare_human_mixamo_runtime(
         "schema_version": RUNTIME_SCHEMA_VERSION,
         "runtime_type": RUNTIME_TYPE,
         "default_animation": "Walking",
+        "recommended_actor_scale": float(recommended_actor_scale),
+        "recommended_actor_z_lift_cm": float(recommended_actor_z_lift_cm),
+        "recommended_walking_forward_yaw_offset_deg": float(
+            recommended_walking_forward_yaw_offset_deg
+        ),
         "legacy_runtime": _repo_path(walking_dst),
         "animations": {
             "Standing_Idle": {

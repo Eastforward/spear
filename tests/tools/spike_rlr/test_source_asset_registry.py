@@ -17,7 +17,9 @@ from source_asset_registry import (  # noqa: E402
 
 
 def _write_asset_fixture(root: Path, asset: dict, *, status: str) -> None:
-    asset_path = root / "dog" / "fixture" / asset["asset_id"] / "asset.json"
+    category = asset.get("category", "dog")
+    family = asset.get("family", "fixture")
+    asset_path = root / category / family / asset["asset_id"] / "asset.json"
     asset_path.parent.mkdir(parents=True)
     asset["review"] = {
         "overall_status": status,
@@ -38,7 +40,7 @@ def _write_asset_fixture(root: Path, asset: dict, *, status: str) -> None:
             "asset_class": asset["asset_class"],
             "category": asset["category"],
             "family": asset["family"],
-            "path": "dog/fixture/%s/asset.json" % asset["asset_id"],
+            "path": f"{category}/{family}/{asset['asset_id']}/asset.json",
             "overall_status": status,
         }],
     }), encoding="utf-8")
@@ -145,3 +147,39 @@ def test_unapproved_registry_asset_is_rejected(tmp_path):
             {"asset_id": "dog_pending_0001"},
             registry_root=tmp_path,
         )
+
+
+def test_resolve_source_pool_entry_carries_runtime_render_hints(tmp_path):
+    asset = {
+        "schema_version": "source_asset_v1",
+        "asset_id": "human_fixture_0001",
+        "legacy_tag": "human_fixture_v1",
+        "asset_class": "human",
+        "category": "human",
+        "family": "fixture",
+        "variant": {"variant_index": 1},
+        "generation": {"text_description": "fixture human"},
+        "appearance": {"dominant_colors": []},
+        "visual_assets": {},
+        "rig": {
+            "skeleton_family": "mixamo_humanoid",
+            "animations": ["Standing_Idle", "Walking"],
+            "loop_required": True,
+            "walking_forward_yaw_offset_deg": 90.0,
+            "actor_scale": 1.0,
+            "actor_z_lift_cm": 0.0,
+        },
+        "audio": {"default_lookup": "speech", "allowed_lookups": ["speech"]},
+    }
+    _write_asset_fixture(tmp_path, asset, status="approved")
+
+    resolved = resolve_source_pool_entry(
+        {"asset_id": "human_fixture_0001"},
+        registry_root=tmp_path,
+    )
+
+    assert resolved["tag"] == "human_fixture_v1"
+    assert resolved["audio_lookup"] == "speech"
+    assert resolved["actor_scale"] == 1.0
+    assert resolved["actor_z_lift_cm"] == 0.0
+    assert resolved["walking_forward_yaw_offset_deg"] == 90.0

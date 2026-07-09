@@ -73,6 +73,9 @@ def _write_approved_human_candidate(approved_dir: Path, tag: str) -> Path:
         "schema_version": "human_mixamo_runtime_v1",
         "runtime_type": "mixamo_humanoid_nearest_skin_transfer",
         "default_animation": "Walking",
+        "recommended_actor_scale": 1.0,
+        "recommended_actor_z_lift_cm": 0.0,
+        "recommended_walking_forward_yaw_offset_deg": 90.0,
         "legacy_runtime": str(tag_dir / "mesh_runtime_walking.glb"),
         "animations": {
             "Walking": {
@@ -201,6 +204,9 @@ def test_promote_human_source_asset_records_mixamo_animation_assets(tmp_path):
     )
     assert asset["rig"]["runtime_type"] == "mixamo_humanoid_nearest_skin_transfer"
     assert asset["rig"]["default_animation"] == "Walking"
+    assert asset["rig"]["actor_scale"] == 1.0
+    assert asset["rig"]["actor_z_lift_cm"] == 0.0
+    assert asset["rig"]["walking_forward_yaw_offset_deg"] == 90.0
     assert set(asset["rig"]["animation_assets"]) == {"Standing_Idle", "Walking"}
     assert asset["rig"]["animation_assets"]["Walking"]["motion_style"] == "walking"
     assert asset["rig"]["animation_assets"]["Standing_Idle"]["loop"] is True

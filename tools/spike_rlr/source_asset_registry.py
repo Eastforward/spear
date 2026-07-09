@@ -158,6 +158,14 @@ def resolve_source_pool_entry(
     resolved["asset_class"] = resolved.get("asset_class") or asset.get("asset_class")
     resolved["category"] = resolved.get("category") or asset.get("category")
     resolved["family"] = resolved.get("family") or asset.get("family")
+    rig = asset.get("rig") or {}
+    for key in (
+        "actor_scale",
+        "actor_z_lift_cm",
+        "walking_forward_yaw_offset_deg",
+    ):
+        if key not in resolved and key in rig:
+            resolved[key] = rig[key]
     return resolved
 
 

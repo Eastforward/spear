@@ -185,6 +185,16 @@ def _apply_runtime_metadata(asset: dict[str, Any], tag_dir: Path) -> None:
     rig = asset.setdefault("rig", {})
     rig["runtime_type"] = runtime.get("runtime_type")
     rig["default_animation"] = runtime.get("default_animation")
+    if runtime.get("recommended_actor_scale") is not None:
+        rig["actor_scale"] = float(runtime["recommended_actor_scale"])
+    if runtime.get("recommended_actor_z_lift_cm") is not None:
+        rig["actor_z_lift_cm"] = float(runtime["recommended_actor_z_lift_cm"])
+    if runtime.get("recommended_walking_forward_yaw_offset_deg") is not None:
+        rig["walking_forward_yaw_offset_deg"] = float(
+            runtime["recommended_walking_forward_yaw_offset_deg"]
+        )
+    else:
+        rig.setdefault("walking_forward_yaw_offset_deg", 0.0)
     rig["animation_assets"] = animations
 
 

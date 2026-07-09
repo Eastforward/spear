@@ -43,8 +43,35 @@ def test_prepare_human_mixamo_runtime_writes_legacy_and_per_animation_files(tmp_
     assert metadata["schema_version"] == "human_mixamo_runtime_v1"
     assert metadata["runtime_type"] == "mixamo_humanoid_nearest_skin_transfer"
     assert metadata["default_animation"] == "Walking"
+    assert metadata["recommended_actor_scale"] == 1.0
+    assert metadata["recommended_actor_z_lift_cm"] == 0.0
+    assert metadata["recommended_walking_forward_yaw_offset_deg"] == 90.0
     assert metadata["legacy_runtime"] == metadata["animations"]["Walking"]["glb_path"]
     assert metadata["animations"]["Walking"]["role"] == "walk"
     assert metadata["animations"]["Walking"]["loop"] is True
     assert metadata["animations"]["Standing_Idle"]["role"] == "idle"
     assert metadata["animations"]["Standing_Idle"]["motion_style"] == "stationary"
+
+
+def test_prepare_human_mixamo_runtime_is_idempotent_with_existing_runtime_files(tmp_path):
+    tag_dir = tmp_path / "approved" / "human_male_blue_hoodie_v1"
+    tag_dir.mkdir(parents=True)
+    walking = tag_dir / "mesh_runtime_walking.glb"
+    idle = tag_dir / "mesh_runtime_standing_idle.glb"
+    walking.write_bytes(b"walking rigged glb")
+    idle.write_bytes(b"idle rigged glb")
+    mixamo_root = tmp_path / "mixamo"
+    _write_fbx(mixamo_root / "raw" / "Walking.fbx")
+    _write_fbx(mixamo_root / "raw" / "Standing_Idle.fbx")
+
+    metadata_path = prepare_human_mixamo_runtime(
+        tag_dir,
+        walking_glb=walking,
+        idle_glb=idle,
+        mixamo_root=mixamo_root,
+    )
+
+    metadata = json.loads(metadata_path.read_text())
+    assert metadata["recommended_actor_scale"] == 1.0
+    assert metadata["recommended_walking_forward_yaw_offset_deg"] == 90.0
+    assert (tag_dir / "mesh_runtime.glb").read_bytes() == b"walking rigged glb"
