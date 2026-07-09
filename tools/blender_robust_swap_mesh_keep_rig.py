@@ -17,13 +17,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import struct
 import sys
 
 import bpy
 import numpy as np
-from mathutils import Quaternion, Vector
+from mathutils import Matrix, Quaternion, Vector
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -117,6 +118,8 @@ def parse_argv():
                    help="uniform preserves target proportions; nonuniform matches the rig bbox per axis.")
     p.add_argument("--flip-x", action="store_true",
                    help="Mirror the target along X before aligning.")
+    p.add_argument("--target-rotate-z-deg", type=float, default=0.0,
+                   help="Rotate the target mesh around Blender Z before bbox alignment and weight transfer.")
     p.add_argument("--max-distance-ratio", type=float, default=0.35,
                    help="Reject source matches farther than this fraction of the source bbox diagonal. "
                         "Use <=0 to disable distance rejection.")
@@ -252,6 +255,16 @@ def apply_transforms(obj):
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+
+
+def rotate_target_z_degrees(obj, degrees):
+    if abs(float(degrees)) <= 1e-9:
+        return
+    rotation = Matrix.Rotation(math.radians(float(degrees)), 4, "Z")
+    obj.data.transform(rotation)
+    obj.data.update()
+    bpy.context.view_layer.update()
+    print(f"[target-rotate] rotated target around Z by {float(degrees):.3f} deg", flush=True)
 
 
 def recompute_normals(obj):
@@ -829,6 +842,7 @@ def main():
         apply_transforms(tgt_mesh)
         recompute_normals(tgt_mesh)
         print("[flip-x] mirrored target along X", flush=True)
+    rotate_target_z_degrees(tgt_mesh, args.target_rotate_z_deg)
 
     if args.auto_align == "yes":
         align_bbox(tgt_mesh, src_mesh, args.align_mode)

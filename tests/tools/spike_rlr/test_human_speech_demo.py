@@ -47,7 +47,7 @@ def test_visible_human_speech_demo_uses_registered_human_and_real_speech(tmp_pat
         speech_root=speech_root,
     )
 
-    src = _source(spec, "human_male_blue_hoodie_v1")
+    src = _source(spec, "human_male_blue_hoodie_v2")
     traj = np.asarray(src["trajectory_m"], dtype=float)
     report = verify_constraints([
         constraint_front_of_camera(src["tag"], traj, spec["mic"]["pos_m"], spec["mic"]["yaw_deg"]),
@@ -64,7 +64,7 @@ def test_visible_human_speech_demo_uses_registered_human_and_real_speech(tmp_pat
 
     assert report["passed"], report
     assert bool(vis["in_fov"].all())
-    assert src["asset_id"] == "human_male_blue_hoodie_0001"
+    assert src["asset_id"] == "human_male_blue_hoodie_0002"
     assert src["asset_class"] == "human"
     assert src["category"] == "human"
     assert src["audio_lookup"] == "speech"
@@ -96,6 +96,7 @@ def test_visible_moving_human_speech_demo_walks_left_to_right_with_real_speech(t
         constraint_front_of_camera,
         constraint_in_fov_min_frames,
         constraint_left_to_right,
+        listener_local_xy,
         verify_constraints,
     )
     from scene_two_dogs_apartment import compose_two_dog_scene_apartment
@@ -121,7 +122,7 @@ def test_visible_moving_human_speech_demo_walks_left_to_right_with_real_speech(t
         speech_root=speech_root,
     )
 
-    src = _source(spec, "human_male_blue_hoodie_v1")
+    src = _source(spec, "human_male_blue_hoodie_v2")
     traj = np.asarray(src["trajectory_m"], dtype=float)
     report = verify_constraints([
         constraint_front_of_camera(src["tag"], traj, spec["mic"]["pos_m"], spec["mic"]["yaw_deg"]),
@@ -130,7 +131,7 @@ def test_visible_moving_human_speech_demo_walks_left_to_right_with_real_speech(t
     ])
 
     assert report["passed"], report
-    assert src["asset_id"] == "human_male_blue_hoodie_0001"
+    assert src["asset_id"] == "human_male_blue_hoodie_0002"
     assert src["audio_lookup"] == "speech"
     assert src["audio_path"] == str(wav)
     assert src["wanted_anim"] == "Walking"
@@ -140,6 +141,11 @@ def test_visible_moving_human_speech_demo_walks_left_to_right_with_real_speech(t
     assert src["actor_z_lift_cm"] == 14.0
     assert "facing_yaw_deg" not in src
     assert spec["event_constraint_report"]["passed"]
+    assert spec["event_controls"][0]["listener_local_start_m"] == [2.0, 1.9]
+    assert spec["event_controls"][0]["listener_local_end_m"] == [2.0, -1.9]
+    local_xy = listener_local_xy(traj, spec["mic"]["pos_m"], spec["mic"]["yaw_deg"])
+    assert local_xy[0, 1] > 1.8
+    assert local_xy[-1, 1] < -1.8
 
     scene = compose_two_dog_scene_apartment(out_spec)
     placement = scene.animals[0]
@@ -153,7 +159,7 @@ def test_human_visual_marker_falls_back_when_ue_bounds_are_implausible():
     from run_render_pass_apartment import _sanitize_actor_visual_center_ssot_m
 
     placement = AnimalPlacement(
-        tag="human_male_blue_hoodie_v1",
+        tag="human_male_blue_hoodie_v2",
         is_animated=True,
         trajectory_m=np.asarray([[-1.8, 0.6, 1.55]], dtype=float),
         yaw_deg=np.asarray([0.0], dtype=float),

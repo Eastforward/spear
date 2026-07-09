@@ -42,12 +42,28 @@
       "overall_status": "approved"
     },
     {
+      "asset_id": "human_female_red_jacket_0002",
+      "asset_class": "human",
+      "category": "human",
+      "family": "female_red_jacket",
+      "path": "human/female_red_jacket/human_female_red_jacket_0002/asset.json",
+      "overall_status": "approved"
+    },
+    {
       "asset_id": "human_male_blue_hoodie_0001",
       "asset_class": "human",
       "category": "human",
       "family": "male_blue_hoodie",
       "path": "human/male_blue_hoodie/human_male_blue_hoodie_0001/asset.json",
       "overall_status": "rejected"
+    },
+    {
+      "asset_id": "human_male_blue_hoodie_0002",
+      "asset_class": "human",
+      "category": "human",
+      "family": "male_blue_hoodie",
+      "path": "human/male_blue_hoodie/human_male_blue_hoodie_0002/asset.json",
+      "overall_status": "approved"
     }
   ]
 }

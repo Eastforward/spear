@@ -619,7 +619,7 @@ def compose_visible_human_speech_demo(
     base_spec_path: str | Path = DEFAULT_BASE_SPEC,
     out_spec_path: str | Path | None = None,
     *,
-    human_asset_id: str = "human_male_blue_hoodie_0001",
+    human_asset_id: str = "human_male_blue_hoodie_0002",
     speech_root: str | Path | None = None,
 ) -> dict:
     """One visible stationary human speaker using real speech audio."""
@@ -719,7 +719,7 @@ def compose_visible_moving_human_speech_demo(
     base_spec_path: str | Path = DEFAULT_BASE_SPEC,
     out_spec_path: str | Path | None = None,
     *,
-    human_asset_id: str = "human_male_blue_hoodie_0001",
+    human_asset_id: str = "human_male_blue_hoodie_0002",
     speech_root: str | Path | None = None,
 ) -> dict:
     """One visible human speaker walking left-to-right in front of camera."""
@@ -751,15 +751,15 @@ def compose_visible_moving_human_speech_demo(
     start = _listener_local_point(
         mic,
         yaw,
-        forward_m=1.8,
-        left_m=1.2,
+        forward_m=2.0,
+        left_m=1.9,
         z_m=speech_z_m,
     )
     end = _listener_local_point(
         mic,
         yaw,
-        forward_m=1.8,
-        left_m=-1.2,
+        forward_m=2.0,
+        left_m=-1.9,
         z_m=speech_z_m,
     )
     human_traj = np.linspace(start, end, n_frames, dtype=np.float64)
@@ -811,8 +811,8 @@ def compose_visible_moving_human_speech_demo(
                 "left_to_right",
                 "full_static_aabb_center",
             ],
-            "listener_local_start_m": [1.8, 1.2],
-            "listener_local_end_m": [1.8, -1.2],
+            "listener_local_start_m": [2.0, 1.9],
+            "listener_local_end_m": [2.0, -1.9],
         }
     ]
     spec["sources"] = [

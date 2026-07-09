@@ -1,0 +1,148 @@
+{
+  "schema_version": "source_asset_v1",
+  "asset_id": "human_male_blue_hoodie_0002",
+  "legacy_tag": "human_male_blue_hoodie_v2",
+  "asset_class": "human",
+  "category": "human",
+  "family": "male_blue_hoodie",
+  "variant": {
+    "variant_index": 2,
+    "size": null,
+    "coat_type": null,
+    "intended_color_label": "male blue hoodie"
+  },
+  "generation": {
+    "source_pipeline": "flux+hunyuan3d",
+    "model": "flux_dev+hunyuan3d-2.1",
+    "seed": 7021,
+    "positive_prompt": "photorealistic synthetic adult man in strict T-pose, arms straight sideways, blue hoodie, dark jeans, gray sneakers, front view, white background, realistic face, not cartoon",
+    "negative_prompt": null,
+    "text_description": "male blue hoodie human",
+    "created_at": "2026-07-09T12:45:23.488568+00:00"
+  },
+  "appearance": {
+    "dominant_colors": [
+      {
+        "role": "coat_primary",
+        "hex": "#3A506C",
+        "rgb": [
+          58,
+          80,
+          108
+        ],
+        "lab": [
+          33.4,
+          -0.2,
+          -18.8
+        ],
+        "coverage": 0.464,
+        "source": "measured_from_texture"
+      },
+      {
+        "role": "coat_secondary",
+        "hex": "#273548",
+        "rgb": [
+          39,
+          53,
+          72
+        ],
+        "lab": [
+          21.7,
+          0.1,
+          -13.6
+        ],
+        "coverage": 0.346,
+        "source": "measured_from_texture"
+      },
+      {
+        "role": "coat_tertiary",
+        "hex": "#6F6F78",
+        "rgb": [
+          111,
+          111,
+          120
+        ],
+        "lab": [
+          47.1,
+          1.9,
+          -5.0
+        ],
+        "coverage": 0.19,
+        "source": "measured_from_texture"
+      }
+    ],
+    "color_tags": [
+      "blue",
+      "gray"
+    ],
+    "lightness": 0.32,
+    "saturation": 0.144
+  },
+  "visual_assets": {
+    "reference_image": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v2/reference.png",
+    "mesh_original": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v2/mesh.obj",
+    "mesh_oriented": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v2/mesh_oriented.glb",
+    "mesh_runtime": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v2/mesh_runtime.glb",
+    "mesh_runtime_walking": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v2/mesh_runtime_walking.glb",
+    "mesh_runtime_standing_idle": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v2/mesh_runtime_standing_idle.glb",
+    "diffuse": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v2/hy3d_diffuse.jpg",
+    "roughness": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v2/hy3d_roughness.jpg",
+    "metallic": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v2/hy3d_metallic.jpg",
+    "review_image": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v2/direction_preview_review.png",
+    "direction_json": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v2/direction.json",
+    "runtime_metadata": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v2/mesh_runtime.json"
+  },
+  "rig": {
+    "skeleton_family": "mixamo_humanoid",
+    "animations": [
+      "Standing_Idle",
+      "Walking"
+    ],
+    "loop_required": true,
+    "runtime_type": "mixamo_humanoid_nearest_skin_transfer",
+    "default_animation": "Walking",
+    "actor_scale": 1.0,
+    "actor_z_lift_cm": 14.0,
+    "walking_forward_yaw_offset_deg": 90.0,
+    "animation_assets": {
+      "Standing_Idle": {
+        "role": "idle",
+        "motion_style": "stationary",
+        "loop": true,
+        "glb_path": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v2/mesh_runtime_standing_idle.glb",
+        "source_glb": "tmp/human_mixamo_runtime_v2/human_male_blue_hoodie_v2_standing_idle_nearest_zm90_fixed.glb",
+        "source_fbx": "raw/Standing_Idle.fbx",
+        "sha256": "20b90e4075676b6f1486232c7b8ed1bf7ccd376dbe782713a0ff1313fe4200e3"
+      },
+      "Walking": {
+        "role": "walk",
+        "motion_style": "walking",
+        "loop": true,
+        "glb_path": "tmp/hy3d_batch/approved/human_male_blue_hoodie_v2/mesh_runtime_walking.glb",
+        "source_glb": "tmp/human_mixamo_runtime_v2/human_male_blue_hoodie_v2_walking_nearest_zm90_fixed.glb",
+        "source_fbx": "raw/Walking.fbx",
+        "sha256": "d937766607b2db0753c365df7825129523824efb8f262168d39c2940e5cba7f4"
+      }
+    }
+  },
+  "audio": {
+    "default_lookup": "speech",
+    "allowed_lookups": [
+      "speech",
+      "talking",
+      "conversation",
+      "silent"
+    ]
+  },
+  "review": {
+    "overall_status": "approved",
+    "appearance_status": "approved",
+    "direction_status": "approved",
+    "texture_status": "approved",
+    "rig_status": "approved",
+    "audio_mapping_status": "approved",
+    "approved_by": "jzy",
+    "approved_at": "2026-07-09T12:52:32.105709+00:00",
+    "notes": "human asset: animal auto-orient skipped; use review UI manual rotation"
+  }
+}

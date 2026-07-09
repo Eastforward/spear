@@ -1,0 +1,148 @@
+{
+  "schema_version": "source_asset_v1",
+  "asset_id": "human_female_red_jacket_0002",
+  "legacy_tag": "human_female_red_jacket_v2",
+  "asset_class": "human",
+  "category": "human",
+  "family": "female_red_jacket",
+  "variant": {
+    "variant_index": 2,
+    "size": null,
+    "coat_type": null,
+    "intended_color_label": "female red jacket"
+  },
+  "generation": {
+    "source_pipeline": "flux+hunyuan3d",
+    "model": "flux_dev+hunyuan3d-2.1",
+    "seed": 7022,
+    "positive_prompt": "photorealistic synthetic adult woman in strict T-pose, arms straight sideways, red jacket, white shirt, dark jeans, gray sneakers, front view, white background, realistic face, not cartoon",
+    "negative_prompt": null,
+    "text_description": "female red jacket human",
+    "created_at": "2026-07-09T12:45:23.516727+00:00"
+  },
+  "appearance": {
+    "dominant_colors": [
+      {
+        "role": "coat_primary",
+        "hex": "#661124",
+        "rgb": [
+          102,
+          17,
+          36
+        ],
+        "lab": [
+          21.4,
+          37.8,
+          11.7
+        ],
+        "coverage": 0.458,
+        "source": "measured_from_texture"
+      },
+      {
+        "role": "coat_secondary",
+        "hex": "#544B57",
+        "rgb": [
+          84,
+          75,
+          87
+        ],
+        "lab": [
+          33.1,
+          6.3,
+          -5.7
+        ],
+        "coverage": 0.281,
+        "source": "measured_from_texture"
+      },
+      {
+        "role": "coat_tertiary",
+        "hex": "#B1A09C",
+        "rgb": [
+          177,
+          160,
+          156
+        ],
+        "lab": [
+          67.2,
+          5.5,
+          4.3
+        ],
+        "coverage": 0.261,
+        "source": "measured_from_texture"
+      }
+    ],
+    "color_tags": [
+      "red",
+      "gray"
+    ],
+    "lightness": 0.366,
+    "saturation": 0.223
+  },
+  "visual_assets": {
+    "reference_image": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/reference.png",
+    "mesh_original": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh.obj",
+    "mesh_oriented": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh_oriented.glb",
+    "mesh_runtime": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh_runtime.glb",
+    "mesh_runtime_walking": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh_runtime_walking.glb",
+    "mesh_runtime_standing_idle": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh_runtime_standing_idle.glb",
+    "diffuse": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/hy3d_diffuse.jpg",
+    "roughness": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/hy3d_roughness.jpg",
+    "metallic": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/hy3d_metallic.jpg",
+    "review_image": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/direction_preview_review.png",
+    "direction_json": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/direction.json",
+    "runtime_metadata": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh_runtime.json"
+  },
+  "rig": {
+    "skeleton_family": "mixamo_humanoid",
+    "animations": [
+      "Standing_Idle",
+      "Walking"
+    ],
+    "loop_required": true,
+    "runtime_type": "mixamo_humanoid_nearest_skin_transfer",
+    "default_animation": "Walking",
+    "actor_scale": 1.0,
+    "actor_z_lift_cm": 14.0,
+    "walking_forward_yaw_offset_deg": 90.0,
+    "animation_assets": {
+      "Standing_Idle": {
+        "role": "idle",
+        "motion_style": "stationary",
+        "loop": true,
+        "glb_path": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh_runtime_standing_idle.glb",
+        "source_glb": "tmp/human_mixamo_runtime_v2/human_female_red_jacket_v2_standing_idle_nearest_zm90_fixed.glb",
+        "source_fbx": "raw/Standing_Idle.fbx",
+        "sha256": "b1778495e4d215db22f38a9cee6483e58caefc29fddacf4b5d6bfacbe397a299"
+      },
+      "Walking": {
+        "role": "walk",
+        "motion_style": "walking",
+        "loop": true,
+        "glb_path": "tmp/hy3d_batch/approved/human_female_red_jacket_v2/mesh_runtime_walking.glb",
+        "source_glb": "tmp/human_mixamo_runtime_v2/human_female_red_jacket_v2_walking_nearest_zm90_fixed.glb",
+        "source_fbx": "raw/Walking.fbx",
+        "sha256": "865e630ff4ff166db2605780b106064796c086aca8658f85461efd96b945f709"
+      }
+    }
+  },
+  "audio": {
+    "default_lookup": "speech",
+    "allowed_lookups": [
+      "speech",
+      "talking",
+      "conversation",
+      "silent"
+    ]
+  },
+  "review": {
+    "overall_status": "approved",
+    "appearance_status": "approved",
+    "direction_status": "approved",
+    "texture_status": "approved",
+    "rig_status": "approved",
+    "audio_mapping_status": "approved",
+    "approved_by": "jzy",
+    "approved_at": "2026-07-09T12:52:07.401996+00:00",
+    "notes": "human asset: animal auto-orient skipped; use review UI manual rotation"
+  }
+}
