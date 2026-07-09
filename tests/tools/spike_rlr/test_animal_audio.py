@@ -8,7 +8,7 @@ sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
 def test_dog_tags_resolve_to_real_dog_audio():
     from animal_audio import resolve_animal_audio_path
 
-    path = Path(resolve_animal_audio_path("dog_husky", "dog_bark"))
+    path = Path(resolve_animal_audio_path("dog_beagle_v2", "dog_bark"))
 
     assert path.exists()
     assert "dog" in path.name.lower() or "bark" in path.name.lower()

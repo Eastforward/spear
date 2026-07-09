@@ -1,6 +1,6 @@
 {
   "spec_version": "apartment_v1",
-  "description": "Apartment shell variant, Plan 1 hand-tuned single-clip demo. Two dogs (golden bark + husky piano) in apartment_0000 living room. Subset-furniture mode (core + decoration; misc excluded). 5-second clip, 15 fps, 75 frames. Mic + camera glued at same 6DoF; camera FOV 90 deg.",
+  "description": "Apartment shell variant, Plan 1 hand-tuned single-clip demo. Two dogs (golden bark + beagle bark) in apartment_0000 living room. Subset-furniture mode (core + decoration; misc excluded). 5-second clip, 15 fps, 75 frames. Mic + camera glued at same 6DoF; camera FOV 90 deg.",
   "coordinate_frame": {
     "system": "right-handed Y-up (meters). Origin = APARTMENT_MIC_ORIGIN_UE_CM converted to SSOT (see tools/spike_rlr/gen_mesh_apartment.py::ue_to_ssot).",
     "notes": "UE side loads apartment_0000 map (which has its own arbitrary origin). SPEAR conversion handled by tools/gpurir_scenes/run_render_pass.py::_world_from_scene (room='apartment'). Habitat/RLR side ingests SSOT + apartment_shell_map.json + apartment_v1_mesh.glb."
@@ -48,14 +48,14 @@
       "notes": "Golden follows an obstacle-aware path through the living-room side of the apartment. Planner inserts small detours if needed."
     },
     {
-      "tag": "dog_husky",
-      "audio_lookup": "wolf_howl",
+      "tag": "dog_beagle_v2",
+      "audio_lookup": "dog_bark",
       "kind": "moving",
       "start_pos_m": [2.68, -3.56, 0.45],
       "end_pos_m":   [4.45, -3.49, 0.45],
       "motion": "linear_uniform",
       "wanted_anim": "Walking",
-      "notes": "Husky follows an obstacle-aware path in the lower/right indoor region. Planner (A*+Chaikin) curves around inflated obstacles automatically."
+      "notes": "Beagle v2 follows an obstacle-aware path in the lower/right indoor region. Planner (A*+Chaikin) curves around inflated obstacles automatically."
     }
   ]
 }

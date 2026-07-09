@@ -4,12 +4,14 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 import sys
-sys.path.insert(0, "/data/jzy/code/SPEAR/tools")
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "tools"))
 
 from gpurir_scenes.furniture_map import (
     FurnitureBBox,
@@ -106,8 +108,8 @@ from gpurir_scenes.scene_spec import (
 )
 
 
-def _static_husky_spec_at(x: float, y: float) -> SceneSpec:
-    """Build a SceneSpec with dog_husky standing still at (x, y) for all 75 frames."""
+def _static_beagle_spec_at(x: float, y: float) -> SceneSpec:
+    """Build a SceneSpec with dog_beagle_v2 standing still at (x, y) for all 75 frames."""
     traj = np.tile(np.array([x, y, SOURCE_HEIGHT_M]), (75, 1))
     yaw = np.zeros(75)
     return SceneSpec(
@@ -116,7 +118,7 @@ def _static_husky_spec_at(x: float, y: float) -> SceneSpec:
         t60_s=T60_S,
         mic_pos_m=MIC_POS_M,
         animals=[AnimalPlacement(
-            tag="dog_husky", is_animated=True,
+            tag="dog_beagle_v2", is_animated=True,
             trajectory_m=traj, yaw_deg=yaw,
         )],
     )
@@ -128,14 +130,14 @@ def test_check_no_clipping_with_furniture_rejects_inside_bbox():
         bboxes = load_apartment_furniture(json_path=tf.name)
     os.unlink(tf.name)
     # (3.8, 3.0) is inside the fake sofa bbox
-    spec = _static_husky_spec_at(3.8, 3.0)
+    spec = _static_beagle_spec_at(3.8, 3.0)
     with pytest.raises(AssertionError, match="clips furniture"):
         scene_spec.check_no_clipping(spec, furniture_bboxes=bboxes)
 
 
 def test_check_no_clipping_no_furniture_backward_compat():
     """Not passing furniture_bboxes -> old behaviour unchanged (no furniture check)."""
-    spec = _static_husky_spec_at(2.6, 2.2)  # at mic center, safely away from walls
+    spec = _static_beagle_spec_at(2.6, 2.2)  # at mic center, safely away from walls
     scene_spec.check_no_clipping(spec)  # no exception
 
 
@@ -144,7 +146,7 @@ def test_check_no_clipping_with_furniture_passes_when_safe():
         _write_fake_json(tf.name)
         bboxes = load_apartment_furniture(json_path=tf.name)
     os.unlink(tf.name)
-    spec = _static_husky_spec_at(1.5, 1.5)  # far from fake sofa
+    spec = _static_beagle_spec_at(1.5, 1.5)  # far from fake sofa
     scene_spec.check_no_clipping(spec, furniture_bboxes=bboxes)  # no exception
 
 

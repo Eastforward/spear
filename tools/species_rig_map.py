@@ -111,12 +111,9 @@ ANIMATED_RIG_MAP = {
     # I initially saw were the persian's long tail fur, not corrupt geometry.
     "cat_persian":     {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("cat_persian")},
     "cat_tabby":       {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("cat_tabby")},
-    "cat_british_shorthair": {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("cat_british_shorthair")},
     "cat_british_shorthair_v2": {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("cat_british_shorthair_v2")},
     "chipmunk":        {"rig": CAT_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("chipmunk")},
     "dog_golden":      {"rig": DOG_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("dog_golden")},
-    "dog_husky":       {"rig": DOG_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("dog_husky")},
-    "dog_beagle":      {"rig": DOG_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("dog_beagle")},
     "dog_beagle_v2":   {"rig": DOG_RIG, "walking_forward_yaw_offset_deg": QUATERNIUS_FORWARD_YAW_OFFSET_DEG, **_approved_or_batch_mesh("dog_beagle_v2")},
 }
 

@@ -12,8 +12,9 @@ def test_new_review_tags_include_second_beagle_and_british_shorthair():
 
     tags = {r["tag"] for r in h.NEW_RIGS}
 
-    assert "dog_beagle_v2" in tags
-    assert "cat_british_shorthair_v2" in tags
+    assert tags == {"dog_beagle_v2", "cat_british_shorthair_v2"}
+    assert "dog_beagle" not in tags
+    assert "cat_british_shorthair" not in tags
 
 
 def test_review_instructions_describe_v2_rotation_flow(capsys):

@@ -43,7 +43,7 @@ N_FRAMES = 75
 FPS = 15
 WALL_MARGIN_M = 0.5
 MIC_MARGIN_M = 1.0
-ANIMAL_MIN_SEP_M = 1.5  # conservative dog-vs-dog center distance
+ANIMAL_MIN_SEP_M = 1.0  # center separation; mild animal overlap is acceptable
 WALL_CLEARANCE_M = 0.20
 ANIMAL_CLEARANCE_M = 0.15
 SOURCE_HEIGHT_M = 0.45  # dog-mouth-ish; audio source height
@@ -68,9 +68,10 @@ EPS_M = 1e-6
 ANIMAL_FOOTPRINT_RADIUS_M = {
     "cat_persian": 0.30,
     "cat_tabby": 0.30,
+    "cat_british_shorthair_v2": 0.30,
     "chipmunk": 0.22,
     "dog_golden": 0.45,
-    "dog_husky": 0.45,
+    "dog_beagle_v2": 0.38,
     "goat": 0.45,
     "sheep": 0.50,
     "pig": 0.45,

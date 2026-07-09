@@ -4,7 +4,8 @@ We import habitat_sim only to reach the RLR audio bindings. We do NOT
 render anything from Habitat here — the video comes from A group's UE
 render pass. Per-frame we:
 
-  1. Move the audio source (dog_husky or dog_golden) to its current xyz
+  1. Move each audio source (for example dog_golden or dog_beagle_v2) to
+     its current xyz
   2. Call sim.get_sensor_observations()["audio"] to get the RIR (FOA 4ch)
   3. Convolve dry source audio with the RIR to get the wet contribution
      for that source at that frame's timestamp
@@ -115,11 +116,9 @@ def _load_scene_and_scene_two_dogs(spec_path=None):
     return compose_two_dog_scene_v2
 
 
-# Override map: for the spike we override some tags with hand-picked wavs
-# from OmniAudio so listeners can tell golden vs husky apart.
-# Special value "__pink_noise__" triggers synthesis of steady-state pink noise
-# (used for husky so the perceived amplitude/spectrum change during
-# occlusion is 100% due to RLR, not to the source content itself).
+# Override map: for review spikes we override registered tags with hand-picked
+# real animal clips. Synthetic sentinels are still supported when a spec asks
+# for them explicitly, but no production animal tag should silently map to one.
 _TAG_AUDIO_OVERRIDES = {
     # Golden: real dog bark (restored per user request)
     "dog_golden": "/data/datasets/omniaudio/train-data-az-360-large/Barking Aldi Dog_358.wav",
@@ -127,10 +126,6 @@ _TAG_AUDIO_OVERRIDES = {
     "dog_beagle_v2": "/data/datasets/omniaudio/train-data-az-360-large/Barking Aldi Dog_358.wav",
     # British shorthair review asset: local Omniloc cat purring clip.
     "cat_british_shorthair_v2": "/data/datasets/cy/omniloc/train/audio/cat purring/-A1eKkZVSRw_000070.mp3",
-    # Husky: synthesized C-major do-re-mi piano scale (1 note per ~0.6s).
-    # Rich HF harmonics so HRTF ILD is strong; discrete notes make it easy
-    # to hear the same note move around the head as husky detours.
-    "dog_husky":  "__piano_scale__",
 }
 
 

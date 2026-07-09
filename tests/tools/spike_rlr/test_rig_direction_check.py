@@ -29,10 +29,10 @@ def test_write_and_read_calibration_roundtrip(tmp_path, monkeypatch):
     assert got["algorithm_version"] == "rig_calib_v1"
 
     # Second write for a different tag preserves the first
-    write_rig_calibration_json("dog_husky", offset_deg=170.0,
+    write_rig_calibration_json("dog_beagle_v2", offset_deg=170.0,
                                 algorithm_version="rig_calib_v1")
     assert read_rig_calibration_json("dog_golden")["walking_forward_yaw_offset_deg"] == 180.0
-    assert read_rig_calibration_json("dog_husky")["walking_forward_yaw_offset_deg"] == 170.0
+    assert read_rig_calibration_json("dog_beagle_v2")["walking_forward_yaw_offset_deg"] == 170.0
 
 
 def test_yaw_difference_within_tolerance():

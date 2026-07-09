@@ -16,7 +16,7 @@ SPEC = REPO / "data" / "apartment_v1_spec.json"
 def test_compose_returns_two_animals():
     sc = compose_two_dog_scene_apartment(SPEC)
     tags = {a.tag for a in sc.animals}
-    assert tags == {"dog_golden", "dog_husky"}
+    assert tags == {"dog_golden", "dog_beagle_v2"}
 
 
 def test_trajectories_have_75_frames():
@@ -26,13 +26,13 @@ def test_trajectories_have_75_frames():
         assert len(a.yaw_deg) == 75
 
 
-def test_husky_traj_matches_spec_endpoints():
+def test_beagle_traj_matches_spec_endpoints():
     spec = json.loads(SPEC.read_text())
-    husky_spec = [s for s in spec["sources"] if s["tag"] == "dog_husky"][0]
+    beagle_spec = [s for s in spec["sources"] if s["tag"] == "dog_beagle_v2"][0]
     sc = compose_two_dog_scene_apartment(SPEC)
-    husky = [a for a in sc.animals if a.tag == "dog_husky"][0]
-    assert np.allclose(husky.trajectory_m[0], husky_spec["start_pos_m"], atol=1e-3)
-    assert np.allclose(husky.trajectory_m[-1], husky_spec["end_pos_m"], atol=1e-3)
+    beagle = [a for a in sc.animals if a.tag == "dog_beagle_v2"][0]
+    assert np.allclose(beagle.trajectory_m[0], beagle_spec["start_pos_m"], atol=1e-3)
+    assert np.allclose(beagle.trajectory_m[-1], beagle_spec["end_pos_m"], atol=1e-3)
 
 
 def test_golden_traj_matches_spec_endpoints():

@@ -34,7 +34,6 @@ from apartment_builtin_obstacles import apartment_builtin_visual_obstacles  # no
 def _style_for_tag(tag):
     styles = {
         "dog_golden": {"color": "#e08820", "label": "GOLDEN"},
-        "dog_husky": {"color": "#1a76c8", "label": "HUSKY"},
         "dog_beagle_v2": {"color": "#c05a2b", "label": "BEAGLE"},
         "cat_british_shorthair_v2": {
             "color": "#6b5fb5",
@@ -66,7 +65,7 @@ def _load_scene(spec_path=None):
     return compose_two_dog_scene_v2(spec_path)
 
 
-def _is_husky_occluded(pos, mic_pos, sofa_center, sofa_size):
+def _is_sofa_occluded(pos, mic_pos, sofa_center, sofa_size):
     """Check if line-of-sight from mic to pos is blocked by sofa AABB."""
     mic = np.array(mic_pos)
     tgt = np.array(pos)
@@ -147,9 +146,10 @@ def _render_frame_shoebox(frame_idx, scene, spec, tmp_dir):
         if a.tag == "dog_golden":
             color, label = '#e08820', 'GOLDEN'
         else:
-            occluded = _is_husky_occluded(pos, mic_pos, sc, ss)
-            color = '#909090' if occluded else '#1a76c8'
-            label = 'HUSKY' + (' (OCCLUDED)' if occluded else '')
+            style = _style_for_tag(a.tag)
+            occluded = _is_sofa_occluded(pos, mic_pos, sc, ss)
+            color = '#909090' if occluded else style["color"]
+            label = style["label"] + (' (OCCLUDED)' if occluded else '')
         ax.plot(pos[0], pos[1], 'o', markersize=14, color=color,
                 markeredgecolor='black', markeredgewidth=1)
         ax.text(pos[0] + 0.2, pos[1] + 0.15, label, fontsize=8,
@@ -161,12 +161,14 @@ def _render_frame_shoebox(frame_idx, scene, spec, tmp_dir):
         if len(trail) > 1:
             ax.plot(trail[:, 0], trail[:, 1], '-', color=color, alpha=0.4, lw=1)
 
-    # Line-of-sight from mic to husky
-    husky = next(a for a in scene.animals if a.tag == "dog_husky")
-    husky_pos = husky.trajectory_m[frame_idx]
-    occluded = _is_husky_occluded(husky_pos, mic_pos, sc, ss)
+    # Line-of-sight from mic to the first non-golden source.
+    highlighted = next((a for a in scene.animals if a.tag != "dog_golden"), None)
+    if highlighted is None:
+        highlighted = scene.animals[0]
+    highlighted_pos = highlighted.trajectory_m[frame_idx]
+    occluded = _is_sofa_occluded(highlighted_pos, mic_pos, sc, ss)
     los_color = '#d04040' if occluded else '#40b040'
-    ax.plot([mic_pos[0], husky_pos[0]], [mic_pos[1], husky_pos[1]],
+    ax.plot([mic_pos[0], highlighted_pos[0]], [mic_pos[1], highlighted_pos[1]],
             '-', color=los_color, alpha=0.6, lw=1.5, linestyle=':')
 
     # Title with frame + time

@@ -164,4 +164,4 @@ def test_topdown_load_scene_dispatch_apartment():
     from render_topdown_2d import _load_scene
     sc = _load_scene(REPO / "data" / "apartment_v1_spec.json")
     tags = {a.tag for a in sc.animals}
-    assert tags == {"dog_golden", "dog_husky"}
+    assert tags == {"dog_golden", "dog_beagle_v2"}

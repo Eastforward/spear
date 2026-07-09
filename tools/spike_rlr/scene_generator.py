@@ -177,8 +177,8 @@ def sample_scene(spec_template: dict, audio_lib, rng) -> SceneSample:
     source_z = float(spec_template.get("source_height_m", 0.45))
     source_position_mode = spec_template.get("source_position_mode", "random")
     source_pool = resolve_source_pool(spec_template.get("source_pool") or [
-        {"tag": "dog_golden", "audio_lookup": "dog_bark"},
-        {"tag": "dog_husky", "audio_lookup": "music_piano"},
+        {"asset_id": "dog_golden_0001"},
+        {"asset_id": "dog_beagle_0002"},
     ])
     scene_max_tries = int(spec_template.get(
         "scene_max_tries",

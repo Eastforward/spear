@@ -49,18 +49,19 @@ _LOOKUP_TO_CATEGORY = {
     "cat_meow": "cat_meow",
     "cat_purring": "cat_purring",
     "music_piano": "music_piano",
-    "wolf_howl": "music_piano",   # husky was rewired to synthesized piano
-                                    # in tools/spike_rlr/run_audio_pass_rlr.py
+    "wolf_howl": "music_piano",   # legacy debug lookup; current animal specs
+                                    # should use species-correct audio lookups.
 }
 
 
 EFFECTIVE_AUDIO_GAIN_THRESHOLD = 0.05
+_SYNTHETIC_AUDIO_LOOKUPS = {"music_piano", "wolf_howl"}
 
 
 def _source_is_synthetic(src_spec: dict) -> bool:
     if "is_synthetic" in src_spec:
         return bool(src_spec["is_synthetic"])
-    return src_spec.get("tag") == "dog_husky"
+    return src_spec.get("audio_lookup") in _SYNTHETIC_AUDIO_LOOKUPS
 
 
 def effective_audio_frames_from_gains(

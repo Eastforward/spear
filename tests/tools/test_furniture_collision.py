@@ -4,11 +4,13 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-sys.path.insert(0, "/data/jzy/code/SPEAR/tools")
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "tools"))
 
 from gpurir_scenes.furniture_map import (
     load_apartment_furniture,
@@ -19,7 +21,7 @@ from gpurir_scenes.scene_spec import (
     SceneSpec, AnimalPlacement, ROOM_SIZE_M, MIC_POS_M, T60_S, SOURCE_HEIGHT_M,
 )
 
-FURNITURE_JSON = "/data/jzy/code/SPEAR/data/apartment_furniture_map.json"
+FURNITURE_JSON = REPO / "data" / "apartment_furniture_map.json"
 
 
 def _apartment_json_exists() -> bool:
@@ -46,13 +48,13 @@ def test_V1_dump_yields_reasonable_count():
 
 
 # ---- V2: 回归 - 已知穿模场景必须被拒绝 --------------------------------------
-def _static_husky_spec_at(x: float, y: float) -> SceneSpec:
+def _static_beagle_spec_at(x: float, y: float) -> SceneSpec:
     traj = np.tile(np.array([x, y, SOURCE_HEIGHT_M]), (75, 1))
     yaw = np.zeros(75)
     return SceneSpec(
         seed=0, room_size_m=ROOM_SIZE_M, t60_s=T60_S, mic_pos_m=MIC_POS_M,
         animals=[AnimalPlacement(
-            tag="dog_husky", is_animated=True,
+            tag="dog_beagle_v2", is_animated=True,
             trajectory_m=traj, yaw_deg=yaw,
         )],
     )
@@ -79,7 +81,7 @@ def test_V2_known_clipping_trajectory_rejected():
     )
     _, cx, cy, name = max(candidates, key=lambda t: t[0])
     print(f"V2 fixture: using {name} at ({cx:.2f}, {cy:.2f}) as clipping target")
-    spec = _static_husky_spec_at(cx, cy)
+    spec = _static_beagle_spec_at(cx, cy)
     with pytest.raises(AssertionError, match="clips furniture"):
         scene_spec.check_no_clipping(spec, furniture_bboxes=furniture)
 

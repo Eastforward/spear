@@ -43,9 +43,10 @@ DEFAULT_SAO_CACHE = _os.path.join(_SPEAR_ROOT, "tmp/gpurir_scenes_v1/sao_cache")
 TAG_TO_KEYWORDS = {
     "cat_persian":    ["meow", "purr"],
     "cat_tabby":      ["meow"],
+    "cat_british_shorthair_v2": ["meow", "purr"],
     "chipmunk":       ["chipmunk"],                        # SAO fallback
     "dog_golden":     [("bark", "dog"), "woof"],
-    "dog_husky":      [("bark", "dog"), ("howl", "wolf")],
+    "dog_beagle_v2":  [("bark", "dog"), "woof"],
     "goat":           [("bleat", "goat"), "goat bleating"],
     "sheep":          [("bleat", "sheep"), "sheep bleating"],
     "pig":            [("oink", "pig"), "pig snort", ("pig", "snort")],

@@ -15,7 +15,7 @@ from source_asset_manifest import (  # noqa: E402
 
 
 def test_asset_id_for_tag_uses_variant_suffix():
-    assert asset_id_for_tag("dog_beagle", "dog", "beagle") == "dog_beagle_0001"
+    assert asset_id_for_tag("dog_pug", "dog", "pug") == "dog_pug_0001"
     assert asset_id_for_tag("dog_beagle_v2", "dog", "beagle") == "dog_beagle_0002"
     assert (
         asset_id_for_tag("cat_british_shorthair_v2", "cat", "british_shorthair")

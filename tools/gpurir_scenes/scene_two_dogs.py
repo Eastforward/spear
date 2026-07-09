@@ -1,4 +1,4 @@
-"""Fixed hand-authored scene: dog_golden static + dog_husky walking an
+"""Fixed hand-authored scene: dog_golden static + dog_beagle_v2 walking an
 L-shaped path with a hard 90-degree pivot in the middle. Produces a
 SceneSpec compatible with run_audio_pass and run_render_pass.
 
@@ -19,10 +19,9 @@ Design notes (v13, 2026-07-06):
       Phase C (frames 35..59): walk +Y from (2.55, 3.1) to (2.55, 3.35)
       Phase D (frames 60..74): pivot IN PLACE to face the camera.
     The pivot period holds position so the anim shows a real body rotation.
-  - Body yaw = motion_yaw + 180 (Quaternius Dog "Walking" local-forward is
-    -X_local, so body must rotate 180 relative to travel direction).
-  - Static golden placed at (1.06, 3.75), body_yaw_world = 270. Its Idle asset
-    is 180 degrees opposite the Walking-facing convention used by the husky.
+  - Body yaw follows motion yaw (Quaternius Dog/Cat Walking local-forward is
+    +X_local after the 2026-07-08 visual correction).
+  - Static golden placed at (1.06, 3.75), body_yaw_world = 270.
 """
 from __future__ import annotations
 
@@ -49,7 +48,7 @@ TOOLS = os.path.dirname(os.path.abspath(__file__))
 
 
 # ---- L-path segment definitions --------------------------------------------
-# Husky walks a 4-segment path:
+# Beagle walks a 4-segment path:
 #   A: enter from right, walk -X toward mic centerline
 #   B: pivot 90 (in-place) — motion yaw 180 -> 90
 #   C: walk +Y toward window (away from camera, back-view)
@@ -72,10 +71,10 @@ _D_END_MOTION_YAW = -90.0    # FACE CAMERA: motion=-90 -> body_yaw=90 -> head at
 # Placed forward-left of mic and facing the view0 camera. If it faces sideways,
 # the head extends toward the image edge and gets clipped.
 _STATIC_XY = (1.06, 3.75)
-_STATIC_MOTION_YAW = 90.0    # body_yaw=270; Idle asset faces camera at this yaw
+_STATIC_BODY_YAW = 270.0
 
-# Anim body-yaw offset: Quaternius Dog "Walking" local-forward = -X_local.
-# body_yaw_world = motion_yaw + 180 so the dog walks head-first.
+# Anim body-yaw offset: Quaternius Dog "Walking" local-forward = +X_local.
+# body_yaw_world = motion_yaw so the dog walks head-first.
 # Alias to scene_spec.ANIM_FORWARD_YAW_OFFSET_DEG so the two code paths
 # (random compose_scene and this hand-written scene) always agree.
 from gpurir_scenes.scene_spec import ANIM_FORWARD_YAW_OFFSET_DEG as _ANIM_FORWARD_YAW_OFFSET  # noqa: E402
@@ -87,10 +86,9 @@ def _shortest_angular_step(a, b):
 
 
 def _l_path_trajectory():
-    """Build the piecewise L-path trajectory and per-frame yaw for husky.
+    """Build the piecewise L-path trajectory and per-frame yaw for beagle.
 
-    Returns (traj[N,3], yaw_deg[N]). Yaw is BODY yaw in world (already
-    offset by +180 to align with the anim's -X_local forward).
+    Returns (traj[N,3], yaw_deg[N]). Yaw is BODY yaw in world.
     """
     xs = np.empty(N_FRAMES)
     ys = np.empty(N_FRAMES)
@@ -124,7 +122,7 @@ def _l_path_trajectory():
         motion_yaw[i] = _C_MOTION_YAW
 
     # Phase D: frames _C_END_FRAME .. N_FRAMES - 1 : pivot at C_END so the
-    # husky turns from +Y back toward -Y (facing the camera).
+    # beagle turns from +Y back toward -Y (facing the camera).
     d_len = N_FRAMES - _C_END_FRAME
     yaw_delta_d = _shortest_angular_step(_C_MOTION_YAW, _D_END_MOTION_YAW)
     for j in range(d_len):
@@ -149,7 +147,7 @@ def _static_dog_placement():
         (N_FRAMES, 1),
     )
     body_yaw = np.full(
-        N_FRAMES, (_STATIC_MOTION_YAW + _ANIM_FORWARD_YAW_OFFSET) % 360.0
+        N_FRAMES, _STATIC_BODY_YAW
     )
     return AnimalPlacement(
         tag="dog_golden", is_animated=True,
@@ -165,7 +163,7 @@ def compose_two_dog_scene():
     """
     traj, yaw = _l_path_trajectory()
     animated = AnimalPlacement(
-        tag="dog_husky", is_animated=True,
+        tag="dog_beagle_v2", is_animated=True,
         trajectory_m=traj, yaw_deg=yaw,
     )
     static = _static_dog_placement()

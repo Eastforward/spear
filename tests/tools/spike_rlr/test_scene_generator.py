@@ -131,6 +131,35 @@ def test_sample_scene_returns_scenesample(tmp_path):
     assert 0 <= len(scene.source_specs) <= 2
 
 
+def test_sample_scene_default_pool_uses_registered_assets(tmp_path):
+    p = tmp_path / "cat.json"
+    p.write_text(json.dumps({"samples": [
+        {"category": "dog_bark", "path": "dog.wav", "is_synthetic": False,
+         "duration_s": 1.0, "sample_rate": 16000, "source": "T"},
+    ]}))
+    lib = load_library(p)
+    template = {
+        "bounds_xy": list(BOUNDS),
+        "obstacles": [],
+        "valid_regions": [BOUNDS],
+        "distance_range_m": [0.5, 6.0],
+        "mic_height_range_m": [0.5, 1.8],
+        "source_height_m": 0.45,
+        "n_sources_override": 2,
+    }
+
+    scene = sample_scene(template, lib, np.random.default_rng(8))
+
+    assert {s["asset_id"] for s in scene.source_specs} == {
+        "dog_golden_0001",
+        "dog_beagle_0002",
+    }
+    assert {s["tag"] for s in scene.source_specs} == {
+        "dog_golden",
+        "dog_beagle_v2",
+    }
+
+
 def test_sample_scene_uses_configured_source_pool(tmp_path, monkeypatch):
     p = tmp_path / "cat.json"
     p.write_text(json.dumps({"samples": [

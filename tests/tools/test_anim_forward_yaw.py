@@ -44,7 +44,7 @@ def test_QUATERNIUS_forward_offset_is_zero():
 def test_generated_trajectory_yaw_matches_motion_direction():
     """For any animated Quaternius tag, generated yaw ≈ motion direction."""
     rng = np.random.default_rng(42)
-    tag = "dog_husky"
+    tag = "dog_beagle_v2"
     traj, yaw = scene_spec._generate_trajectory(rng, scene_spec.ROOM_SIZE_M, tag)
     xs = traj[:, 0]
     ys = traj[:, 1]
@@ -96,14 +96,14 @@ def test_generate_trajectory_uses_per_tag_offset():
     the tag, not the global constant. Verified by monkey-patching a fake
     offset=180 and confirming yaw now differs from motion by 180."""
     from species_rig_map import ANIMATED_RIG_MAP
-    saved_meta = ANIMATED_RIG_MAP.get("dog_husky")
+    saved_meta = ANIMATED_RIG_MAP.get("dog_beagle_v2")
     fake_meta = dict(saved_meta)
     fake_meta["walking_forward_yaw_offset_deg"] = 180.0
-    ANIMATED_RIG_MAP["dog_husky"] = fake_meta
+    ANIMATED_RIG_MAP["dog_beagle_v2"] = fake_meta
     try:
         rng = np.random.default_rng(42)
         traj, yaw = scene_spec._generate_trajectory(
-            rng, scene_spec.ROOM_SIZE_M, "dog_husky"
+            rng, scene_spec.ROOM_SIZE_M, "dog_beagle_v2"
         )
         dx = np.gradient(traj[:, 0])
         dy = np.gradient(traj[:, 1])
@@ -118,4 +118,4 @@ def test_generate_trajectory_uses_per_tag_offset():
                 f"got yaw={yaw[i]:.2f} motion={motion[i]:.2f} diff={d:.2f}"
             )
     finally:
-        ANIMATED_RIG_MAP["dog_husky"] = saved_meta
+        ANIMATED_RIG_MAP["dog_beagle_v2"] = saved_meta

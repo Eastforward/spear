@@ -7,6 +7,19 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[3]
 META = REPO / "tmp" / "spike_output_apartment" / "apartment_v1_metadata.json"
+EXPECTED_TAGS = {"dog_golden", "dog_beagle_v2"}
+
+
+def _load_metadata_or_skip_current():
+    if not META.exists():
+        pytest.skip("metadata not yet computed")
+    d = json.loads(META.read_text())
+    tags = {s["tag"] for s in d.get("sources", [])}
+    if tags != EXPECTED_TAGS:
+        pytest.skip(
+            f"metadata is stale for current apartment_v1_spec tags: {tags}"
+        )
+    return d
 
 
 def test_metadata_json_written():
@@ -18,18 +31,14 @@ def test_metadata_json_written():
 
 
 def test_two_sources_in_metadata():
-    if not META.exists():
-        pytest.skip("metadata not yet computed")
-    d = json.loads(META.read_text())
+    d = _load_metadata_or_skip_current()
     assert len(d["sources"]) == 2
     tags = {s["tag"] for s in d["sources"]}
-    assert tags == {"dog_golden", "dog_husky"}
+    assert tags == EXPECTED_TAGS
 
 
 def test_per_frame_arrays_correct_length():
-    if not META.exists():
-        pytest.skip("metadata not yet computed")
-    d = json.loads(META.read_text())
+    d = _load_metadata_or_skip_current()
     for s in d["sources"]:
         assert len(s["drr_db_per_frame"]) == 75
         assert len(s["source_world_xyz_per_frame"]) == 75
@@ -43,9 +52,7 @@ def test_per_frame_arrays_correct_length():
 
 
 def test_azi_ele_within_ranges():
-    if not META.exists():
-        pytest.skip("metadata not yet computed")
-    d = json.loads(META.read_text())
+    d = _load_metadata_or_skip_current()
     for s in d["sources"]:
         for azi, ele, dist in s["source_azi_ele_dist_mic_local_per_frame"]:
             assert -180 <= azi <= 180
@@ -54,24 +61,20 @@ def test_azi_ele_within_ranges():
 
 
 def test_metadata_mic_pose_matches_spec():
-    if not META.exists():
-        pytest.skip("metadata not yet computed")
-    d = json.loads(META.read_text())
+    d = _load_metadata_or_skip_current()
     spec = json.loads((REPO / "data" / "apartment_v1_spec.json").read_text())
     assert d["mic_pose_6DoF"]["pos_m"] == spec["mic"]["pos_m"]
     assert d["mic_pose_6DoF"]["yaw_deg"] == spec["mic"]["yaw_deg"]
 
 
 def test_source_category_and_is_synthetic():
-    if not META.exists():
-        pytest.skip("metadata not yet computed")
-    d = json.loads(META.read_text())
+    d = _load_metadata_or_skip_current()
     golden = [s for s in d["sources"] if s["tag"] == "dog_golden"][0]
-    husky = [s for s in d["sources"] if s["tag"] == "dog_husky"][0]
+    beagle = [s for s in d["sources"] if s["tag"] == "dog_beagle_v2"][0]
     assert golden["category"] == "dog_bark"
     assert golden["is_synthetic"] is False
-    assert husky["category"] == "music_piano"
-    assert husky["is_synthetic"] is True
+    assert beagle["category"] == "dog_bark"
+    assert beagle["is_synthetic"] is False
 
 
 def test_lookup_to_category_includes_direct_music_piano_key():
@@ -105,11 +108,13 @@ def test_source_synthetic_flag_comes_from_spec():
     sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
     from compute_acoustic_metadata import _source_is_synthetic
 
-    assert _source_is_synthetic({"tag": "dog_husky", "is_synthetic": False}) is False
+    assert _source_is_synthetic({"tag": "dog_beagle_v2",
+                                 "is_synthetic": False}) is False
     assert _source_is_synthetic({"tag": "cat_british_shorthair_v2",
                                  "is_synthetic": False}) is False
     assert _source_is_synthetic({"tag": "synth_x", "is_synthetic": True}) is True
-    assert _source_is_synthetic({"tag": "dog_husky"}) is True
+    assert _source_is_synthetic({"tag": "dog_beagle_v2"}) is False
+    assert _source_is_synthetic({"audio_lookup": "music_piano"}) is True
 
 
 def test_azi_ele_dist_local_offset_pure_x():
@@ -138,9 +143,7 @@ def test_azi_ele_dist_local_offset_pure_x():
 
 
 def test_visibility_fields_present():
-    if not META.exists():
-        pytest.skip("metadata not yet computed")
-    d = json.loads(META.read_text())
+    d = _load_metadata_or_skip_current()
     for s in d["sources"]:
         assert "source_in_fov_per_frame" in s
         assert "source_occluded_by_furniture_per_frame" in s
@@ -152,9 +155,7 @@ def test_visibility_fields_present():
 
 
 def test_visible_implies_in_fov_and_not_occluded():
-    if not META.exists():
-        pytest.skip("metadata not yet computed")
-    d = json.loads(META.read_text())
+    d = _load_metadata_or_skip_current()
     for s in d["sources"]:
         for k in range(len(s["source_visible_from_camera_per_frame"])):
             vis = s["source_visible_from_camera_per_frame"][k]

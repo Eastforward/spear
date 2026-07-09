@@ -57,9 +57,10 @@ PROMPT_TEMPLATE_SMALL_QUADRUPED = (
 SPECIES_LIST = [
     # (species, breed, prompt_template, tag)
     ("dog", "golden retriever", PROMPT_TEMPLATE_QUADRUPED, "dog_golden"),
-    ("dog", "siberian husky",    PROMPT_TEMPLATE_QUADRUPED, "dog_husky"),
+    ("dog", "beagle",            PROMPT_TEMPLATE_QUADRUPED, "dog_beagle_v2"),
     ("cat", "persian",           PROMPT_TEMPLATE_QUADRUPED, "cat_persian"),
     ("cat", "orange tabby",      PROMPT_TEMPLATE_QUADRUPED, "cat_tabby"),
+    ("cat", "british shorthair", PROMPT_TEMPLATE_QUADRUPED, "cat_british_shorthair_v2"),
     ("mouse", "white lab",       PROMPT_TEMPLATE_SMALL_QUADRUPED, "mouse_white"),
     ("mouse", "gray field",      PROMPT_TEMPLATE_SMALL_QUADRUPED, "mouse_gray"),
     ("chicken", "brown hen",     PROMPT_TEMPLATE_BIRD, "chicken_hen"),
