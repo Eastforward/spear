@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -60,3 +61,22 @@ def test_drop_into_pending_preserves_textured_obj_and_diffuse(tmp_path, monkeypa
     assert (tag_dir / "hy3d_diffuse.jpg").read_bytes() == b"diffuse"
     assert (tag_dir / "hy3d_metallic.jpg").read_bytes() == b"metallic"
     assert (tag_dir / "hy3d_roughness.jpg").read_bytes() == b"roughness"
+
+
+def test_write_candidate_manifest_for_generated_rig(tmp_path, monkeypatch):
+    import hy3d_generate_and_audit as h
+
+    pending = tmp_path / "pending"
+    monkeypatch.setattr(h, "PENDING_ROOT", pending)
+    tag_dir = pending / "dog_beagle_v2"
+    tag_dir.mkdir(parents=True)
+    (tag_dir / "mesh.obj").write_text("v 0 0 0\n")
+    rig = {"tag": "dog_beagle_v2", "species": "dog", "breed": "beagle", "seed": 4101}
+
+    path = h._write_candidate_manifest_for_rig(rig, "a beagle dog prompt")
+
+    assert path == tag_dir / "source_asset_candidate.json"
+    manifest = json.loads(path.read_text())
+    assert manifest["asset_id"] == "dog_beagle_0002"
+    assert manifest["generation"]["positive_prompt"] == "a beagle dog prompt"
+    assert manifest["review"]["overall_status"] == "needs_review"

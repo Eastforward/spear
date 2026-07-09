@@ -159,6 +159,33 @@ def test_approve_bakes_rotation_and_moves_to_approved(workspace):
     assert dj["mesh_sha256"] == hashlib.sha256(mesh_oriented.read_bytes()).hexdigest()
 
 
+def test_approve_syncs_source_asset_candidate_manifest(workspace):
+    from review_ui_server import create_app
+    from source_asset_manifest import write_hy3d_candidate_manifest
+
+    tag_dir = workspace["pending"] / "dog_test_srv"
+    write_hy3d_candidate_manifest(
+        tag_dir,
+        tag="dog_test_srv",
+        species="dog",
+        breed="test srv",
+        seed=1,
+        positive_prompt="a test dog",
+        created_at="2026-07-09T00:00:00+00:00",
+    )
+    app = create_app(workspace["pending"], workspace["approved"], workspace["rejected"])
+    client = app.test_client()
+
+    assert client.post("/approve/dog_test_srv", follow_redirects=False).status_code == 302
+
+    candidate = (
+        workspace["approved"] / "dog_test_srv" / "source_asset_candidate.json"
+    )
+    manifest = json.loads(candidate.read_text())
+    assert manifest["review"]["direction_status"] == "approved"
+    assert manifest["review"]["overall_status"] == "needs_runtime_gate"
+
+
 def test_reject_moves_to_rejected(workspace):
     from review_ui_server import create_app
     app = create_app(workspace["pending"], workspace["approved"], workspace["rejected"])

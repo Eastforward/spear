@@ -45,6 +45,7 @@ from flask import Flask, abort, redirect, request, send_file, url_for
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "spike_rlr"))
 from preview_render import render_review_preview  # noqa: E402
+from source_asset_manifest import sync_candidate_manifest_review  # noqa: E402
 
 PREVIEW_RENDER_SOURCE = REPO_ROOT / "tools" / "spike_rlr" / "preview_render.py"
 
@@ -568,6 +569,7 @@ def create_app(pending_dir, approved_dir, rejected_dir, host="127.0.0.1", port=8
         dj["mesh_oriented"] = str((dst / "mesh_oriented.glb").resolve())
         dj["mesh_sha256"] = _sha256_file(oriented_src)
         dj_path.write_text(json.dumps(dj, indent=2))
+        sync_candidate_manifest_review(src, dj)
 
         if dst.exists():
             shutil.rmtree(dst)

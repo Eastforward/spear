@@ -22,6 +22,9 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "tools" / "spike_rlr"))
+
+from source_asset_manifest import write_hy3d_candidate_manifest  # noqa: E402
 
 # --- Config ---
 BATCH_ROOT = REPO_ROOT / "tmp" / "hy3d_batch"
@@ -173,6 +176,23 @@ def _drop_into_pending(tag: str, source_mesh: Path):
     print(f"  -> pending/{tag}/{dst.name}")
 
 
+def _write_candidate_manifest_for_rig(rig: dict, prompt: str):
+    tag_dir = PENDING_ROOT / rig["tag"]
+    if not tag_dir.exists():
+        raise FileNotFoundError(f"pending tag dir does not exist: {tag_dir}")
+    path = write_hy3d_candidate_manifest(
+        tag_dir,
+        tag=rig["tag"],
+        species=rig["species"],
+        breed=rig["breed"],
+        seed=rig.get("seed"),
+        positive_prompt=prompt,
+        flux_model="flux_dev",
+    )
+    print(f"  -> pending/{rig['tag']}/{path.name}")
+    return path
+
+
 def _run_auto_orient():
     """Run auto_orient_ingest on the pending dir — writes direction.json +
     preview.png + mesh_oriented.glb per tag."""
@@ -263,11 +283,16 @@ def main():
                 print(f"  [!] Hunyuan3D paint failed for {rig['tag']} — skipping")
                 continue
             _drop_into_pending(rig["tag"], wd / "hy3d_textured.obj")
+            _write_candidate_manifest_for_rig(rig, prompt)
     else:
         print("== Skipping Hunyuan3D (--skip-hunyuan) ==")
         for rig in target:
             expected = PENDING_ROOT / rig["tag"] / "mesh.glb"
-            if not expected.exists():
+            obj_expected = PENDING_ROOT / rig["tag"] / "mesh.obj"
+            prompt = PROMPT_TEMPLATE.format(species=rig["species"], breed=rig["breed"])
+            if expected.exists() or obj_expected.exists():
+                _write_candidate_manifest_for_rig(rig, prompt)
+            else:
                 print(f"  [WARN] no {expected} — put your mesh here first.")
 
     _run_auto_orient()
