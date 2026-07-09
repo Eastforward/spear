@@ -5,6 +5,7 @@
 - `docs/agents.md` — SPEAR programming model (read always).
 - `docs/agents.mcp_usage.md` — MCP tool usage, API patterns, and rendering. Read once at the start of a session that uses SPEAR MCP tools.
 - `docs/agents.style_guide.md` — code style conventions. Read when writing or reviewing code that will be checked in.
+- `docs/agents.reporting_conventions.md` — human-facing reporting rules (e.g., per-clip source-count format must separate in-FOV vs out-of-FOV; absolute paths for artifacts). Read once at the start of any session that generates clips/videos/renders and reports results back.
 
 `.claudeignore` and `.cursorignore` must always be kept in sync with each other. These are separate from `.gitignore` and should not be synchronized with it.
 

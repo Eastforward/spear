@@ -83,3 +83,52 @@ def test_review_preview_written(tmp_path):
     assert out_png.stat().st_size > 5000
     with out_png.open("rb") as f:
         assert f.read(8) == b"\x89PNG\r\n\x1a\n"
+
+
+def test_preview_face_sampling_caps_large_mesh():
+    """Audit PNGs must not try to draw every triangle of Hunyuan meshes."""
+    from preview_render import _preview_face_indices
+
+    idx = _preview_face_indices(num_faces=500_000, max_faces=12_000)
+
+    assert len(idx) == 12_000
+    assert idx[0] == 0
+    assert idx[-1] == 499_999
+    assert np.all(np.diff(idx) > 0)
+
+
+def test_preview_face_sampling_keeps_small_mesh_whole():
+    from preview_render import _preview_face_indices
+
+    idx = _preview_face_indices(num_faces=64, max_faces=12_000)
+
+    assert np.array_equal(idx, np.arange(64))
+
+
+def test_review_face_sampling_allows_clearer_wireframe():
+    """The human review image can use more faces because it draws 2D lines."""
+    from preview_render import _review_face_indices
+
+    idx = _review_face_indices(num_faces=500_000)
+
+    assert len(idx) == 50_000
+    assert idx[0] == 0
+    assert idx[-1] == 499_999
+
+
+def test_project_wire_segments_connects_triangle_edges():
+    from preview_render import _project_wire_segments_2d
+
+    verts = np.array([
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+    ])
+    faces = np.array([[0, 1, 2]])
+
+    segments = _project_wire_segments_2d(verts, faces, axes_pair=(0, 1))
+
+    assert segments.shape == (3, 2, 2)
+    assert np.array_equal(segments[0], np.array([[0.0, 0.0], [1.0, 0.0]]))
+    assert np.array_equal(segments[1], np.array([[1.0, 0.0], [0.0, 1.0]]))
+    assert np.array_equal(segments[2], np.array([[0.0, 1.0], [0.0, 0.0]]))

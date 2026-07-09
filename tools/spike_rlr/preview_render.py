@@ -11,6 +11,7 @@ Human reviewer opens the PNG in Cursor/VSCode remote / web UI.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import matplotlib
@@ -19,6 +20,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import trimesh
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+MAX_PREVIEW_FACES = int(os.environ.get("SPIKE_RLR_PREVIEW_MAX_FACES", "12000"))
+MAX_REVIEW_FACES = int(os.environ.get("SPIKE_RLR_REVIEW_MAX_FACES", "50000"))
 
 
 def _load_mesh(mesh_path: Path):
@@ -34,9 +38,26 @@ def _load_mesh(mesh_path: Path):
     return m
 
 
-def _draw_mesh_view(ax, mesh, elev, azim, title, arrow_start=None, arrow_end=None):
+def _preview_face_indices(num_faces: int, max_faces: int = MAX_PREVIEW_FACES):
+    """Deterministically cap mesh faces for audit PNGs.
+
+    The source/oriented GLB remains full resolution; this only limits the
+    number of triangles matplotlib has to project for human preview images.
+    """
+    if max_faces <= 0 or num_faces <= max_faces:
+        return np.arange(num_faces, dtype=np.int64)
+    return np.linspace(0, num_faces - 1, max_faces, dtype=np.int64)
+
+
+def _review_face_indices(num_faces: int, max_faces: int = MAX_REVIEW_FACES):
+    return _preview_face_indices(num_faces, max_faces=max_faces)
+
+
+def _draw_mesh_view(ax, mesh, elev, azim, title, arrow_start=None, arrow_end=None,
+                    face_indices=None):
+    faces = mesh.faces if face_indices is None else mesh.faces[face_indices]
     coll = Poly3DCollection(
-        mesh.vertices[mesh.faces],
+        mesh.vertices[faces],
         alpha=0.35, edgecolor="k", linewidth=0.1, facecolor="#87ceeb",
     )
     ax.add_collection3d(coll)
@@ -71,6 +92,7 @@ def render_direction_preview(mesh_path, detection_result, out_png_path) -> None:
     mesh_path = Path(mesh_path)
     out_png_path = Path(out_png_path)
     m = _load_mesh(mesh_path)
+    preview_faces = _preview_face_indices(len(m.faces))
 
     head_dir = detection_result.head_direction
     body_center = m.vertices.mean(axis=0)
@@ -92,23 +114,27 @@ def render_direction_preview(mesh_path, detection_result, out_png_path) -> None:
     _draw_mesh_view(ax1, m,
                      elev=head_elev + 20, azim=head_azim,
                      title="+HEAD view (looking WITH head arrow)",
-                     arrow_start=arrow_start, arrow_end=arrow_end)
+                     arrow_start=arrow_start, arrow_end=arrow_end,
+                     face_indices=preview_faces)
 
     ax2 = fig.add_subplot(2, 2, 2, projection="3d")
     _draw_mesh_view(ax2, m,
                      elev=head_elev + 20, azim=head_azim + 180,
                      title="-HEAD view (looking AGAINST head arrow)",
-                     arrow_start=arrow_start, arrow_end=arrow_end)
+                     arrow_start=arrow_start, arrow_end=arrow_end,
+                     face_indices=preview_faces)
 
     ax3 = fig.add_subplot(2, 2, 3, projection="3d")
     _draw_mesh_view(ax3, m, elev=90, azim=0,
                      title="Top-down (red arrow = detected head)",
-                     arrow_start=arrow_start, arrow_end=arrow_end)
+                     arrow_start=arrow_start, arrow_end=arrow_end,
+                     face_indices=preview_faces)
 
     ax4 = fig.add_subplot(2, 2, 4, projection="3d")
     _draw_mesh_view(ax4, m, elev=5, azim=90,
                      title="Side view",
-                     arrow_start=arrow_start, arrow_end=arrow_end)
+                     arrow_start=arrow_start, arrow_end=arrow_end,
+                     face_indices=preview_faces)
 
     # Suptitle: detection summary
     signals_str = ", ".join(f"{k}={v:+d}" for k, v in detection_result.signals.items())
@@ -183,6 +209,18 @@ def _project_faces_2d(verts, faces, axes_pair, depth_axis, cmap):
     return tri_2d, colors
 
 
+def _project_wire_segments_2d(verts, faces, axes_pair):
+    tri = verts[faces][:, :, list(axes_pair)]
+    return np.concatenate(
+        [
+            tri[:, [0, 1], :],
+            tri[:, [1, 2], :],
+            tri[:, [2, 0], :],
+        ],
+        axis=0,
+    )
+
+
 def render_review_preview(mesh_path, out_png_path,
                            note: str = "") -> None:
     """Render a review-oriented preview optimized for a human to judge
@@ -206,7 +244,7 @@ def render_review_preview(mesh_path, out_png_path,
       out_png_path: where to write .png
       note: optional annotation text under the title
     """
-    from matplotlib.collections import PolyCollection
+    from matplotlib.collections import LineCollection, PolyCollection
 
     mesh_path = Path(mesh_path)
     out_png_path = Path(out_png_path)
@@ -216,7 +254,7 @@ def render_review_preview(mesh_path, out_png_path,
     R = 0.55 * bbox_size.max()
 
     verts = np.asarray(m.vertices)
-    faces = np.asarray(m.faces)
+    faces = np.asarray(m.faces)[_review_face_indices(len(m.faces))]
 
     # Layout: gridspec — 3:1 width ratio for main:inset
     fig = plt.figure(figsize=(11, 8))
@@ -229,7 +267,11 @@ def render_review_preview(mesh_path, out_png_path,
     tri_xy, colors_xy = _project_faces_2d(verts, faces, (0, 1),
                                             depth_axis=2, cmap=plt.cm.Blues)
     ax_main.add_collection(PolyCollection(tri_xy, facecolors=colors_xy,
-                                            edgecolors="none", alpha=0.85))
+                                            edgecolors="none", alpha=0.18))
+    wire_xy = _project_wire_segments_2d(verts, faces, (0, 1))
+    ax_main.add_collection(LineCollection(
+        wire_xy, colors=(0.08, 0.32, 0.72, 0.28), linewidths=0.22
+    ))
     ax_main.set_xlim(-R * 1.5, R * 1.5)
     ax_main.set_ylim(-R * 1.4, R * 1.5)
     ax_main.set_aspect("equal")
@@ -268,7 +310,11 @@ def render_review_preview(mesh_path, out_png_path,
     tri_xz, colors_xz = _project_faces_2d(verts, faces, (0, 2),
                                             depth_axis=1, cmap=plt.cm.Greens)
     ax_top.add_collection(PolyCollection(tri_xz, facecolors=colors_xz,
-                                          edgecolors="none", alpha=0.85))
+                                          edgecolors="none", alpha=0.18))
+    wire_xz = _project_wire_segments_2d(verts, faces, (0, 2))
+    ax_top.add_collection(LineCollection(
+        wire_xz, colors=(0.0, 0.38, 0.18, 0.26), linewidths=0.18
+    ))
     ax_top.set_xlim(-R * 1.4, R * 1.4)
     ax_top.set_ylim(-R * 1.4, R * 1.4)
     ax_top.set_aspect("equal")

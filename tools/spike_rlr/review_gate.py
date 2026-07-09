@@ -6,9 +6,15 @@ the mesh has not been human-approved via review_ui_server.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Optional
+
+try:
+    from runtime_proxy_mesh import load_current_runtime_proxy_record
+except ModuleNotFoundError:
+    from .runtime_proxy_mesh import load_current_runtime_proxy_record
 
 
 CURRENT_ALGORITHM_VERSION = "auto_orient_v1"
@@ -20,6 +26,14 @@ class MeshNotApprovedError(RuntimeError):
 
 def _default_approved_dir():
     return Path(__file__).resolve().parents[2] / "tmp" / "hy3d_batch" / "approved"
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with Path(path).open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def assert_mesh_approved(tag: str,
@@ -84,3 +98,36 @@ def resolve_approved_mesh_path(tag: str,
     raise MeshNotApprovedError(
         f"Tag {tag!r} is approved but no mesh file found under {approved_dir / tag}"
     )
+
+
+def approved_mesh_record(tag: str,
+                         approved_dir: Optional[Path] = None) -> dict:
+    """Return the approved canonical mesh plus provenance hash for one tag."""
+    approved_dir = Path(approved_dir) if approved_dir else _default_approved_dir()
+    direction = assert_mesh_approved(tag, approved_dir=approved_dir)
+    mesh_path = resolve_approved_mesh_path(tag, approved_dir=approved_dir)
+    actual_sha = sha256_file(mesh_path)
+    recorded_sha = direction.get("mesh_sha256")
+    if recorded_sha and recorded_sha != actual_sha:
+        raise MeshNotApprovedError(
+            f"Tag {tag!r}: mesh sha256 mismatch for {mesh_path}. "
+            f"direction.json has {recorded_sha}, file has {actual_sha}."
+        )
+    runtime_rec = load_current_runtime_proxy_record(
+        mesh_path.parent,
+        source_mesh_sha256=actual_sha,
+    )
+    runtime_mesh_path = None
+    runtime_mesh_sha256 = None
+    if runtime_rec is not None:
+        runtime_mesh_path = runtime_rec["runtime_mesh_path"]
+        runtime_mesh_sha256 = runtime_rec["runtime_mesh_sha256"]
+    return {
+        "tag": tag,
+        "mesh_path": mesh_path,
+        "mesh_sha256": actual_sha,
+        "runtime_mesh_path": runtime_mesh_path,
+        "runtime_mesh_sha256": runtime_mesh_sha256,
+        "direction_json_path": approved_dir / tag / "direction.json",
+        "direction": direction,
+    }

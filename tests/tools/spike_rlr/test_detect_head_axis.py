@@ -165,3 +165,15 @@ def test_ambiguous_mesh_lower_confidence():
     # Low confidence expected (no strong signals)
     assert result.confidence < 0.5, \
         f"expected low confidence for spherical mesh, got {result.confidence}"
+
+
+def test_detector_does_not_use_full_vertex_matrix_svd(monkeypatch):
+    """Large generated meshes should use 3x3 covariance eigendecomposition."""
+    def fail_svd(*args, **kwargs):
+        raise AssertionError("full SVD on the vertex matrix is too expensive")
+
+    monkeypatch.setattr(np.linalg, "svd", fail_svd)
+
+    result = detect_head_axis(_synth_dog(head_axis="+X"))
+
+    assert result.head_direction[0] > 0.8

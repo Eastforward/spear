@@ -11,5 +11,5 @@ def configure_system(config):
     # set environment variables
     if config.SPEAR.LAUNCH_MODE in ["editor", "game"]:
         for environment_var_name, environment_var_value in config.SPEAR.ENVIRONMENT_VARS.items():
-            log("Setting environment variable: ", environment_var_name, " = ", environment_var_value)
+            print("[spear] Setting environment variable: ", environment_var_name, " = ", environment_var_value, flush=True)
             os.environ[environment_var_name] = environment_var_value

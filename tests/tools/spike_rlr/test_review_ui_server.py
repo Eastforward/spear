@@ -3,9 +3,11 @@
 Uses Flask's built-in test_client to avoid needing a real port.
 """
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
+import hashlib
 
 import numpy as np
 import pytest
@@ -77,6 +79,22 @@ def test_preview_png_served(workspace):
     assert r.data[:4] == b"\x89PNG"
 
 
+def test_tag_view_regenerates_stale_review_preview(workspace):
+    from review_ui_server import create_app
+    app = create_app(workspace["pending"], workspace["approved"], workspace["rejected"])
+    client = app.test_client()
+    tag_dir = workspace["pending"] / "dog_test_srv"
+    preview = tag_dir / "direction_preview_review.png"
+
+    assert client.get("/tag/dog_test_srv").status_code == 200
+    assert preview.exists()
+    os.utime(preview, (1, 1))
+
+    assert client.get("/tag/dog_test_srv").status_code == 200
+
+    assert preview.stat().st_mtime > 1
+
+
 def test_rotate_updates_rotation_json_and_regens_preview(workspace):
     from review_ui_server import create_app
     app = create_app(workspace["pending"], workspace["approved"], workspace["rejected"])
@@ -134,7 +152,11 @@ def test_approve_bakes_rotation_and_moves_to_approved(workspace):
     # The baked rotation history should be persisted
     assert dj["human_applied_rotation_history"] == ["y+180"]
     # mesh_oriented.glb should have been rewritten
-    assert (approved_tag / "mesh_oriented.glb").exists()
+    mesh_oriented = approved_tag / "mesh_oriented.glb"
+    assert mesh_oriented.exists()
+    assert dj["mesh_source"].startswith(str(approved_tag))
+    assert dj["mesh_oriented"] == str(mesh_oriented)
+    assert dj["mesh_sha256"] == hashlib.sha256(mesh_oriented.read_bytes()).hexdigest()
 
 
 def test_reject_moves_to_rejected(workspace):

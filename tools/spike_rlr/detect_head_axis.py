@@ -27,9 +27,12 @@ Confidence formula:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from typing import Optional
 
 import numpy as np
+
+MAX_LEG_CLUSTER_POINTS = int(os.environ.get("SPIKE_RLR_HEAD_AXIS_MAX_LEG_POINTS", "6000"))
 
 
 @dataclass
@@ -51,10 +54,14 @@ def detect_head_axis(vertices: np.ndarray) -> HeadDetectionResult:
     center = verts.mean(axis=0)
     verts_c = verts - center
 
-    # PCA via SVD
-    _, sv, Vt = np.linalg.svd(verts_c, full_matrices=False)
-    pc1 = Vt[0]  # long axis (direction ambiguous)
-    pc2 = Vt[1]  # medium axis (usually up in standing quadruped)
+    # PCA via 3x3 covariance eigendecomposition. This avoids a full SVD over
+    # N high-resolution Hunyuan vertices while producing the same principal
+    # axes for this 3D point cloud use case.
+    cov = (verts_c.T @ verts_c) / max(len(verts_c) - 1, 1)
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    order = np.argsort(eigvals)[::-1]
+    pc1 = eigvecs[:, order[0]]  # long axis (direction ambiguous)
+    pc2 = eigvecs[:, order[1]]  # medium axis (usually up in standing quadruped)
 
     # Ensure pc2 points "up" (positive Y in world frame typically for
     # a standing quadruped). Not critical for detection but keeps
@@ -80,7 +87,14 @@ def detect_head_axis(vertices: np.ndarray) -> HeadDetectionResult:
             leg_pts_local = np.stack(
                 [proj_pc1[low_mask], proj_pc3[low_mask]], axis=-1
             )
-            km = KMeans(n_clusters=4, n_init=10, random_state=0).fit(leg_pts_local)
+            if len(leg_pts_local) > MAX_LEG_CLUSTER_POINTS:
+                idx = np.linspace(
+                    0, len(leg_pts_local) - 1,
+                    MAX_LEG_CLUSTER_POINTS,
+                    dtype=np.int64,
+                )
+                leg_pts_local = leg_pts_local[idx]
+            km = KMeans(n_clusters=4, n_init=3, random_state=0).fit(leg_pts_local)
             leg_centers = km.cluster_centers_  # (4, 2) in (pc1, pc3) coords
             # Sort legs by PC1 (front-to-back or back-to-front)
             order = np.argsort(leg_centers[:, 0])
