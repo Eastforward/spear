@@ -1,12 +1,14 @@
 """Verified official-source catalog helpers for Rocketbox avatar review."""
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -43,6 +45,10 @@ _USER_AGENT = "AVEngine-Rocketbox-Source-Review/1.0"
 
 class OfficialFileError(RuntimeError):
     """An on-disk file differs from its official Git tree record."""
+
+
+class SourceReviewNotApproved(RuntimeError):
+    """Raised when Rocketbox source review lacks required human approval."""
 
 
 @dataclass(frozen=True)
@@ -214,3 +220,260 @@ def ensure_official_files(
         _download_official_file(official_file, opener)
         downloaded.append(local_path)
     return downloaded
+
+
+def sha256_file(path: Path) -> str:
+    """Return the SHA-256 digest for one local source file."""
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _assert_asset_files_verified(asset: RocketboxReviewAsset) -> None:
+    if asset.missing_required_textures:
+        missing_paths = ", ".join(asset.missing_required_textures)
+        raise OfficialFileError(
+            f"Rocketbox asset {asset.asset_id} is missing required official textures: "
+            f"{missing_paths}"
+        )
+    for official_file in (asset.fbx, *asset.textures):
+        verify_official_file(
+            official_file.local_path, official_file.size, official_file.git_sha
+        )
+
+
+def _inspection_file_record(official_file: OfficialFile, role: str) -> dict[str, Any]:
+    return {
+        "role": role,
+        "official_rel_path": official_file.rel_path,
+        "local_path": str(official_file.local_path.resolve()),
+        "size": official_file.size,
+        "git_blob_sha1": git_blob_sha1(official_file.local_path),
+        "official_git_blob_sha1": official_file.git_sha,
+        "sha256": sha256_file(official_file.local_path),
+    }
+
+
+def build_source_inspection(asset: RocketboxReviewAsset) -> dict[str, Any]:
+    """Build an auditable inspection record from verified Task 1 local files."""
+    _assert_asset_files_verified(asset)
+    return {
+        "schema_version": "rocketbox_source_inspection_v1",
+        "asset_id": asset.asset_id,
+        "gender": asset.gender,
+        "avatar_dir": asset.avatar_dir,
+        "texture_prefix": asset.texture_prefix,
+        "up_axis": asset.up_axis,
+        "forward_axis": asset.forward_axis,
+        "missing_required_textures": list(asset.missing_required_textures),
+        "official_files": [
+            _inspection_file_record(asset.fbx, "fbx"),
+            *[
+                _inspection_file_record(texture, "texture")
+                for texture in asset.textures
+            ],
+        ],
+    }
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f"{path.name}.tmp")
+    with temporary_path.open("w", encoding="utf-8") as stream:
+        json.dump(payload, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary_path, path)
+    return path
+
+
+def _expected_inspection(asset: RocketboxReviewAsset) -> dict[str, Any]:
+    return build_source_inspection(asset)
+
+
+def write_pending_source_review(
+    asset: RocketboxReviewAsset, output_dir: Path, inspection: dict[str, Any]
+) -> Path:
+    """Write a pending source-review record for a freshly verified inspection."""
+    expected_inspection = _expected_inspection(asset)
+    if inspection != expected_inspection:
+        raise OfficialFileError(
+            "Source inspection does not match freshly verified Rocketbox source files"
+        )
+    review = {
+        "schema_version": "rocketbox_human_source_review_v1",
+        "asset_id": asset.asset_id,
+        "up_axis": asset.up_axis,
+        "forward_axis": asset.forward_axis,
+        "missing_required_textures": list(asset.missing_required_textures),
+        "source_sha256": sha256_file(asset.fbx.local_path),
+        "official_files": inspection["official_files"],
+        "geometry_status": "pending",
+        "appearance_status": "pending",
+        "direction_status": "pending",
+        "approved_by": None,
+        "approved_at": None,
+        "notes": None,
+    }
+    return _write_json(Path(output_dir) / "source_review.json", review)
+
+
+def _verify_review_official_files(review: dict[str, Any]) -> None:
+    missing_required_textures = review.get("missing_required_textures")
+    if missing_required_textures:
+        raise SourceReviewNotApproved(
+            "missing_required_textures must be empty before source review approval"
+        )
+    official_files = review.get("official_files")
+    if not isinstance(official_files, list) or not official_files:
+        raise SourceReviewNotApproved("official_files must contain verified source files")
+
+    fbx_sha256 = None
+    for record in official_files:
+        try:
+            local_path = Path(record["local_path"])
+            expected_size = int(record["size"])
+            expected_git_sha = str(record["official_git_blob_sha1"])
+            verify_official_file(local_path, expected_size, expected_git_sha)
+            actual_sha256 = sha256_file(local_path)
+        except (KeyError, OSError, TypeError, ValueError, OfficialFileError) as error:
+            raise SourceReviewNotApproved(
+                f"official_files verification failed: {error}"
+            ) from error
+        if actual_sha256 != record.get("sha256"):
+            raise SourceReviewNotApproved(
+                f"official_files SHA-256 mismatch for {local_path}"
+            )
+        if record.get("role") == "fbx":
+            fbx_sha256 = actual_sha256
+
+    if fbx_sha256 is None or review.get("source_sha256") != fbx_sha256:
+        raise SourceReviewNotApproved("source_sha256 does not match the verified FBX")
+
+
+def _parse_aware_iso8601(value: object) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise SourceReviewNotApproved("approved_at must be a timezone-aware ISO-8601 time")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise SourceReviewNotApproved(
+            "approved_at must be a timezone-aware ISO-8601 time"
+        ) from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise SourceReviewNotApproved("approved_at must be a timezone-aware ISO-8601 time")
+    return parsed
+
+
+def assert_source_review_approved(path: Path) -> dict[str, Any]:
+    """Return a source review only when verified files have all human approvals."""
+    try:
+        review = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SourceReviewNotApproved(f"Could not read source review {path}: {error}") from error
+    if review.get("schema_version") != "rocketbox_human_source_review_v1":
+        raise SourceReviewNotApproved("schema_version is not rocketbox_human_source_review_v1")
+    _verify_review_official_files(review)
+    for status_name in ("geometry_status", "appearance_status", "direction_status"):
+        if review.get(status_name) != "approved":
+            raise SourceReviewNotApproved(f"{status_name} must equal approved")
+    if not isinstance(review.get("approved_by"), str) or not review["approved_by"].strip():
+        raise SourceReviewNotApproved("approved_by must be non-empty")
+    _parse_aware_iso8601(review.get("approved_at"))
+    return review
+
+
+def approve_source_review(
+    path: Path,
+    reviewer: str,
+    geometry_status: str,
+    appearance_status: str,
+    direction_status: str,
+    notes: str | None,
+) -> Path:
+    """Record one explicit human approval; this never infers any status."""
+    review_path = Path(path)
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    if review.get("schema_version") != "rocketbox_human_source_review_v1":
+        raise SourceReviewNotApproved("schema_version is not rocketbox_human_source_review_v1")
+    _verify_review_official_files(review)
+    if not reviewer.strip():
+        raise ValueError("reviewer must be non-empty")
+    review.update(
+        {
+            "geometry_status": geometry_status,
+            "appearance_status": appearance_status,
+            "direction_status": direction_status,
+            "approved_by": reviewer,
+            "approved_at": datetime.now(timezone.utc).isoformat(),
+            "notes": notes,
+        }
+    )
+    return _write_json(review_path, review)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse Rocketbox review commands without doing I/O or network access."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    for command_name in ("download", "inspect"):
+        command = commands.add_parser(command_name)
+        command.add_argument("--tree-json", type=Path, required=True)
+        command.add_argument("--sample-root", type=Path, required=True)
+        command.add_argument("--asset-id", required=True)
+        if command_name == "inspect":
+            command.add_argument("--output-dir", type=Path, required=True)
+
+    approve = commands.add_parser("approve")
+    approve.add_argument("--review-json", type=Path, required=True)
+    approve.add_argument("--reviewer", required=True)
+    for status_name in ("geometry", "appearance", "direction"):
+        approve.add_argument(f"--{status_name}", choices=("approved",), required=True)
+    approve.add_argument("--notes", required=True)
+    return parser.parse_args(argv)
+
+
+def _load_cli_asset(args: argparse.Namespace) -> RocketboxReviewAsset:
+    assets = load_review_assets(args.tree_json, args.sample_root)
+    try:
+        return assets[args.asset_id]
+    except KeyError as error:
+        raise ValueError(f"Unknown Rocketbox review asset: {args.asset_id}") from error
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    if args.command == "download":
+        asset = _load_cli_asset(args)
+        ensure_official_files(asset)
+        print(
+            f"ROCKETBOX_OFFICIAL_FILES_OK asset_id={asset.asset_id} "
+            f"files={len((asset.fbx, *asset.textures))}"
+        )
+        return 0
+    if args.command == "inspect":
+        asset = _load_cli_asset(args)
+        inspection = build_source_inspection(asset)
+        inspection_path = _write_json(args.output_dir / "source_inspection.json", inspection)
+        review_path = write_pending_source_review(asset, args.output_dir, inspection)
+        print(f"ROCKETBOX_SOURCE_INSPECTION_WRITTEN path={inspection_path}")
+        print(f"ROCKETBOX_SOURCE_REVIEW_PENDING path={review_path}")
+        return 0
+    review_path = approve_source_review(
+        args.review_json,
+        args.reviewer,
+        args.geometry,
+        args.appearance,
+        args.direction,
+        args.notes,
+    )
+    print(f"ROCKETBOX_SOURCE_REVIEW_APPROVED path={review_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
