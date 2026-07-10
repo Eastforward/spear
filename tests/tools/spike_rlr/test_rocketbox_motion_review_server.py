@@ -14,7 +14,11 @@ import pytest
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
 
-from rocketbox_motion_review import EXPECTED_ASSET_IDS, REQUIRED_MEDIA  # noqa: E402
+from rocketbox_motion_review import (  # noqa: E402
+    EXPECTED_ASSET_IDS,
+    REQUIRED_MEDIA,
+    record_decision,
+)
 
 
 REQUIRED_INPUT_HASHES = (
@@ -88,6 +92,23 @@ def _csrf_token(client) -> str:
     return match.group(1).decode("ascii")
 
 
+def _motion_review_snapshot(workspace: Path) -> dict[str, bytes | None]:
+    return {
+        asset_id: (
+            review_path.read_bytes() if review_path.exists() else None
+        )
+        for asset_id in EXPECTED_ASSET_IDS
+        for review_path in [workspace / asset_id / "motion_review.json"]
+    }
+
+
+def _write_stale_review_records(workspace: Path) -> None:
+    for asset_id in EXPECTED_ASSET_IDS:
+        review_dir = workspace / asset_id
+        record_decision(review_dir, "approved", "reviewer", "before rerender")
+        (review_dir / "side.mp4").write_bytes(f"{asset_id}:rerendered".encode("ascii"))
+
+
 def test_asset_page_shows_bound_video_tabs_and_decision_controls(workspace):
     response = _client(workspace).get("/asset/rocketbox_male_adult_01")
 
@@ -111,6 +132,41 @@ def test_asset_page_shows_bound_video_tabs_and_decision_controls(workspace):
     assert b'name="csrf_token"' in response.data
     assert b"HttpOnly" in response.headers["Set-Cookie"].encode()
     assert b"SameSite=Strict" in response.headers["Set-Cookie"].encode()
+
+
+@pytest.mark.parametrize(
+    "route",
+    (
+        "/asset/rocketbox_male_adult_01",
+        "/media/rocketbox_male_adult_01/front",
+        "/gate",
+    ),
+)
+def test_get_routes_do_not_create_motion_review_records(workspace, route):
+    before = _motion_review_snapshot(workspace)
+
+    response = _client(workspace).get(route)
+
+    assert response.status_code == 200
+    assert _motion_review_snapshot(workspace) == before
+
+
+@pytest.mark.parametrize(
+    "route",
+    (
+        "/asset/rocketbox_male_adult_01",
+        "/media/rocketbox_male_adult_01/front",
+        "/gate",
+    ),
+)
+def test_get_routes_do_not_replace_stale_motion_review_records(workspace, route):
+    _write_stale_review_records(workspace)
+    before = _motion_review_snapshot(workspace)
+
+    response = _client(workspace).get(route)
+
+    assert response.status_code == 200
+    assert _motion_review_snapshot(workspace) == before
 
 
 def test_media_route_rejects_unknown_kind_and_path_traversal(workspace):
@@ -150,9 +206,11 @@ def test_unknown_asset_get_and_post_return_404(workspace):
 
 
 def test_invalid_decision_with_valid_csrf_does_not_replace_review_record(workspace):
+    review_dir = workspace / "rocketbox_male_adult_01"
+    record_decision(review_dir, "approved", "reviewer", "existing decision")
     client = _client(workspace)
     csrf_token = _csrf_token(client)
-    review_path = workspace / "rocketbox_male_adult_01" / "motion_review.json"
+    review_path = review_dir / "motion_review.json"
     before = review_path.read_bytes()
 
     response = client.post(
@@ -242,7 +300,6 @@ def test_decision_rejects_blank_reviewer_with_valid_csrf_token(workspace):
     client = _client(workspace)
     csrf_token = _csrf_token(client)
     review_path = workspace / "rocketbox_male_adult_01" / "motion_review.json"
-    before = review_path.read_bytes()
 
     response = client.post(
         "/decision/rocketbox_male_adult_01",
@@ -250,7 +307,7 @@ def test_decision_rejects_blank_reviewer_with_valid_csrf_token(workspace):
     )
 
     assert response.status_code == 400
-    assert review_path.read_bytes() == before
+    assert not review_path.exists()
 
 
 def test_decision_rejects_missing_csrf_token_without_writing_a_review(workspace):
@@ -269,7 +326,6 @@ def test_decision_rejects_invalid_csrf_token_without_writing_a_review(workspace)
     client = _client(workspace)
     _csrf_token(client)
     review_path = workspace / "rocketbox_male_adult_01" / "motion_review.json"
-    before = review_path.read_bytes()
 
     response = client.post(
         "/decision/rocketbox_male_adult_01",
@@ -277,12 +333,10 @@ def test_decision_rejects_invalid_csrf_token_without_writing_a_review(workspace)
     )
 
     assert response.status_code == 400
-    assert review_path.read_bytes() == before
+    assert not review_path.exists()
 
 
 def test_gate_reports_locked_pending_pair_then_approved_pair(workspace):
-    from rocketbox_motion_review import record_decision
-
     client = _client(workspace)
     locked = client.get("/gate")
 

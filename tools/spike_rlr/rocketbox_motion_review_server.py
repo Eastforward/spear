@@ -26,7 +26,7 @@ from rocketbox_motion_review import (
     REQUIRED_MEDIA,
     MotionReviewNotApproved,
     assert_pair_approved,
-    ensure_pending_review,
+    read_review_state,
     record_decision,
     validate_ready_manifest,
 )
@@ -216,7 +216,7 @@ def create_app(review_root: Path | str) -> Flask:
         if manifest["asset_id"] != asset_id:
             abort(409, description="review directory asset_id does not match the URL asset")
         try:
-            review = ensure_pending_review(review_dir)
+            review = read_review_state(review_dir)
         except ValueError as error:
             abort(409, description=str(error))
         return review, media_paths
