@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 import sys
 from datetime import datetime
@@ -9,6 +10,8 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
+
+import rocketbox_human_review as rocketbox_review  # noqa: E402
 
 from rocketbox_human_review import (  # noqa: E402
     OfficialFile,
@@ -150,6 +153,40 @@ def _complete_local_asset(tmp_path):
     return _asset_with_files(tmp_path, textures)
 
 
+def _pin_synthetic_source_manifest(monkeypatch, review):
+    manifest = [
+        {
+            field: record[field]
+            for field in (
+                "role",
+                "official_rel_path",
+                "size",
+                "official_git_blob_sha1",
+            )
+        }
+        for record in review["official_files"]
+    ]
+    digest = hashlib.sha256(
+        json.dumps(manifest, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode(
+            "ascii"
+        )
+    ).hexdigest()
+    monkeypatch.setattr(
+        rocketbox_review,
+        "_PINNED_SOURCE_MANIFESTS",
+        {
+            review["asset_id"]: {
+                "sha256": digest,
+                "layout": tuple(
+                    (record["role"], record["official_rel_path"])
+                    for record in manifest
+                ),
+            }
+        },
+        raising=False,
+    )
+
+
 def test_pending_source_review_records_axes_hashes_and_pending_status(tmp_path):
     asset = _complete_local_asset(tmp_path)
     inspection = build_source_inspection(asset)
@@ -215,7 +252,7 @@ def test_source_inspection_rejects_incomplete_or_corrupt_task_one_asset(tmp_path
         build_source_inspection(corrupt)
 
 
-def test_source_review_gate_requires_all_three_human_approvals(tmp_path):
+def test_source_review_gate_requires_all_three_human_approvals(tmp_path, monkeypatch):
     asset = _complete_local_asset(tmp_path)
     inspection = build_source_inspection(asset)
     review_path = write_pending_source_review(asset, tmp_path / "out", inspection)
@@ -229,6 +266,7 @@ def test_source_review_gate_requires_all_three_human_approvals(tmp_path):
             "approved_at": "2026-07-10T12:00:00+08:00",
         }
     )
+    _pin_synthetic_source_manifest(monkeypatch, review)
     review_path.write_text(json.dumps(review), encoding="utf-8")
 
     with pytest.raises(SourceReviewNotApproved, match="appearance_status"):
@@ -243,7 +281,7 @@ def test_source_review_gate_requires_all_three_human_approvals(tmp_path):
     ),
 )
 def test_source_review_gate_requires_reviewer_and_aware_approval_time(
-    tmp_path, field, value, message
+    tmp_path, field, value, message, monkeypatch
 ):
     asset = _complete_local_asset(tmp_path)
     review_path = write_pending_source_review(
@@ -260,16 +298,22 @@ def test_source_review_gate_requires_reviewer_and_aware_approval_time(
         }
     )
     review[field] = value
+    _pin_synthetic_source_manifest(monkeypatch, review)
     review_path.write_text(json.dumps(review), encoding="utf-8")
 
     with pytest.raises(SourceReviewNotApproved, match=message):
         assert_source_review_approved(review_path)
 
 
-def test_source_review_gate_rechecks_official_files_after_human_approval(tmp_path):
+def test_source_review_gate_rechecks_official_files_after_human_approval(
+    tmp_path, monkeypatch
+):
     asset = _complete_local_asset(tmp_path)
     review_path = write_pending_source_review(
         asset, tmp_path / "out", build_source_inspection(asset)
+    )
+    _pin_synthetic_source_manifest(
+        monkeypatch, json.loads(review_path.read_text(encoding="utf-8"))
     )
     approve_source_review(
         review_path,
@@ -285,12 +329,13 @@ def test_source_review_gate_rechecks_official_files_after_human_approval(tmp_pat
         assert_source_review_approved(review_path)
 
 
-def test_source_review_gate_rejects_malformed_official_file_record(tmp_path):
+def test_source_review_gate_rejects_malformed_official_file_record(tmp_path, monkeypatch):
     asset = _complete_local_asset(tmp_path)
     review_path = write_pending_source_review(
         asset, tmp_path / "out", build_source_inspection(asset)
     )
     review = json.loads(review_path.read_text(encoding="utf-8"))
+    _pin_synthetic_source_manifest(monkeypatch, review)
     review.update(
         {
             "geometry_status": "approved",
@@ -303,8 +348,167 @@ def test_source_review_gate_rejects_malformed_official_file_record(tmp_path):
     )
     review_path.write_text(json.dumps(review), encoding="utf-8")
 
-    with pytest.raises(SourceReviewNotApproved, match="official_files verification failed"):
+    with pytest.raises(SourceReviewNotApproved, match="source manifest"):
         assert_source_review_approved(review_path)
+
+
+def test_source_review_gate_rejects_deleted_texture_manifest_record(
+    tmp_path, monkeypatch
+):
+    asset = _complete_local_asset(tmp_path)
+    review_path = write_pending_source_review(
+        asset, tmp_path / "out", build_source_inspection(asset)
+    )
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    _pin_synthetic_source_manifest(monkeypatch, review)
+    review.update(
+        {
+            "geometry_status": "approved",
+            "appearance_status": "approved",
+            "direction_status": "approved",
+            "approved_by": "jzy",
+            "approved_at": "2026-07-10T12:00:00+08:00",
+        }
+    )
+    del review["official_files"][-1]
+    review_path.write_text(json.dumps(review), encoding="utf-8")
+
+    with pytest.raises(SourceReviewNotApproved, match="source manifest"):
+        assert_source_review_approved(review_path)
+
+
+def test_source_review_gate_rejects_altered_official_hash_manifest_record(
+    tmp_path, monkeypatch
+):
+    asset = _complete_local_asset(tmp_path)
+    review_path = write_pending_source_review(
+        asset, tmp_path / "out", build_source_inspection(asset)
+    )
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    _pin_synthetic_source_manifest(monkeypatch, review)
+    replacement = b"altered texture provenance"
+    asset.textures[0].local_path.write_bytes(replacement)
+    altered_record = review["official_files"][1]
+    altered_record["size"] = len(replacement)
+    altered_record["official_git_blob_sha1"] = git_blob_sha1_bytes(replacement)
+    altered_record["sha256"] = hashlib.sha256(replacement).hexdigest()
+    review.update(
+        {
+            "geometry_status": "approved",
+            "appearance_status": "approved",
+            "direction_status": "approved",
+            "approved_by": "jzy",
+            "approved_at": "2026-07-10T12:00:00+08:00",
+        }
+    )
+    review_path.write_text(json.dumps(review), encoding="utf-8")
+
+    with pytest.raises(SourceReviewNotApproved, match="source manifest"):
+        assert_source_review_approved(review_path)
+
+
+def test_source_review_gate_rejects_unknown_production_asset_id(tmp_path):
+    asset = _complete_local_asset(tmp_path)
+    review_path = write_pending_source_review(
+        asset, tmp_path / "out", build_source_inspection(asset)
+    )
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    review.update(
+        {
+            "geometry_status": "approved",
+            "appearance_status": "approved",
+            "direction_status": "approved",
+            "approved_by": "jzy",
+            "approved_at": "2026-07-10T12:00:00+08:00",
+        }
+    )
+    review_path.write_text(json.dumps(review), encoding="utf-8")
+
+    with pytest.raises(SourceReviewNotApproved, match="Unknown Rocketbox production asset_id"):
+        assert_source_review_approved(review_path)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "duplicate",
+        "reorder",
+        "mistype_role",
+        "alter_path",
+        "alter_size",
+    ),
+)
+def test_source_review_gate_rejects_noncanonical_manifest_layouts(
+    tmp_path, monkeypatch, mutation
+):
+    asset = _complete_local_asset(tmp_path)
+    review_path = write_pending_source_review(
+        asset, tmp_path / "out", build_source_inspection(asset)
+    )
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    _pin_synthetic_source_manifest(monkeypatch, review)
+    if mutation == "duplicate":
+        review["official_files"].append(dict(review["official_files"][-1]))
+    elif mutation == "reorder":
+        review["official_files"].reverse()
+    elif mutation == "mistype_role":
+        review["official_files"][1]["role"] = "fbx"
+    elif mutation == "alter_path":
+        review["official_files"][1]["official_rel_path"] = "Assets/Test/other.tga"
+    else:
+        review["official_files"][1]["size"] += 1
+    review.update(
+        {
+            "geometry_status": "approved",
+            "appearance_status": "approved",
+            "direction_status": "approved",
+            "approved_by": "jzy",
+            "approved_at": "2026-07-10T12:00:00+08:00",
+        }
+    )
+    review_path.write_text(json.dumps(review), encoding="utf-8")
+
+    with pytest.raises(SourceReviewNotApproved, match="source manifest"):
+        assert_source_review_approved(review_path)
+
+
+def test_pinned_production_source_manifests_have_exact_counts_and_digests():
+    pins = rocketbox_review._PINNED_SOURCE_MANIFESTS
+
+    assert pins["rocketbox_male_adult_01"]["sha256"] == (
+        "a0fab2d505a426763ba66802b9d292a87856bf9a0a1d453c1279bea3630d6b62"
+    )
+    assert len(pins["rocketbox_male_adult_01"]["layout"]) == 8
+    assert pins["rocketbox_male_adult_01"]["layout"] == (
+        (
+            "fbx",
+            "Assets/Avatars/Adults/Male_Adult_01/Export/Male_Adult_01.fbx",
+        ),
+        *(
+            (
+                "texture",
+                f"Assets/Avatars/Adults/Male_Adult_01/Textures/m002_{suffix}.tga",
+            )
+            for suffix in (
+                "body_color",
+                "body_normal",
+                "body_specular",
+                "head_color",
+                "head_normal",
+                "head_specular",
+                "opacity_color",
+            )
+        ),
+    )
+    assert pins["rocketbox_female_adult_01"]["sha256"] == (
+        "4973307a3cd444d8abeaf507287a33849b5b720a14f72b639e55040475929b24"
+    )
+    assert len(pins["rocketbox_female_adult_01"]["layout"]) == 9
+    assert pins["rocketbox_female_adult_01"]["layout"][-1] == (
+        "texture",
+        "Assets/Avatars/Adults/Female_Adult_01/Textures/"
+        "f001_head_normal_wrinkle.tga",
+    )
 
 
 def _write_complete_cli_asset_tree(tmp_path, gender="male"):
@@ -498,10 +702,15 @@ def test_inspect_cli_writes_fixed_sentinels_and_pending_review(tmp_path, capsys)
     )
 
 
-def test_approve_cli_records_explicit_human_approval_and_aware_time(tmp_path, capsys):
+def test_approve_cli_records_explicit_human_approval_and_aware_time(
+    tmp_path, capsys, monkeypatch
+):
     asset = _complete_local_asset(tmp_path)
     review_path = write_pending_source_review(
         asset, tmp_path / "out", build_source_inspection(asset)
+    )
+    _pin_synthetic_source_manifest(
+        monkeypatch, json.loads(review_path.read_text(encoding="utf-8"))
     )
 
     exit_code = main(

@@ -41,6 +41,43 @@ RAW_GITHUB_BASE = (
     "https://raw.githubusercontent.com/microsoft/Microsoft-Rocketbox/master/"
 )
 _USER_AGENT = "AVEngine-Rocketbox-Source-Review/1.0"
+_SOURCE_MANIFEST_FIELDS = (
+    "role",
+    "official_rel_path",
+    "size",
+    "official_git_blob_sha1",
+)
+
+
+def _expected_source_manifest_layout(
+    avatar_dir: str, texture_prefix: str, texture_suffixes: tuple[str, ...]
+) -> tuple[tuple[str, str], ...]:
+    avatar_root = f"Assets/Avatars/Adults/{avatar_dir}"
+    return (
+        ("fbx", f"{avatar_root}/Export/{avatar_dir}.fbx"),
+        *(
+            ("texture", f"{avatar_root}/Textures/{texture_prefix}_{suffix}.tga")
+            for suffix in texture_suffixes
+        ),
+    )
+
+
+_PINNED_SOURCE_MANIFESTS = {
+    "rocketbox_male_adult_01": {
+        "sha256": "a0fab2d505a426763ba66802b9d292a87856bf9a0a1d453c1279bea3630d6b62",
+        "layout": _expected_source_manifest_layout(
+            "Male_Adult_01", "m002", _REQUIRED_TEXTURE_SUFFIXES
+        ),
+    },
+    "rocketbox_female_adult_01": {
+        "sha256": "4973307a3cd444d8abeaf507287a33849b5b720a14f72b639e55040475929b24",
+        "layout": _expected_source_manifest_layout(
+            "Female_Adult_01",
+            "f001",
+            _REQUIRED_TEXTURE_SUFFIXES + _FEMALE_OPTIONAL_TEXTURE_SUFFIXES,
+        ),
+    },
+}
 
 
 class OfficialFileError(RuntimeError):
@@ -321,7 +358,66 @@ def write_pending_source_review(
     return _write_json(Path(output_dir) / "source_review.json", review)
 
 
+def _canonical_source_manifest(
+    official_files: object,
+) -> tuple[tuple[str, str, int, str], ...]:
+    if not isinstance(official_files, list):
+        raise SourceReviewNotApproved("source manifest official_files must be a list")
+    manifest: list[tuple[str, str, int, str]] = []
+    for record in official_files:
+        if not isinstance(record, dict):
+            raise SourceReviewNotApproved("source manifest contains a non-object record")
+        try:
+            role, rel_path, size, git_sha = (
+                record[field] for field in _SOURCE_MANIFEST_FIELDS
+            )
+        except KeyError as error:
+            raise SourceReviewNotApproved(
+                f"source manifest record is missing {error.args[0]}"
+            ) from error
+        if (
+            not isinstance(role, str)
+            or not isinstance(rel_path, str)
+            or type(size) is not int
+            or not isinstance(git_sha, str)
+        ):
+            raise SourceReviewNotApproved("source manifest record has invalid field types")
+        manifest.append((role, rel_path, size, git_sha))
+    return tuple(manifest)
+
+
+def _source_manifest_sha256(
+    manifest: tuple[tuple[str, str, int, str], ...]
+) -> str:
+    payload = [dict(zip(_SOURCE_MANIFEST_FIELDS, record)) for record in manifest]
+    encoded = json.dumps(
+        payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _verify_pinned_source_manifest(review: dict[str, Any]) -> None:
+    asset_id = review.get("asset_id")
+    pin = _PINNED_SOURCE_MANIFESTS.get(asset_id)
+    if pin is None:
+        raise SourceReviewNotApproved(
+            f"Unknown Rocketbox production asset_id: {asset_id!r}"
+        )
+    manifest = _canonical_source_manifest(review.get("official_files"))
+    expected_layout = pin["layout"]
+    actual_layout = tuple((role, rel_path) for role, rel_path, _, _ in manifest)
+    if len(manifest) != len(expected_layout) or actual_layout != expected_layout:
+        raise SourceReviewNotApproved(
+            "source manifest roles, paths, order, or count do not match the pinned asset"
+        )
+    if _source_manifest_sha256(manifest) != pin["sha256"]:
+        raise SourceReviewNotApproved(
+            "source manifest SHA-256 does not match the pinned official asset"
+        )
+
+
 def _verify_review_official_files(review: dict[str, Any]) -> None:
+    _verify_pinned_source_manifest(review)
     missing_required_textures = review.get("missing_required_textures")
     if missing_required_textures:
         raise SourceReviewNotApproved(
