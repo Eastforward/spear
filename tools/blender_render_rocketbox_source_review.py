@@ -47,6 +47,11 @@ CLOSE_VIEW_FILES = {
 VIDEO_FILE = "turntable.mp4"
 MANIFEST_FILE = "render_manifest.json"
 LEGEND_CONTRACT = ("UP +Z", "FRONT -Y", "REST POSE / NO ACTION")
+REVIEW_LIGHT_ENERGIES = (320.0, 140.0, 220.0)
+BODY_FRAME_MARGIN = 1.24
+LEGEND_FONT_SCALE = 0.018
+LEGEND_MARGIN_SCALE = 0.070
+OPACITY_ROUGHNESS = 0.86
 ASSET_PREFIXES = {
     "rocketbox_male_adult_01": "m002",
     "rocketbox_female_adult_01": "f001",
@@ -192,6 +197,17 @@ def image_has_useful_alpha(image: bpy.types.Image) -> bool:
     return minimum < 0.999 and maximum - minimum > 0.0001
 
 
+def material_uses_color_as_alpha(material: bpy.types.Material) -> bool:
+    if not material.use_nodes or material.node_tree is None:
+        return False
+    return any(
+        link.from_socket.name == "Color"
+        and link.to_socket.name == "Alpha"
+        and link.to_node.type == "BSDF_PRINCIPLED"
+        for link in material.node_tree.links
+    )
+
+
 def rebuild_surface_material(
     material: bpy.types.Material,
     color_path: Path,
@@ -231,6 +247,7 @@ def rebuild_surface_material(
 def rebuild_opacity_material(
     material: bpy.types.Material, color_path: Path
 ) -> dict[str, str]:
+    uses_color_alpha = material_uses_color_as_alpha(material)
     material.use_nodes = True
     node_tree = material.node_tree
     nodes = node_tree.nodes
@@ -241,8 +258,14 @@ def rebuild_opacity_material(
     shader = nodes.new("ShaderNodeBsdfPrincipled")
     color = new_image_node(nodes, color_path, "sRGB", "official_opacity_color")
     links.new(color.outputs["Color"], shader.inputs["Base Color"])
+    shader.inputs["Roughness"].default_value = OPACITY_ROUGHNESS
+    if "Specular IOR Level" in shader.inputs:
+        shader.inputs["Specular IOR Level"].default_value = 0.0
     alpha_source = "alpha"
-    if image_has_useful_alpha(color.image):
+    if uses_color_alpha:
+        links.new(color.outputs["Color"], shader.inputs["Alpha"])
+        alpha_source = "color_luminance"
+    elif image_has_useful_alpha(color.image):
         links.new(color.outputs["Alpha"], shader.inputs["Alpha"])
     else:
         grayscale = nodes.new("ShaderNodeRGBToBW")
@@ -251,6 +274,7 @@ def rebuild_opacity_material(
         alpha_source = "grayscale"
     links.new(shader.outputs["BSDF"], output.inputs["Surface"])
     material.surface_render_method = "DITHERED"
+    material.use_transparency_overlap = False
     return {
         "color": str(color_path.resolve()),
         "alpha_source": alpha_source,
@@ -304,7 +328,7 @@ def configure_scene() -> None:
     scene.world.use_nodes = True
     background = scene.world.node_tree.nodes.get("Background")
     background.inputs["Color"].default_value = (0.035, 0.043, 0.052, 1.0)
-    background.inputs["Strength"].default_value = 0.28
+    background.inputs["Strength"].default_value = 0.16
     scene.view_settings.look = "AgX - Medium High Contrast"
 
 
@@ -318,7 +342,7 @@ def simple_material(name: str, color: tuple[float, float, float, float]) -> bpy.
     return material
 
 
-def add_review_floor(bounds: Bounds) -> None:
+def add_review_floor(bounds: Bounds) -> bpy.types.Object:
     size = max(bounds.dimensions.x, bounds.dimensions.y, 2.5) * 2.4
     bpy.ops.mesh.primitive_plane_add(
         size=size,
@@ -327,9 +351,10 @@ def add_review_floor(bounds: Bounds) -> None:
     floor = bpy.context.object
     floor.name = "rocketbox_review_floor"
     floor.data.materials.append(simple_material("review_floor", (0.16, 0.18, 0.20, 1.0)))
+    return floor
 
 
-def add_direction_arrow(bounds: Bounds) -> None:
+def add_direction_arrow(bounds: Bounds) -> tuple[bpy.types.Object, bpy.types.Object]:
     height = max(bounds.dimensions.z, 1.0)
     length = height * 0.34
     x = bounds.maximum.x - bounds.dimensions.x * 0.08
@@ -353,6 +378,17 @@ def add_direction_arrow(bounds: Bounds) -> None:
     tip = bpy.context.object
     tip.name = "FRONT_-Y_arrow_tip"
     tip.data.materials.append(red)
+    return shaft, tip
+
+
+def set_review_guides_visibility(view_name: str) -> None:
+    floor = bpy.data.objects.get("rocketbox_review_floor")
+    if floor is not None:
+        floor.hide_render = view_name == "top"
+    for arrow_name in ("FRONT_-Y_arrow_shaft", "FRONT_-Y_arrow_tip"):
+        arrow = bpy.data.objects.get(arrow_name)
+        if arrow is not None:
+            arrow.hide_render = view_name != "top"
 
 
 def add_area_light(name: str, location: Vector, energy: float, size: float, target: Vector) -> None:
@@ -369,24 +405,25 @@ def add_area_light(name: str, location: Vector, energy: float, size: float, targ
 def add_lighting(bounds: Bounds) -> None:
     center = bounds.center
     height = max(bounds.dimensions.z, 1.0)
+    key_energy, fill_energy, rim_energy = REVIEW_LIGHT_ENERGIES
     add_area_light(
         "review_key",
         center + Vector((-height * 0.8, -height * 1.2, height * 0.9)),
-        1050.0,
+        key_energy,
         height * 0.7,
         center,
     )
     add_area_light(
         "review_fill",
         center + Vector((height * 0.9, -height * 0.5, height * 0.45)),
-        720.0,
+        fill_energy,
         height * 0.8,
         center,
     )
     add_area_light(
         "review_rim",
         center + Vector((0.0, height * 1.0, height * 0.9)),
-        900.0,
+        rim_energy,
         height * 0.55,
         center,
     )
@@ -402,6 +439,18 @@ def make_camera() -> bpy.types.Object:
     bpy.context.collection.objects.link(camera)
     bpy.context.scene.camera = camera
     return camera
+
+
+def camera_frame_bounds(
+    camera: bpy.types.Object, scene: bpy.types.Scene
+) -> tuple[float, float, float, float]:
+    frame_corners = camera.data.view_frame(scene=scene)
+    return (
+        min(corner.x for corner in frame_corners),
+        max(corner.x for corner in frame_corners),
+        min(corner.y for corner in frame_corners),
+        max(corner.y for corner in frame_corners),
+    )
 
 
 def set_camera(
@@ -420,17 +469,26 @@ def set_camera(
     camera.location = target + direction_vector * distance
     look_at(camera, target)
     bpy.context.view_layer.update()
-    aspect = resolution[0] / resolution[1]
     if fixed_scale is None:
         inverse = camera.matrix_world.inverted()
         camera_corners = tuple(inverse @ corner for corner in bounds.corners)
-        width = max(corner.x for corner in camera_corners) - min(
+        content_width = max(corner.x for corner in camera_corners) - min(
             corner.x for corner in camera_corners
         )
-        height = max(corner.y for corner in camera_corners) - min(
+        content_height = max(corner.y for corner in camera_corners) - min(
             corner.y for corner in camera_corners
         )
-        fixed_scale = max(height * 1.16, width / aspect * 1.16, 0.25)
+        camera.data.ortho_scale = 1.0
+        frame_left, frame_right, frame_bottom, frame_top = camera_frame_bounds(
+            camera, scene
+        )
+        frame_width = frame_right - frame_left
+        frame_height = frame_top - frame_bottom
+        fixed_scale = max(
+            content_width / frame_width * BODY_FRAME_MARGIN,
+            content_height / frame_height * BODY_FRAME_MARGIN,
+            0.25,
+        )
     camera.data.ortho_scale = fixed_scale
 
 
@@ -451,6 +509,69 @@ def emission_material(name: str) -> bpy.types.Material:
     return material
 
 
+def legend_text(
+    asset_id: str,
+    source_name: str,
+    view_name: str,
+    forward_axis: str,
+    up_axis: str,
+) -> str:
+    return (
+        f"{asset_id}\n"
+        f"SOURCE {source_name}\n"
+        f"{view_name.upper()} | REST POSE / NO ACTION\n"
+        f"UP {up_axis} | FRONT {forward_axis} (RED ARROW)"
+    )
+
+
+def annotate_still(
+    output_path: Path,
+    asset_id: str,
+    source_name: str,
+    view_name: str,
+    forward_axis: str,
+    up_axis: str,
+) -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    with Image.open(output_path) as loaded:
+        source = loaded.convert("RGBA")
+    overlay = Image.new("RGBA", source.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    font_size = max(18, round(source.width * 0.018))
+    font_path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+    font = (
+        ImageFont.truetype(str(font_path), font_size)
+        if font_path.is_file()
+        else ImageFont.load_default()
+    )
+    text = legend_text(asset_id, source_name, view_name, forward_axis, up_axis)
+    spacing = max(3, font_size // 5)
+    text_box = draw.multiline_textbbox((0, 0), text, font=font, spacing=spacing)
+    padding = max(18, round(source.width * 0.018))
+    left = padding
+    top = padding
+    width = text_box[2] - text_box[0]
+    height = text_box[3] - text_box[1]
+    draw.rectangle(
+        (
+            left - padding // 2,
+            top - padding // 2,
+            left + width + padding // 2,
+            top + height + padding // 2,
+        ),
+        fill=(3, 8, 14, 210),
+    )
+    draw.multiline_text(
+        (left, top),
+        text,
+        font=font,
+        fill=(245, 248, 252, 255),
+        spacing=spacing,
+    )
+    Image.alpha_composite(source, overlay).save(output_path)
+
+
 def remove_legend() -> None:
     for obj in tuple(bpy.data.objects):
         if obj.name.startswith("rocketbox_review_legend"):
@@ -467,28 +588,26 @@ def add_legend(
     view_name: str,
     forward_axis: str,
     up_axis: str,
-    resolution: tuple[int, int],
 ) -> None:
     remove_legend()
     curve = bpy.data.curves.new("rocketbox_review_legend_curve", type="FONT")
-    curve.body = (
-        f"{asset_id} | {source_name}\n"
-        f"{view_name.upper()} | REST POSE / NO ACTION\n"
-        f"UP {up_axis} | FRONT {forward_axis}  --->"
+    curve.body = legend_text(
+        asset_id, source_name, view_name, forward_axis, up_axis
     )
     curve.align_x = "LEFT"
     curve.align_y = "TOP"
-    curve.size = camera.data.ortho_scale * 0.028
+    curve.size = camera.data.ortho_scale * LEGEND_FONT_SCALE
     curve.space_line = 1.05
     text = bpy.data.objects.new("rocketbox_review_legend", curve)
     bpy.context.collection.objects.link(text)
     text.data.materials.append(emission_material("rocketbox_review_legend_material"))
     text.parent = camera
-    aspect = resolution[0] / resolution[1]
-    half_height = camera.data.ortho_scale * 0.5
-    half_width = half_height * aspect
-    margin = camera.data.ortho_scale * 0.045
-    text.location = (-half_width + margin, half_height - margin, -1.0)
+    scene = bpy.context.scene
+    frame_left, frame_right, frame_bottom, frame_top = camera_frame_bounds(
+        camera, scene
+    )
+    margin = camera.data.ortho_scale * LEGEND_MARGIN_SCALE
+    text.location = (frame_left + margin, frame_top - margin, -1.0)
     text.rotation_euler = (0.0, 0.0, 0.0)
 
 
@@ -508,22 +627,23 @@ def render_still(
     up_axis: str = "+Z",
 ) -> None:
     del avatar
+    set_review_guides_visibility(view_name)
     target = bounds.center if target is None else target
     set_camera(camera, target, direction, bounds, resolution, fixed_scale)
-    add_legend(
-        camera,
-        asset_id,
-        source_name,
-        view_name,
-        forward_axis,
-        up_axis,
-        resolution,
-    )
+    remove_legend()
     scene = bpy.context.scene
     scene.frame_set(1)
     scene.render.filepath = str(output_path)
     scene.render.image_settings.file_format = "PNG"
     bpy.ops.render.render(write_still=True)
+    annotate_still(
+        output_path,
+        asset_id,
+        source_name,
+        view_name,
+        forward_axis,
+        up_axis,
+    )
 
 
 def avatar_roots(imported_objects: Iterable[bpy.types.Object]) -> list[bpy.types.Object]:
@@ -562,6 +682,7 @@ def render_turntable(
     up_axis: str,
 ) -> None:
     add_turntable_pivot(avatar, bounds)
+    set_review_guides_visibility("turntable")
     set_camera(
         camera,
         bounds.center + Vector((0.0, 0.0, bounds.dimensions.z * 0.02)),
@@ -576,7 +697,6 @@ def render_turntable(
         "turntable",
         forward_axis,
         up_axis,
-        VIDEO_SIZE,
     )
     scene = bpy.context.scene
     scene.frame_start = 1
@@ -625,8 +745,8 @@ def render_review(
     width = bounds.dimensions.x
     close_specs = {
         "face_close": (
-            bounds.center + Vector((0.0, 0.0, height * 0.37)),
-            max(height * 0.34, width / (CLOSE_VIEW_SIZE[0] / CLOSE_VIEW_SIZE[1]) * 0.42),
+            bounds.center + Vector((0.0, 0.0, height * 0.38)),
+            max(height * 0.55, width / (CLOSE_VIEW_SIZE[0] / CLOSE_VIEW_SIZE[1]) * 0.55),
         ),
         "arms_close": (
             bounds.center + Vector((0.0, 0.0, height * 0.18)),

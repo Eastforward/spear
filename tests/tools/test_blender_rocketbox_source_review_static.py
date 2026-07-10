@@ -93,6 +93,47 @@ def test_renderer_bulk_reads_opacity_pixels_and_reuses_legend_material():
     assert "bpy.data.materials.get(name)" in source
 
 
+def test_renderer_keeps_labels_and_direction_guides_review_safe():
+    source = renderer_source()
+
+    assert "REVIEW_LIGHT_ENERGIES = (320.0, 140.0, 220.0)" in source
+    assert "BODY_FRAME_MARGIN = 1.24" in source
+    assert "LEGEND_FONT_SCALE = 0.018" in source
+    assert "LEGEND_MARGIN_SCALE = 0.070" in source
+    assert 'floor.hide_render = view_name == "top"' in source
+    assert 'arrow.hide_render = view_name != "top"' in source
+    assert "OPACITY_ROUGHNESS = 0.86" in source
+
+
+def test_renderer_fits_ortho_camera_from_blender_frame_dimensions():
+    source = renderer_source()
+
+    assert "camera.data.view_frame(scene=scene)" in source
+    assert "content_width / frame_width" in source
+    assert "content_height / frame_height" in source
+
+
+def test_turntable_legend_uses_blender_frame_bounds():
+    source = renderer_source()
+
+    assert "def camera_frame_bounds" in source
+    assert "frame_left, frame_right, frame_bottom, frame_top = camera_frame_bounds(" in source
+    assert "text.location = (frame_left + margin, frame_top - margin, -1.0)" in source
+
+
+def test_renderer_preserves_rocketbox_opacity_semantics_and_pixel_labels():
+    source = renderer_source()
+
+    assert "def material_uses_color_as_alpha" in source
+    assert 'link.from_socket.name == "Color"' in source
+    assert 'link.to_socket.name == "Alpha"' in source
+    assert "material.use_transparency_overlap = False" in source
+    assert 'shader.inputs["Specular IOR Level"].default_value = 0.0' in source
+    assert "def annotate_still" in source
+    assert "from PIL import Image, ImageDraw, ImageFont" in source
+    assert "annotate_still(" in source
+
+
 def test_renderer_pins_review_dimensions_and_turntable_timing():
     source = renderer_source()
 
