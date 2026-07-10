@@ -123,6 +123,64 @@ def test_asset_url_must_match_the_manifest_asset_id(workspace):
     assert _client(workspace).get("/asset/rocketbox_male_adult_01").status_code == 409
 
 
+def test_unknown_asset_get_and_post_return_404(workspace):
+    client = _client(workspace)
+    csrf_token = _csrf_token(client)
+
+    assert client.get("/asset/not-a-rocketbox-asset").status_code == 404
+    assert (
+        client.post(
+            "/decision/not-a-rocketbox-asset",
+            data={
+                "decision": "approved",
+                "reviewer": "reviewer",
+                "csrf_token": csrf_token,
+            },
+        ).status_code
+        == 404
+    )
+
+
+def test_invalid_decision_with_valid_csrf_does_not_replace_review_record(workspace):
+    client = _client(workspace)
+    csrf_token = _csrf_token(client)
+    review_path = workspace / "rocketbox_male_adult_01" / "motion_review.json"
+    before = review_path.read_bytes()
+
+    response = client.post(
+        "/decision/rocketbox_male_adult_01",
+        data={
+            "decision": "invalid",
+            "reviewer": "reviewer",
+            "csrf_token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 400
+    assert review_path.read_bytes() == before
+
+
+def test_media_route_rejects_manifest_mapping_front_to_manifest_file(workspace):
+    manifest_path = workspace / "rocketbox_male_adult_01" / "retarget_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["media"]["front"] = "retarget_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    response = _client(workspace).get("/media/rocketbox_male_adult_01/front")
+
+    assert response.status_code == 409
+
+
+def test_media_route_rejects_front_media_symlink(workspace):
+    asset_dir = workspace / "rocketbox_male_adult_01"
+    (asset_dir / "front.mp4").unlink()
+    (asset_dir / "front.mp4").symlink_to("side.mp4")
+
+    response = _client(workspace).get("/media/rocketbox_male_adult_01/front")
+
+    assert response.status_code == 409
+
+
 def test_decision_uses_explicit_reviewer_and_replaces_previous_decision(workspace):
     client = _client(workspace)
     csrf_token = _csrf_token(client)
