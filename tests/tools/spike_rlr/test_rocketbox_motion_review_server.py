@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -35,15 +36,22 @@ def _write_ready_fixture(review_root: Path, asset_id: str) -> Path:
         filename = f"{name}.png" if name == "contact_sheet" else f"{name}.mp4"
         (review_dir / filename).write_bytes(f"{asset_id}:{name}".encode("ascii"))
         media[name] = filename
+    retarget_glb_bytes = f"{asset_id}:retarget_glb".encode("ascii")
+    (review_dir / "retarget.glb").write_bytes(retarget_glb_bytes)
+    immutable_input_hashes = {
+        name: value * 64
+        for name, value in zip(
+            REQUIRED_INPUT_HASHES, ("a", "b", "c", "d", "e", "f", "0")
+        )
+    }
+    immutable_input_hashes["retarget_glb"] = hashlib.sha256(
+        retarget_glb_bytes
+    ).hexdigest()
     manifest = {
         "schema_version": "rocketbox_retarget_manifest_v1",
         "asset_id": asset_id,
-        "immutable_input_hashes": {
-            name: value * 64
-            for name, value in zip(
-                REQUIRED_INPUT_HASHES, ("a", "b", "c", "d", "e", "f", "0")
-            )
-        },
+        "immutable_input_hashes": immutable_input_hashes,
+        "artifacts": {"glb": "retarget.glb"},
         "binding": {
             "target_asset_id": asset_id,
             "target_mesh_bound": True,
