@@ -198,6 +198,17 @@ def validate_ready_manifest(review_dir: Path) -> tuple[dict[str, Any], dict[str,
             "retarget manifest immutable_input_hashes must contain 64-character lowercase hex values"
         )
 
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict) or artifacts.get("glb") != "retarget.glb":
+        raise ValueError(
+            "retarget GLB artifact must use canonical filename retarget.glb"
+        )
+    retarget_glb_path = _regular_file_directly_under(
+        review_dir / "retarget.glb", review_dir, "retarget GLB"
+    )
+    if sha256_file(retarget_glb_path) != input_hashes["retarget_glb"]:
+        raise ValueError("retarget GLB hash does not match immutable_input_hashes")
+
     binding = manifest.get("binding")
     if not isinstance(binding, dict):
         raise ValueError("retarget manifest binding provenance is required")

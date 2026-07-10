@@ -35,6 +35,8 @@ REQUIRED_INPUT_HASHES = (
 def write_ready_fixture(tmp_path, asset_id, *, automatic_checks=None):
     review_dir = tmp_path / asset_id
     review_dir.mkdir(parents=True)
+    retarget_glb = review_dir / "retarget.glb"
+    retarget_glb.write_bytes(f"{asset_id}:retarget".encode("ascii"))
     media = {}
     for name in REQUIRED_MEDIA:
         filename = f"{name}.png" if name == "contact_sheet" else f"{name}.mp4"
@@ -50,6 +52,7 @@ def write_ready_fixture(tmp_path, asset_id, *, automatic_checks=None):
                 REQUIRED_INPUT_HASHES, ("a", "b", "c", "d", "e", "f", "0")
             )
         },
+        "artifacts": {"glb": "retarget.glb"},
         "binding": {
             "target_asset_id": asset_id,
             "target_mesh_bound": True,
@@ -58,6 +61,7 @@ def write_ready_fixture(tmp_path, asset_id, *, automatic_checks=None):
         "media": media,
         "automatic_checks": automatic_checks or {"overall": "passed"},
     }
+    manifest["immutable_input_hashes"]["retarget_glb"] = sha256_file(retarget_glb)
     (review_dir / "retarget_manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
     )
@@ -203,6 +207,56 @@ def test_malformed_hash_provenance_is_not_ready(tmp_path, bad_hash):
 
     with pytest.raises(ValueError, match="64-character lowercase hex"):
         record_decision(review_dir, "approved", "jzy", "approved")
+
+
+def write_approved_pair(tmp_path):
+    review_root = tmp_path / "reviews"
+    male_dir = write_ready_fixture(review_root, "rocketbox_male_adult_01")
+    female_dir = write_ready_fixture(review_root, "rocketbox_female_adult_01")
+    record_decision(male_dir, "approved", "jzy", "approved")
+    record_decision(female_dir, "approved", "jzy", "approved")
+    return review_root, male_dir
+
+
+def assert_glb_not_ready_and_pair_locked(review_root, review_dir):
+    with pytest.raises(ValueError, match="retarget.*glb|GLB"):
+        validate_ready_manifest(review_dir)
+    with pytest.raises((ValueError, MotionReviewNotApproved), match="retarget.*glb|GLB"):
+        assert_pair_approved(review_root)
+
+
+def test_missing_retarget_glb_is_not_ready(tmp_path):
+    review_root, male_dir = write_approved_pair(tmp_path)
+    (male_dir / "retarget.glb").unlink()
+
+    assert_glb_not_ready_and_pair_locked(review_root, male_dir)
+
+
+def test_symlinked_retarget_glb_is_not_ready(tmp_path):
+    review_root, male_dir = write_approved_pair(tmp_path)
+    external_glb = tmp_path / "external.glb"
+    external_glb.write_bytes((male_dir / "retarget.glb").read_bytes())
+    (male_dir / "retarget.glb").unlink()
+    (male_dir / "retarget.glb").symlink_to(external_glb)
+
+    assert_glb_not_ready_and_pair_locked(review_root, male_dir)
+
+
+def test_noncanonical_retarget_glb_artifact_is_not_ready(tmp_path):
+    review_root, male_dir = write_approved_pair(tmp_path)
+    manifest_path = male_dir / "retarget_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"]["glb"] = "other.glb"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert_glb_not_ready_and_pair_locked(review_root, male_dir)
+
+
+def test_changed_retarget_glb_hash_is_not_ready(tmp_path):
+    review_root, male_dir = write_approved_pair(tmp_path)
+    (male_dir / "retarget.glb").write_bytes(b"overwritten")
+
+    assert_glb_not_ready_and_pair_locked(review_root, male_dir)
 
 
 def test_manifest_media_must_use_canonical_filenames(tmp_path):
