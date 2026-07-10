@@ -63,6 +63,7 @@ class RocketboxReviewAsset:
     textures: tuple[OfficialFile, ...]
     up_axis: str = "+Z"
     forward_axis: str = "-Y"
+    missing_required_textures: tuple[str, ...] = ()
 
 
 def _official_file_from_tree(
@@ -96,15 +97,19 @@ def load_review_assets(
         if fbx_rel_path not in entries:
             continue
 
-        texture_suffixes = list(_REQUIRED_TEXTURE_SUFFIXES)
-        if gender == "female":
-            texture_suffixes.extend(_FEMALE_OPTIONAL_TEXTURE_SUFFIXES)
+        required_texture_paths = tuple(
+            f"{avatar_root}/Textures/{texture_prefix}_{suffix}.tga"
+            for suffix in _REQUIRED_TEXTURE_SUFFIXES
+        )
+        optional_texture_paths = tuple(
+            f"{avatar_root}/Textures/{texture_prefix}_{suffix}.tga"
+            for suffix in _FEMALE_OPTIONAL_TEXTURE_SUFFIXES
+            if gender == "female"
+        )
         textures = tuple(
-            _official_file_from_tree(
-                entries, f"{avatar_root}/Textures/{texture_prefix}_{suffix}.tga", sample_root
-            )
-            for suffix in texture_suffixes
-            if f"{avatar_root}/Textures/{texture_prefix}_{suffix}.tga" in entries
+            _official_file_from_tree(entries, rel_path, sample_root)
+            for rel_path in required_texture_paths + optional_texture_paths
+            if rel_path in entries
         )
         assets[asset_id] = RocketboxReviewAsset(
             asset_id=asset_id,
@@ -113,6 +118,9 @@ def load_review_assets(
             texture_prefix=texture_prefix,
             fbx=_official_file_from_tree(entries, fbx_rel_path, sample_root),
             textures=textures,
+            missing_required_textures=tuple(
+                rel_path for rel_path in required_texture_paths if rel_path not in entries
+            ),
         )
     return assets
 
@@ -180,6 +188,12 @@ def ensure_official_files(
     asset: RocketboxReviewAsset, opener: Callable | None = None
 ) -> list[Path]:
     """Fetch missing official files and atomically replace invalid local copies."""
+    if asset.missing_required_textures:
+        missing_paths = ", ".join(asset.missing_required_textures)
+        raise OfficialFileError(
+            f"Rocketbox asset {asset.asset_id} is missing required official textures: "
+            f"{missing_paths}"
+        )
     opener = urlopen if opener is None else opener
     downloaded: list[Path] = []
     for official_file in (asset.fbx, *asset.textures):

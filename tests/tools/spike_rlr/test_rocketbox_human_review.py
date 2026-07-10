@@ -1,6 +1,7 @@
 import io
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,39 @@ def test_load_review_assets_selects_two_sampled_adults(tmp_path):
     assert sorted(assets) == ["rocketbox_female_adult_01", "rocketbox_male_adult_01"]
     assert assets["rocketbox_male_adult_01"].forward_axis == "-Y"
     assert assets["rocketbox_female_adult_01"].up_axis == "+Z"
+
+
+def test_load_review_assets_records_missing_required_textures(tmp_path):
+    tree = {
+        "tree": [
+            {
+                "path": "Assets/Avatars/Adults/Male_Adult_01/Export/Male_Adult_01.fbx",
+                "size": 3,
+                "sha": "fbx-m",
+            },
+            {
+                "path": "Assets/Avatars/Adults/Male_Adult_01/Textures/m002_body_color.tga",
+                "size": 4,
+                "sha": "tex-m",
+            },
+        ]
+    }
+    tree_path = tmp_path / "tree.json"
+    tree_path.write_text(json.dumps(tree), encoding="utf-8")
+
+    asset = load_review_assets(tree_path, tmp_path / "sample")[
+        "rocketbox_male_adult_01"
+    ]
+
+    texture_root = "Assets/Avatars/Adults/Male_Adult_01/Textures"
+    assert asset.missing_required_textures == (
+        f"{texture_root}/m002_body_normal.tga",
+        f"{texture_root}/m002_body_specular.tga",
+        f"{texture_root}/m002_head_color.tga",
+        f"{texture_root}/m002_head_normal.tga",
+        f"{texture_root}/m002_head_specular.tga",
+        f"{texture_root}/m002_opacity_color.tga",
+    )
 
 
 def test_git_blob_sha1_matches_git_object_format(tmp_path):
@@ -115,6 +149,30 @@ def test_ensure_official_files_downloads_atomically_and_verifies(tmp_path):
     assert paths == [expected.local_path]
     assert expected.local_path.read_bytes() == payload
     assert not expected.local_path.with_suffix(".tga.part").exists()
+
+
+def test_ensure_official_files_rejects_missing_required_textures_before_network(
+    tmp_path,
+):
+    missing_paths = (
+        "Assets/Test/m002_head_color.tga",
+        "Assets/Test/m002_opacity_color.tga",
+    )
+    asset = replace(
+        _asset_with_files(tmp_path, textures=()),
+        missing_required_textures=missing_paths,
+    )
+    requests = []
+
+    with pytest.raises(OfficialFileError) as error:
+        ensure_official_files(
+            asset,
+            opener=lambda request, timeout: requests.append(request)
+            or io.BytesIO(b"unused"),
+        )
+
+    assert requests == []
+    assert all(path in str(error.value) for path in missing_paths)
 
 
 def test_ensure_official_files_rejects_corrupt_download(tmp_path):
