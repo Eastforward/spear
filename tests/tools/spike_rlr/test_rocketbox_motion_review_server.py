@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -71,6 +72,14 @@ def _client(workspace: Path):
     return create_app(workspace).test_client()
 
 
+def _csrf_token(client) -> str:
+    response = client.get("/asset/rocketbox_male_adult_01")
+    assert response.status_code == 200
+    match = re.search(rb'name="csrf_token" value="([^"]+)"', response.data)
+    assert match is not None
+    return match.group(1).decode("ascii")
+
+
 def test_asset_page_shows_bound_video_tabs_and_decision_controls(workspace):
     response = _client(workspace).get("/asset/rocketbox_male_adult_01")
 
@@ -91,6 +100,9 @@ def test_asset_page_shows_bound_video_tabs_and_decision_controls(workspace):
     assert b"loop" in response.data
     assert b"muted" in response.data
     assert b"playsinline" in response.data
+    assert b'name="csrf_token"' in response.data
+    assert b"HttpOnly" in response.headers["Set-Cookie"].encode()
+    assert b"SameSite=Strict" in response.headers["Set-Cookie"].encode()
 
 
 def test_media_route_rejects_unknown_kind_and_path_traversal(workspace):
@@ -113,10 +125,16 @@ def test_asset_url_must_match_the_manifest_asset_id(workspace):
 
 def test_decision_uses_explicit_reviewer_and_replaces_previous_decision(workspace):
     client = _client(workspace)
+    csrf_token = _csrf_token(client)
 
     response = client.post(
         "/decision/rocketbox_male_adult_01",
-        data={"decision": "approved", "reviewer": "  reviewer-a  ", "notes": "looks good"},
+        data={
+            "decision": "approved",
+            "reviewer": "  reviewer-a  ",
+            "notes": "looks good",
+            "csrf_token": csrf_token,
+        },
         follow_redirects=False,
     )
 
@@ -127,30 +145,73 @@ def test_decision_uses_explicit_reviewer_and_replaces_previous_decision(workspac
 
     client.post(
         "/decision/rocketbox_male_adult_01",
-        data={"decision": "rejected", "notes": "frame 18"},
+        data={
+            "decision": "rejected",
+            "reviewer": "reviewer-b",
+            "notes": "frame 18",
+            "csrf_token": csrf_token,
+        },
     )
     record = json.loads(review_path.read_text(encoding="utf-8"))
     assert record["decision"] == "rejected"
     assert record["notes"] == "frame 18"
 
 
-def test_decision_defaults_reviewer_to_current_user(workspace, monkeypatch):
+def test_asset_prefills_current_os_user_when_review_has_no_reviewer(workspace, monkeypatch):
     import rocketbox_motion_review_server
 
     monkeypatch.setattr(rocketbox_motion_review_server.getpass, "getuser", lambda: "local-user")
 
-    response = _client(workspace).post(
-        "/decision/rocketbox_male_adult_01",
-        data={"decision": "approved", "reviewer": "   "},
+    client = _client(workspace)
+    response = client.get("/asset/rocketbox_male_adult_01")
+
+    assert response.status_code == 200
+    assert (
+        b'<input name="reviewer" value="local-user" placeholder="'
+        in response.data
     )
 
-    assert response.status_code == 302
-    record = json.loads(
-        (workspace / "rocketbox_male_adult_01" / "motion_review.json").read_text(
-            encoding="utf-8"
-        )
+
+def test_decision_rejects_blank_reviewer_with_valid_csrf_token(workspace):
+    client = _client(workspace)
+    csrf_token = _csrf_token(client)
+    review_path = workspace / "rocketbox_male_adult_01" / "motion_review.json"
+    before = review_path.read_bytes()
+
+    response = client.post(
+        "/decision/rocketbox_male_adult_01",
+        data={"decision": "approved", "reviewer": "   ", "csrf_token": csrf_token},
     )
-    assert record["reviewer"] == "local-user"
+
+    assert response.status_code == 400
+    assert review_path.read_bytes() == before
+
+
+def test_decision_rejects_missing_csrf_token_without_writing_a_review(workspace):
+    client = _client(workspace)
+
+    response = client.post(
+        "/decision/rocketbox_male_adult_01",
+        data={"decision": "approved", "reviewer": "cross-site"},
+    )
+
+    assert response.status_code == 400
+    assert not (workspace / "rocketbox_male_adult_01" / "motion_review.json").exists()
+
+
+def test_decision_rejects_invalid_csrf_token_without_writing_a_review(workspace):
+    client = _client(workspace)
+    _csrf_token(client)
+    review_path = workspace / "rocketbox_male_adult_01" / "motion_review.json"
+    before = review_path.read_bytes()
+
+    response = client.post(
+        "/decision/rocketbox_male_adult_01",
+        data={"decision": "approved", "csrf_token": "not-the-session-token"},
+    )
+
+    assert response.status_code == 400
+    assert review_path.read_bytes() == before
 
 
 def test_gate_reports_locked_pending_pair_then_approved_pair(workspace):

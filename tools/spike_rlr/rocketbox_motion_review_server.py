@@ -4,10 +4,22 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import hmac
 import json
+import secrets
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, redirect, render_template_string, request, send_file, url_for
+from flask import (
+    Flask,
+    abort,
+    jsonify,
+    redirect,
+    render_template_string,
+    request,
+    send_file,
+    session,
+    url_for,
+)
 
 from rocketbox_motion_review import (
     EXPECTED_ASSET_IDS,
@@ -124,8 +136,9 @@ PAGE_TEMPLATE = """<!doctype html>
           <img id="contact-sheet" src="{{ media_urls['contact_sheet'] }}" alt="Contact sheet" hidden>
         </div>
         <form class="review-form" method="post" action="{{ url_for('decision', asset_id=asset_id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <label>备注 Notes<textarea name="notes" placeholder="观察、帧号或返工原因">{{ review.notes }}</textarea></label>
-          <label>审核人 Reviewer<input name="reviewer" value="{{ review.reviewer }}" placeholder="默认当前用户"></label>
+          <label>审核人 Reviewer<input name="reviewer" value="{{ reviewer }}" placeholder="当前用户"></label>
           <button class="command approve" type="submit" name="decision" value="approved">批准 Approve</button>
           <button class="command reject" type="submit" name="decision" value="rejected">驳回 Reject</button>
         </form>
@@ -160,7 +173,34 @@ PAGE_TEMPLATE = """<!doctype html>
 def create_app(review_root: Path | str) -> Flask:
     """Create the review app over a root containing exactly the expected assets."""
     app = Flask(__name__)
+    app.config.update(
+        SECRET_KEY=secrets.token_urlsafe(32),
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Strict",
+    )
     root = Path(review_root).absolute()
+
+    def csrf_token() -> str:
+        token = session.get("rocketbox_motion_review_csrf")
+        if not isinstance(token, str):
+            token = secrets.token_urlsafe(32)
+            session["rocketbox_motion_review_csrf"] = token
+        return token
+
+    def csrf_is_valid() -> bool:
+        submitted = request.form.get("csrf_token")
+        expected = session.get("rocketbox_motion_review_csrf")
+        return (
+            isinstance(submitted, str)
+            and isinstance(expected, str)
+            and hmac.compare_digest(submitted, expected)
+        )
+
+    def form_reviewer(review: dict) -> str:
+        reviewer = review.get("reviewer")
+        if isinstance(reviewer, str) and reviewer.strip():
+            return reviewer.strip()
+        return getpass.getuser()
 
     def asset_dir(asset_id: str) -> Path:
         if asset_id not in EXPECTED_ASSET_IDS:
@@ -231,6 +271,8 @@ def create_app(review_root: Path | str) -> Flask:
             media_tabs=MEDIA_TABS,
             media_urls=media_urls,
             diagnostics=diagnostics,
+            csrf_token=csrf_token(),
+            reviewer=form_reviewer(review),
         )
 
     @app.get("/media/<asset_id>/<kind>")
@@ -243,12 +285,14 @@ def create_app(review_root: Path | str) -> Flask:
     @app.post("/decision/<asset_id>")
     def decision(asset_id: str):
         review_dir = asset_dir(asset_id)
+        if not csrf_is_valid():
+            abort(400, description="invalid CSRF token")
         selected = request.form.get("decision", "")
         if selected not in {"approved", "rejected"}:
             abort(400, description="decision must be approved or rejected")
         reviewer = request.form.get("reviewer", "").strip()
         if not reviewer:
-            reviewer = getpass.getuser().strip()
+            abort(400, description="reviewer must be non-empty")
         try:
             record_decision(review_dir, selected, reviewer, request.form.get("notes", ""))
         except ValueError as error:
