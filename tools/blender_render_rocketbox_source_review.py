@@ -516,11 +516,12 @@ def legend_text(
     forward_axis: str,
     up_axis: str,
 ) -> str:
+    direction_suffix = " (RED ARROW)" if view_name == "top" else ""
     return (
         f"{asset_id}\n"
         f"SOURCE {source_name}\n"
         f"{view_name.upper()} | REST POSE / NO ACTION\n"
-        f"UP {up_axis} | FRONT {forward_axis} (RED ARROW)"
+        f"UP {up_axis} | FRONT {forward_axis}{direction_suffix}"
     )
 
 

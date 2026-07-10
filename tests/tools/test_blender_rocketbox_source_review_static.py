@@ -103,6 +103,7 @@ def test_renderer_keeps_labels_and_direction_guides_review_safe():
     assert 'floor.hide_render = view_name == "top"' in source
     assert 'arrow.hide_render = view_name != "top"' in source
     assert "OPACITY_ROUGHNESS = 0.86" in source
+    assert 'direction_suffix = " (RED ARROW)" if view_name == "top" else ""' in source
 
 
 def test_renderer_fits_ortho_camera_from_blender_frame_dimensions():
