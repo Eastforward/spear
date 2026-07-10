@@ -77,6 +77,7 @@ PAGE_TEMPLATE = """<!doctype html>
     .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
     .tab, .command { border: 1px solid #aebbc4; border-radius: 6px; background: #fff; color: #24313b; min-height: 34px; padding: 6px 10px; font: inherit; font-size: 13px; cursor: pointer; }
     .tab[aria-selected="true"] { background: #d9edf3; border-color: #176f8a; }
+    .stage-meta { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; color: #43515c; font-size: 12px; font-weight: 650; }
     .stage { width: 100%; aspect-ratio: 16 / 9; background: #11181e; display: grid; place-items: center; overflow: hidden; }
     .stage video, .stage img { width: 100%; height: 100%; object-fit: contain; }
     .stage img[hidden], .stage video[hidden] { display: none; }
@@ -131,6 +132,10 @@ PAGE_TEMPLATE = """<!doctype html>
           <button class="tab" type="button" role="tab" data-kind="{{ kind }}" data-url="{{ media_urls[kind] }}" aria-selected="{{ 'true' if kind == 'front' else 'false' }}">{{ label }}</button>
           {% endfor %}
         </div>
+        <div class="stage-meta">
+          <span id="active-view-label">正面 Front</span>
+          <span>UP +Z &nbsp;|&nbsp; FRONT -Y</span>
+        </div>
         <div class="stage">
           <video id="review-video" src="{{ media_urls['front'] }}" controls loop muted playsinline></video>
           <img id="contact-sheet" src="{{ media_urls['contact_sheet'] }}" alt="Contact sheet" hidden>
@@ -152,10 +157,12 @@ PAGE_TEMPLATE = """<!doctype html>
   <script>
     const video = document.getElementById("review-video");
     const contactSheet = document.getElementById("contact-sheet");
+    const activeViewLabel = document.getElementById("active-view-label");
     document.querySelectorAll(".tab").forEach((tab) => {
       tab.addEventListener("click", () => {
         const isContact = tab.dataset.kind === "contact_sheet";
         document.querySelectorAll(".tab").forEach((button) => button.setAttribute("aria-selected", String(button === tab)));
+        activeViewLabel.textContent = tab.textContent.trim();
         video.hidden = isContact;
         contactSheet.hidden = !isContact;
         if (!isContact) {

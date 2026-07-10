@@ -129,6 +129,10 @@ def test_asset_page_shows_bound_video_tabs_and_decision_controls(workspace):
     assert b"loop" in response.data
     assert b"muted" in response.data
     assert b"playsinline" in response.data
+    assert b'id="active-view-label"' in response.data
+    assert b"UP +Z" in response.data
+    assert b"FRONT -Y" in response.data
+    assert b"activeViewLabel.textContent = tab.textContent.trim()" in response.data
     assert b'name="csrf_token"' in response.data
     assert b"HttpOnly" in response.headers["Set-Cookie"].encode()
     assert b"SameSite=Strict" in response.headers["Set-Cookie"].encode()
