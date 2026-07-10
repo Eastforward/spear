@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import stat
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -50,11 +53,36 @@ def sha256_file(path: Path) -> str:
 
 
 def _atomic_write_json(path: Path, payload: dict) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    temporary.replace(path)
+    path = Path(path)
+    temporary: Path | None = None
+    fd: int | None = None
+    try:
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+        )
+        temporary = Path(temporary_name)
+        try:
+            stream = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            fd = None
+            raise
+        fd = None
+        with stream:
+            json.dump(payload, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        if fd is not None:
+            os.close(fd)
+        if temporary is not None:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+        raise
 
 
 def _load_json(path: Path, description: str) -> dict[str, Any]:
@@ -92,6 +120,34 @@ def _reject_symlinked_review_dir(review_dir: Path) -> Path:
     return absolute
 
 
+def _regular_file_directly_under(
+    path: Path, asset_root: Path, description: str
+) -> Path:
+    path = Path(path).absolute()
+    root = Path(asset_root).resolve()
+    if not os.path.lexists(path):
+        raise ValueError(f"{description} is missing: {path}")
+    resolved = path.resolve()
+    if path != resolved or resolved.parent != root:
+        raise ValueError(
+            f"{description} must be a regular file directly under the resolved asset root"
+        )
+    if not stat.S_ISREG(os.lstat(path).st_mode):
+        raise ValueError(
+            f"{description} must be a regular file directly under the resolved asset root"
+        )
+    return resolved
+
+
+def _existing_review_path(review_dir: Path) -> Path | None:
+    review_path = Path(review_dir) / "motion_review.json"
+    if not os.path.lexists(review_path):
+        return None
+    return _regular_file_directly_under(
+        review_path, review_dir, "motion review record"
+    )
+
+
 def _media_path(review_dir: Path, name: str, relative_path: Any) -> Path:
     if not isinstance(relative_path, str) or not relative_path.strip():
         raise ValueError(f"{name} media path must be a non-empty string")
@@ -108,9 +164,9 @@ def _media_path(review_dir: Path, name: str, relative_path: Any) -> Path:
 
 def validate_ready_manifest(review_dir: Path) -> tuple[dict[str, Any], dict[str, Path]]:
     review_dir = _reject_symlinked_review_dir(Path(review_dir))
-    manifest_path = review_dir / "retarget_manifest.json"
-    if not manifest_path.is_file():
-        raise ValueError(f"retarget manifest is missing: {manifest_path}")
+    manifest_path = _regular_file_directly_under(
+        review_dir / "retarget_manifest.json", review_dir, "retarget manifest"
+    )
     manifest = _load_json(manifest_path, "retarget manifest")
 
     if manifest.get("schema_version") != RETARGET_MANIFEST_SCHEMA:
@@ -159,8 +215,13 @@ def validate_ready_manifest(review_dir: Path) -> tuple[dict[str, Any], dict[str,
 
 
 def _current_hashes(review_dir: Path, media_paths: dict[str, Path]) -> tuple[str, dict[str, str]]:
+    manifest_path = _regular_file_directly_under(
+        Path(review_dir) / "retarget_manifest.json",
+        review_dir,
+        "retarget manifest",
+    )
     return (
-        sha256_file(Path(review_dir) / "retarget_manifest.json"),
+        sha256_file(manifest_path),
         {name: sha256_file(path) for name, path in media_paths.items()},
     )
 
@@ -182,9 +243,9 @@ def _pending_payload(
 
 def ensure_pending_review(review_dir: Path) -> dict:
     manifest, media_paths = validate_ready_manifest(review_dir)
-    review_path = Path(review_dir) / "motion_review.json"
+    review_path = _existing_review_path(review_dir)
     manifest_sha256, media_sha256 = _current_hashes(review_dir, media_paths)
-    if review_path.is_file():
+    if review_path is not None:
         existing = _load_json(review_path, "motion review")
         if (
             existing.get("asset_id") == manifest["asset_id"]
@@ -193,7 +254,7 @@ def ensure_pending_review(review_dir: Path) -> dict:
         ):
             return existing
     payload = _pending_payload(manifest, manifest_sha256, media_sha256)
-    _atomic_write_json(review_path, payload)
+    _atomic_write_json(Path(review_dir) / "motion_review.json", payload)
     return payload
 
 
@@ -205,6 +266,7 @@ def record_decision(
         raise ValueError("decision must be approved or rejected")
     if not reviewer.strip():
         raise ValueError("reviewer must be non-empty")
+    _existing_review_path(review_dir)
     manifest_sha256, media_sha256 = _current_hashes(review_dir, media_paths)
     payload = {
         "schema_version": MOTION_REVIEW_SCHEMA,
@@ -245,8 +307,11 @@ def _validate_approved_record(review: dict[str, Any], asset_id: str) -> None:
 
 def assert_motion_approved(review_dir: Path) -> dict:
     manifest, media_paths = validate_ready_manifest(review_dir)
-    review_path = Path(review_dir) / "motion_review.json"
-    if not review_path.is_file():
+    try:
+        review_path = _existing_review_path(review_dir)
+    except ValueError as error:
+        raise MotionReviewNotApproved(str(error)) from error
+    if review_path is None:
         raise MotionReviewNotApproved(f"{manifest['asset_id']} has no motion review")
     try:
         review = _load_json(review_path, "motion review")

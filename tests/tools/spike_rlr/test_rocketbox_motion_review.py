@@ -17,6 +17,7 @@ from rocketbox_motion_review import (  # noqa: E402
     ensure_pending_review,
     record_decision,
     sha256_file,
+    validate_ready_manifest,
 )
 
 
@@ -190,6 +191,91 @@ def test_malformed_hash_provenance_is_not_ready(tmp_path, bad_hash):
 
     with pytest.raises(ValueError, match="64-character lowercase hex"):
         record_decision(review_dir, "approved", "jzy", "approved")
+
+
+def test_external_manifest_symlink_rejected_by_validate_and_record(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    manifest_path = review_dir / "retarget_manifest.json"
+    external_manifest = tmp_path / "external-manifest.json"
+    external_manifest.write_bytes(manifest_path.read_bytes())
+    manifest_path.unlink()
+    manifest_path.symlink_to(external_manifest)
+
+    with pytest.raises(ValueError, match="manifest.*regular|manifest.*root|symlink"):
+        validate_ready_manifest(review_dir)
+    with pytest.raises(ValueError, match="manifest.*regular|manifest.*root|symlink"):
+        record_decision(review_dir, "approved", "jzy", "approved")
+
+
+def test_pair_gate_rejects_external_manifest_symlink(tmp_path):
+    review_root = tmp_path / "reviews"
+    male_dir = write_ready_fixture(review_root, "rocketbox_male_adult_01")
+    female_dir = write_ready_fixture(review_root, "rocketbox_female_adult_01")
+    record_decision(male_dir, "approved", "jzy", "approved")
+    record_decision(female_dir, "approved", "jzy", "approved")
+
+    manifest_path = male_dir / "retarget_manifest.json"
+    external_manifest = tmp_path / "external-manifest.json"
+    external_manifest.write_bytes(manifest_path.read_bytes())
+    manifest_path.unlink()
+    manifest_path.symlink_to(external_manifest)
+
+    with pytest.raises(ValueError, match="manifest.*regular|manifest.*root|symlink"):
+        assert_pair_approved(review_root)
+
+
+def test_record_decision_rejects_external_review_symlink(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    record_decision(review_dir, "approved", "jzy", "approved")
+    review_path = review_dir / "motion_review.json"
+    external_review = tmp_path / "external-review.json"
+    external_review.write_bytes(review_path.read_bytes())
+    review_path.unlink()
+    review_path.symlink_to(external_review)
+
+    with pytest.raises(ValueError, match="review.*regular|review.*root|symlink"):
+        record_decision(review_dir, "approved", "jzy", "replaced")
+
+
+def test_approval_rejects_external_review_symlink(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    record_decision(review_dir, "approved", "jzy", "approved")
+    review_path = review_dir / "motion_review.json"
+    external_review = tmp_path / "external-review.json"
+    external_review.write_bytes(review_path.read_bytes())
+    review_path.unlink()
+    review_path.symlink_to(external_review)
+
+    with pytest.raises(MotionReviewNotApproved, match="review.*regular|review.*root|symlink"):
+        assert_motion_approved(review_dir)
+
+
+def test_pair_gate_rejects_external_review_symlink(tmp_path):
+    review_root = tmp_path / "reviews"
+    male_dir = write_ready_fixture(review_root, "rocketbox_male_adult_01")
+    female_dir = write_ready_fixture(review_root, "rocketbox_female_adult_01")
+    record_decision(male_dir, "approved", "jzy", "approved")
+    record_decision(female_dir, "approved", "jzy", "approved")
+
+    review_path = female_dir / "motion_review.json"
+    external_review = tmp_path / "external-review.json"
+    external_review.write_bytes(review_path.read_bytes())
+    review_path.unlink()
+    review_path.symlink_to(external_review)
+
+    with pytest.raises(MotionReviewNotApproved, match="review.*regular|review.*root|symlink"):
+        assert_pair_approved(review_root)
+
+
+def test_atomic_write_does_not_follow_precreated_tmp_symlink(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    external_file = tmp_path / "external-write-target.json"
+    external_file.write_text("sentinel", encoding="utf-8")
+    (review_dir / "motion_review.json.tmp").symlink_to(external_file)
+
+    record_decision(review_dir, "approved", "jzy", "approved")
+
+    assert external_file.read_text(encoding="utf-8") == "sentinel"
 
 
 def test_record_decision_pins_current_manifest_and_media(tmp_path):
