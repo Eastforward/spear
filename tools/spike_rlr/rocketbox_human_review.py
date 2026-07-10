@@ -204,6 +204,12 @@ def ensure_official_files(
                 continue
             except OfficialFileError:
                 invalid_path = local_path.with_name(f"{local_path.name}.invalid")
+                archive_index = 0
+                while invalid_path.exists():
+                    archive_index += 1
+                    invalid_path = local_path.with_name(
+                        f"{local_path.name}.invalid.{archive_index}"
+                    )
                 os.replace(local_path, invalid_path)
         _download_official_file(official_file, opener)
         downloaded.append(local_path)

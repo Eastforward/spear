@@ -203,6 +203,26 @@ def test_ensure_official_files_preserves_invalid_existing_file(tmp_path):
     assert expected.local_path.with_name("texture.tga.invalid").read_bytes() == b"corrupt"
 
 
+def test_ensure_official_files_numbers_colliding_invalid_archives(tmp_path):
+    payload = b"correct"
+    expected = _official_file(tmp_path, payload=payload, name="texture.tga")
+    expected.local_path.write_bytes(b"newer-corrupt")
+    first_archive = expected.local_path.with_name("texture.tga.invalid")
+    first_archive.write_bytes(b"older-corrupt")
+    asset = _asset_with_files(tmp_path, textures=(expected,))
+
+    paths = ensure_official_files(
+        asset, opener=lambda request, timeout: io.BytesIO(payload)
+    )
+
+    assert paths == [expected.local_path]
+    assert expected.local_path.read_bytes() == payload
+    assert first_archive.read_bytes() == b"older-corrupt"
+    assert expected.local_path.with_name("texture.tga.invalid.1").read_bytes() == (
+        b"newer-corrupt"
+    )
+
+
 def test_ensure_official_files_quotes_paths_and_identifies_request(tmp_path):
     payload = b"texture"
     expected = OfficialFile(
