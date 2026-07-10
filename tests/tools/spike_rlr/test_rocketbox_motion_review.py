@@ -20,6 +20,17 @@ from rocketbox_motion_review import (  # noqa: E402
 )
 
 
+REQUIRED_INPUT_HASHES = (
+    "avatar_fbx",
+    "motion_fbx",
+    "source_review",
+    "body_color_texture",
+    "head_color_texture",
+    "opacity_color_texture",
+    "retarget_glb",
+)
+
+
 def write_ready_fixture(tmp_path, asset_id, *, automatic_checks=None):
     review_dir = tmp_path / asset_id
     review_dir.mkdir(parents=True)
@@ -33,9 +44,15 @@ def write_ready_fixture(tmp_path, asset_id, *, automatic_checks=None):
         "schema_version": "rocketbox_retarget_manifest_v1",
         "asset_id": asset_id,
         "immutable_input_hashes": {
-            "avatar_fbx": "a" * 64,
-            "motion_fbx": "b" * 64,
-            "source_review": "c" * 64,
+            name: value * 64
+            for name, value in zip(
+                REQUIRED_INPUT_HASHES, ("a", "b", "c", "d", "e", "f", "0")
+            )
+        },
+        "binding": {
+            "target_asset_id": asset_id,
+            "target_mesh_bound": True,
+            "official_textures_attached": True,
         },
         "media": media,
         "automatic_checks": automatic_checks or {"overall": "passed"},
@@ -44,6 +61,135 @@ def write_ready_fixture(tmp_path, asset_id, *, automatic_checks=None):
         json.dumps(manifest, indent=2), encoding="utf-8"
     )
     return review_dir
+
+
+def write_approval_record(review_dir, **updates):
+    record_decision(review_dir, "approved", "jzy", "approved")
+    path = review_dir / "motion_review.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record.update(updates)
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+
+def test_schema_less_approval_is_not_approved(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    write_approval_record(review_dir)
+    path = review_dir / "motion_review.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record.pop("schema_version")
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    with pytest.raises(MotionReviewNotApproved, match="schema"):
+        assert_motion_approved(review_dir)
+
+
+def test_cross_asset_approval_is_not_approved(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    write_approval_record(review_dir, asset_id="rocketbox_female_adult_01")
+
+    with pytest.raises(MotionReviewNotApproved, match="asset_id"):
+        assert_motion_approved(review_dir)
+
+
+def test_blank_reviewer_approval_is_not_approved(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    write_approval_record(review_dir, reviewer=" ")
+
+    with pytest.raises(MotionReviewNotApproved, match="reviewer"):
+        assert_motion_approved(review_dir)
+
+
+def test_naive_reviewed_at_approval_is_not_approved(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    write_approval_record(review_dir, reviewed_at="2026-07-10T12:00:00")
+
+    with pytest.raises(MotionReviewNotApproved, match="reviewed_at"):
+        assert_motion_approved(review_dir)
+
+
+def test_non_timezone_reviewed_at_approval_is_not_approved(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    write_approval_record(review_dir, reviewed_at="not-an-iso-timestamp")
+
+    with pytest.raises(MotionReviewNotApproved, match="reviewed_at"):
+        assert_motion_approved(review_dir)
+
+
+def test_record_decision_rejects_symlinked_asset_directory(tmp_path):
+    actual_dir = write_ready_fixture(tmp_path / "actual", "rocketbox_male_adult_01")
+    symlink_dir = tmp_path / "asset-link"
+    symlink_dir.symlink_to(actual_dir, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        record_decision(symlink_dir, "approved", "jzy", "approved")
+
+
+def test_pair_gate_rejects_external_symlinked_asset_directory(tmp_path):
+    review_root = tmp_path / "reviews"
+    male_dir = write_ready_fixture(review_root, "rocketbox_male_adult_01")
+    outside_female_dir = write_ready_fixture(
+        tmp_path / "outside", "rocketbox_female_adult_01"
+    )
+    (review_root / "rocketbox_female_adult_01").symlink_to(
+        outside_female_dir, target_is_directory=True
+    )
+    record_decision(male_dir, "approved", "jzy", "approved")
+
+    with pytest.raises(MotionReviewNotApproved, match="containment|symlink"):
+        assert_pair_approved(review_root)
+
+
+def test_wrong_manifest_schema_is_not_ready(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    path = review_dir / "retarget_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["schema_version"] = "wrong_schema"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="schema_version"):
+        record_decision(review_dir, "approved", "jzy", "approved")
+
+
+@pytest.mark.parametrize(
+    "binding_update",
+    (
+        {"target_asset_id": None},
+        {"target_mesh_bound": None},
+        {"official_textures_attached": None},
+    ),
+)
+def test_missing_required_binding_provenance_is_not_ready(tmp_path, binding_update):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    path = review_dir / "retarget_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["binding"].pop(next(iter(binding_update)))
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="binding"):
+        record_decision(review_dir, "approved", "jzy", "approved")
+
+
+def test_missing_required_hash_provenance_is_not_ready(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    path = review_dir / "retarget_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["immutable_input_hashes"].pop("retarget_glb")
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="immutable_input_hashes"):
+        record_decision(review_dir, "approved", "jzy", "approved")
+
+
+@pytest.mark.parametrize("bad_hash", ("a" * 63, "a" * 65, "A" * 64, "g" * 64))
+def test_malformed_hash_provenance_is_not_ready(tmp_path, bad_hash):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    path = review_dir / "retarget_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["immutable_input_hashes"]["retarget_glb"] = bad_hash
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="64-character lowercase hex"):
+        record_decision(review_dir, "approved", "jzy", "approved")
 
 
 def test_record_decision_pins_current_manifest_and_media(tmp_path):

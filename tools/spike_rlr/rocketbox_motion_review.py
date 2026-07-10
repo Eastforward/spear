@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,18 @@ EXPECTED_ASSET_IDS = (
     "rocketbox_male_adult_01",
     "rocketbox_female_adult_01",
 )
+RETARGET_MANIFEST_SCHEMA = "rocketbox_retarget_manifest_v1"
+MOTION_REVIEW_SCHEMA = "rocketbox_motion_review_v1"
+REQUIRED_IMMUTABLE_INPUT_HASHES = (
+    "avatar_fbx",
+    "motion_fbx",
+    "source_review",
+    "body_color_texture",
+    "head_color_texture",
+    "opacity_color_texture",
+    "retarget_glb",
+)
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 
 class MotionReviewNotApproved(RuntimeError):
@@ -71,6 +84,14 @@ def _validate_automatic_checks(checks: Any) -> None:
             raise ValueError("automatic checks did not pass")
 
 
+def _reject_symlinked_review_dir(review_dir: Path) -> Path:
+    absolute = Path(review_dir).absolute()
+    resolved = absolute.resolve()
+    if absolute != resolved:
+        raise ValueError("review directory path must not contain a symlink")
+    return absolute
+
+
 def _media_path(review_dir: Path, name: str, relative_path: Any) -> Path:
     if not isinstance(relative_path, str) or not relative_path.strip():
         raise ValueError(f"{name} media path must be a non-empty string")
@@ -86,24 +107,46 @@ def _media_path(review_dir: Path, name: str, relative_path: Any) -> Path:
 
 
 def validate_ready_manifest(review_dir: Path) -> tuple[dict[str, Any], dict[str, Path]]:
-    review_dir = Path(review_dir)
+    review_dir = _reject_symlinked_review_dir(Path(review_dir))
     manifest_path = review_dir / "retarget_manifest.json"
     if not manifest_path.is_file():
         raise ValueError(f"retarget manifest is missing: {manifest_path}")
     manifest = _load_json(manifest_path, "retarget manifest")
 
-    if not isinstance(manifest.get("schema_version"), str) or not manifest[
-        "schema_version"
-    ].strip():
-        raise ValueError("retarget manifest schema_version must be non-empty")
+    if manifest.get("schema_version") != RETARGET_MANIFEST_SCHEMA:
+        raise ValueError(
+            f"retarget manifest schema_version must be {RETARGET_MANIFEST_SCHEMA}"
+        )
     asset_id = manifest.get("asset_id")
     if asset_id not in EXPECTED_ASSET_IDS:
         raise ValueError(f"unexpected Rocketbox asset_id: {asset_id!r}")
     input_hashes = manifest.get("immutable_input_hashes")
-    if not isinstance(input_hashes, dict) or not input_hashes:
-        raise ValueError("retarget manifest immutable_input_hashes must be non-empty")
-    if any(not isinstance(value, str) or not value for value in input_hashes.values()):
-        raise ValueError("retarget manifest immutable_input_hashes must contain values")
+    if not isinstance(input_hashes, dict) or set(input_hashes) != set(
+        REQUIRED_IMMUTABLE_INPUT_HASHES
+    ):
+        raise ValueError(
+            "retarget manifest immutable_input_hashes must contain exactly the required keys"
+        )
+    if any(
+        not isinstance(input_hashes[name], str)
+        or _SHA256_RE.fullmatch(input_hashes[name]) is None
+        for name in REQUIRED_IMMUTABLE_INPUT_HASHES
+    ):
+        raise ValueError(
+            "retarget manifest immutable_input_hashes must contain 64-character lowercase hex values"
+        )
+
+    binding = manifest.get("binding")
+    if not isinstance(binding, dict):
+        raise ValueError("retarget manifest binding provenance is required")
+    if binding.get("target_asset_id") != asset_id:
+        raise ValueError("retarget manifest binding target_asset_id must match asset_id")
+    if binding.get("target_mesh_bound") is not True:
+        raise ValueError("retarget manifest binding target_mesh_bound must be true")
+    if binding.get("official_textures_attached") is not True:
+        raise ValueError(
+            "retarget manifest binding official_textures_attached must be true"
+        )
 
     media = manifest.get("media")
     if not isinstance(media, dict) or set(media) != set(REQUIRED_MEDIA):
@@ -126,7 +169,7 @@ def _pending_payload(
     manifest: dict[str, Any], manifest_sha256: str, media_sha256: dict[str, str]
 ) -> dict[str, Any]:
     return {
-        "schema_version": "rocketbox_motion_review_v1",
+        "schema_version": MOTION_REVIEW_SCHEMA,
         "asset_id": manifest["asset_id"],
         "decision": "pending",
         "reviewer": "",
@@ -164,7 +207,7 @@ def record_decision(
         raise ValueError("reviewer must be non-empty")
     manifest_sha256, media_sha256 = _current_hashes(review_dir, media_paths)
     payload = {
-        "schema_version": "rocketbox_motion_review_v1",
+        "schema_version": MOTION_REVIEW_SCHEMA,
         "asset_id": manifest["asset_id"],
         "decision": decision,
         "reviewer": reviewer.strip(),
@@ -177,16 +220,43 @@ def record_decision(
     return payload
 
 
+def _validate_approved_record(review: dict[str, Any], asset_id: str) -> None:
+    if review.get("schema_version") != MOTION_REVIEW_SCHEMA:
+        raise MotionReviewNotApproved("motion review schema is invalid")
+    if review.get("asset_id") != asset_id:
+        raise MotionReviewNotApproved("motion review asset_id does not match manifest")
+    reviewer = review.get("reviewer")
+    if not isinstance(reviewer, str) or not reviewer.strip():
+        raise MotionReviewNotApproved("motion review reviewer must be non-empty")
+    reviewed_at = review.get("reviewed_at")
+    if not isinstance(reviewed_at, str):
+        raise MotionReviewNotApproved("motion review reviewed_at must be timezone-aware ISO-8601")
+    try:
+        parsed = datetime.fromisoformat(reviewed_at)
+    except ValueError as error:
+        raise MotionReviewNotApproved(
+            "motion review reviewed_at must be timezone-aware ISO-8601"
+        ) from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise MotionReviewNotApproved(
+            "motion review reviewed_at must be timezone-aware ISO-8601"
+        )
+
+
 def assert_motion_approved(review_dir: Path) -> dict:
     manifest, media_paths = validate_ready_manifest(review_dir)
     review_path = Path(review_dir) / "motion_review.json"
     if not review_path.is_file():
         raise MotionReviewNotApproved(f"{manifest['asset_id']} has no motion review")
-    review = _load_json(review_path, "motion review")
+    try:
+        review = _load_json(review_path, "motion review")
+    except ValueError as error:
+        raise MotionReviewNotApproved("motion review JSON is invalid") from error
     if review.get("decision") != "approved":
         raise MotionReviewNotApproved(
             f"{manifest['asset_id']} motion review decision is {review.get('decision')!r}, not approved"
         )
+    _validate_approved_record(review, manifest["asset_id"])
     manifest_sha256, media_sha256 = _current_hashes(review_dir, media_paths)
     if review.get("retarget_manifest_sha256") != manifest_sha256:
         raise MotionReviewNotApproved(
@@ -203,10 +273,21 @@ def assert_motion_approved(review_dir: Path) -> dict:
 
 def assert_pair_approved(review_root: Path) -> dict[str, dict]:
     review_root = Path(review_root)
+    root_absolute = review_root.absolute()
+    root_resolved = root_absolute.resolve()
+    if not root_resolved.is_dir():
+        raise MotionReviewNotApproved(f"review root is missing: {review_root}")
     approvals: dict[str, dict] = {}
     for asset_id in EXPECTED_ASSET_IDS:
-        review_dir = review_root / asset_id
+        review_dir = root_absolute / asset_id
+        resolved_review_dir = review_dir.resolve()
+        try:
+            resolved_review_dir.relative_to(root_resolved)
+        except ValueError as error:
+            raise MotionReviewNotApproved(
+                f"{asset_id} review directory is outside review root containment"
+            ) from error
         if not review_dir.is_dir():
             raise MotionReviewNotApproved(f"{asset_id} review directory is missing")
-        approvals[asset_id] = assert_motion_approved(review_dir)
+        approvals[asset_id] = assert_motion_approved(resolved_review_dir)
     return approvals
