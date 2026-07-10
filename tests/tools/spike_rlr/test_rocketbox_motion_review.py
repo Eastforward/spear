@@ -205,6 +205,27 @@ def test_malformed_hash_provenance_is_not_ready(tmp_path, bad_hash):
         record_decision(review_dir, "approved", "jzy", "approved")
 
 
+def test_manifest_media_must_use_canonical_filenames(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    path = review_dir / "retarget_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["media"]["front"] = "retarget_manifest.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="canonical media"):
+        validate_ready_manifest(review_dir)
+
+
+def test_in_root_media_symlink_is_not_reviewable(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    front_path = review_dir / "front.mp4"
+    front_path.unlink()
+    front_path.symlink_to(review_dir / "side.mp4")
+
+    with pytest.raises(ValueError, match="media.*regular|symlink"):
+        validate_ready_manifest(review_dir)
+
+
 def test_external_manifest_symlink_rejected_by_validate_and_record(tmp_path):
     review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
     manifest_path = review_dir / "retarget_manifest.json"
@@ -320,7 +341,7 @@ def test_manifest_media_path_must_stay_inside_review_directory(tmp_path):
     manifest["media"]["front"] = "../outside.mp4"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="front.*review directory"):
+    with pytest.raises(ValueError, match="front.*canonical media"):
         record_decision(review_dir, "approved", "jzy", "approved")
 
 

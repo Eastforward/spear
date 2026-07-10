@@ -22,6 +22,15 @@ REQUIRED_MEDIA = (
     "source_target",
     "contact_sheet",
 )
+CANONICAL_MEDIA = {
+    "front": "front.mp4",
+    "side": "side.mp4",
+    "top": "top.mp4",
+    "joints": "joints.mp4",
+    "feet": "feet.mp4",
+    "source_target": "source_target.mp4",
+    "contact_sheet": "contact_sheet.png",
+}
 EXPECTED_ASSET_IDS = (
     "rocketbox_male_adult_01",
     "rocketbox_female_adult_01",
@@ -149,17 +158,14 @@ def _existing_review_path(review_dir: Path) -> Path | None:
 
 
 def _media_path(review_dir: Path, name: str, relative_path: Any) -> Path:
-    if not isinstance(relative_path, str) or not relative_path.strip():
-        raise ValueError(f"{name} media path must be a non-empty string")
-    root = review_dir.resolve()
-    path = (review_dir / relative_path).resolve()
-    try:
-        path.relative_to(root)
-    except ValueError as error:
-        raise ValueError(f"{name} media path escapes the review directory") from error
-    if not path.is_file():
-        raise ValueError(f"{name} media file is missing: {path}")
-    return path
+    expected = CANONICAL_MEDIA[name]
+    if relative_path != expected:
+        raise ValueError(
+            f"{name} media path must use canonical media filename {expected}"
+        )
+    return _regular_file_directly_under(
+        Path(review_dir) / expected, review_dir, f"{name} media file"
+    )
 
 
 def validate_ready_manifest(review_dir: Path) -> tuple[dict[str, Any], dict[str, Path]]:
