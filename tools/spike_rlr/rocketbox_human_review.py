@@ -47,6 +47,7 @@ _SOURCE_MANIFEST_FIELDS = (
     "size",
     "official_git_blob_sha1",
 )
+_PINNED_REVIEW_AXES = {"forward_axis": "-Y", "up_axis": "+Z"}
 
 
 def _expected_source_manifest_layout(
@@ -464,6 +465,12 @@ def _parse_aware_iso8601(value: object) -> datetime:
     return parsed
 
 
+def _verify_pinned_review_axes(review: dict[str, Any]) -> None:
+    for field, expected in _PINNED_REVIEW_AXES.items():
+        if review.get(field) != expected:
+            raise SourceReviewNotApproved(f"{field} must equal {expected}")
+
+
 def assert_source_review_approved(path: Path) -> dict[str, Any]:
     """Return a source review only when verified files have all human approvals."""
     try:
@@ -472,6 +479,7 @@ def assert_source_review_approved(path: Path) -> dict[str, Any]:
         raise SourceReviewNotApproved(f"Could not read source review {path}: {error}") from error
     if review.get("schema_version") != "rocketbox_human_source_review_v1":
         raise SourceReviewNotApproved("schema_version is not rocketbox_human_source_review_v1")
+    _verify_pinned_review_axes(review)
     _verify_review_official_files(review)
     for status_name in ("geometry_status", "appearance_status", "direction_status"):
         if review.get(status_name) != "approved":
@@ -495,6 +503,7 @@ def approve_source_review(
     review = json.loads(review_path.read_text(encoding="utf-8"))
     if review.get("schema_version") != "rocketbox_human_source_review_v1":
         raise SourceReviewNotApproved("schema_version is not rocketbox_human_source_review_v1")
+    _verify_pinned_review_axes(review)
     _verify_review_official_files(review)
     if not reviewer.strip():
         raise ValueError("reviewer must be non-empty")

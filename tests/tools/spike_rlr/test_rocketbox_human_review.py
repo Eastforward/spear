@@ -274,6 +274,62 @@ def test_source_review_gate_requires_all_three_human_approvals(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize(
+    ("field", "value"),
+    (("forward_axis", "+Y"), ("up_axis", "-Z")),
+)
+def test_source_review_gate_rejects_noncanonical_axes(
+    tmp_path, monkeypatch, field, value
+):
+    asset = _complete_local_asset(tmp_path)
+    review_path = write_pending_source_review(
+        asset, tmp_path / "out", build_source_inspection(asset)
+    )
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    _pin_synthetic_source_manifest(monkeypatch, review)
+    review.update(
+        {
+            "geometry_status": "approved",
+            "appearance_status": "approved",
+            "direction_status": "approved",
+            "approved_by": "jzy",
+            "approved_at": "2026-07-10T12:00:00+08:00",
+            field: value,
+        }
+    )
+    review_path.write_text(json.dumps(review), encoding="utf-8")
+
+    with pytest.raises(SourceReviewNotApproved, match=field):
+        assert_source_review_approved(review_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("forward_axis", "+Y"), ("up_axis", "-Z")),
+)
+def test_approve_source_review_rejects_noncanonical_axes(
+    tmp_path, monkeypatch, field, value
+):
+    asset = _complete_local_asset(tmp_path)
+    review_path = write_pending_source_review(
+        asset, tmp_path / "out", build_source_inspection(asset)
+    )
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    _pin_synthetic_source_manifest(monkeypatch, review)
+    review[field] = value
+    review_path.write_text(json.dumps(review), encoding="utf-8")
+
+    with pytest.raises(SourceReviewNotApproved, match=field):
+        approve_source_review(
+            review_path,
+            reviewer="jzy",
+            geometry_status="approved",
+            appearance_status="approved",
+            direction_status="approved",
+            notes="reviewed source and direction",
+        )
+
+
+@pytest.mark.parametrize(
     ("field", "value", "message"),
     (
         ("approved_by", "", "approved_by"),
