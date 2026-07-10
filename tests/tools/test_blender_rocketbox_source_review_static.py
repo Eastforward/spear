@@ -85,6 +85,14 @@ def test_renderer_reconstructs_textured_eevee_materials_in_place():
     assert "FileNotFoundError" in source
 
 
+def test_renderer_bulk_reads_opacity_pixels_and_reuses_legend_material():
+    source = renderer_source()
+
+    assert "image.pixels.foreach_get" in source
+    assert "image.pixels[" not in source
+    assert "bpy.data.materials.get(name)" in source
+
+
 def test_renderer_pins_review_dimensions_and_turntable_timing():
     source = renderer_source()
 

@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import sys
+from array import array
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -176,14 +177,16 @@ def new_image_node(
 def image_has_useful_alpha(image: bpy.types.Image) -> bool:
     if image.channels < 4:
         return False
-    pixel_count = len(image.pixels) // image.channels
+    pixel_values = array("f", [0.0]) * len(image.pixels)
+    image.pixels.foreach_get(pixel_values)
+    pixel_count = len(pixel_values) // image.channels
     if pixel_count == 0:
         return False
     step = max(1, pixel_count // 4096)
     minimum = 1.0
     maximum = 0.0
     for pixel_index in range(0, pixel_count, step):
-        alpha = float(image.pixels[pixel_index * image.channels + 3])
+        alpha = float(pixel_values[pixel_index * image.channels + 3])
         minimum = min(minimum, alpha)
         maximum = max(maximum, alpha)
     return minimum < 0.999 and maximum - minimum > 0.0001
@@ -432,6 +435,9 @@ def set_camera(
 
 
 def emission_material(name: str) -> bpy.types.Material:
+    existing = bpy.data.materials.get(name)
+    if existing is not None:
+        return existing
     material = bpy.data.materials.new(name)
     material.use_nodes = True
     nodes = material.node_tree.nodes
