@@ -342,17 +342,39 @@ def assert_pair_approved(review_root: Path) -> dict[str, dict]:
     root_resolved = root_absolute.resolve()
     if not root_resolved.is_dir():
         raise MotionReviewNotApproved(f"review root is missing: {review_root}")
-    approvals: dict[str, dict] = {}
+    resolved_dirs: dict[str, Path] = {}
     for asset_id in EXPECTED_ASSET_IDS:
         review_dir = root_absolute / asset_id
         resolved_review_dir = review_dir.resolve()
+        if review_dir != resolved_review_dir:
+            raise MotionReviewNotApproved(
+                f"{asset_id} review directory must not be a symlink"
+            )
         try:
             resolved_review_dir.relative_to(root_resolved)
         except ValueError as error:
             raise MotionReviewNotApproved(
                 f"{asset_id} review directory is outside review root containment"
             ) from error
-        if not review_dir.is_dir():
+        if resolved_review_dir.name != asset_id:
+            raise MotionReviewNotApproved(
+                f"{asset_id} review directory resolves to the wrong asset directory"
+            )
+        if not resolved_review_dir.is_dir():
             raise MotionReviewNotApproved(f"{asset_id} review directory is missing")
-        approvals[asset_id] = assert_motion_approved(resolved_review_dir)
+        resolved_dirs[asset_id] = resolved_review_dir
+
+    if len(set(resolved_dirs.values())) != len(EXPECTED_ASSET_IDS):
+        raise MotionReviewNotApproved(
+            "expected asset review directories must be distinct"
+        )
+
+    approvals: dict[str, dict] = {}
+    for asset_id, review_dir in resolved_dirs.items():
+        approval = assert_motion_approved(review_dir)
+        if approval.get("asset_id") != asset_id:
+            raise MotionReviewNotApproved(
+                f"{asset_id} approval record asset_id does not match expected asset"
+            )
+        approvals[asset_id] = approval
     return approvals

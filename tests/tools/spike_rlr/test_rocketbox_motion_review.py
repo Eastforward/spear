@@ -140,6 +140,18 @@ def test_pair_gate_rejects_external_symlinked_asset_directory(tmp_path):
         assert_pair_approved(review_root)
 
 
+def test_pair_gate_rejects_in_root_duplicate_asset_symlink(tmp_path):
+    review_root = tmp_path / "reviews"
+    female_dir = write_ready_fixture(review_root, "rocketbox_female_adult_01")
+    (review_root / "rocketbox_male_adult_01").symlink_to(
+        female_dir, target_is_directory=True
+    )
+    record_decision(female_dir, "approved", "jzy", "female approved")
+
+    with pytest.raises(MotionReviewNotApproved, match="symlink|distinct|asset"):
+        assert_pair_approved(review_root)
+
+
 def test_wrong_manifest_schema_is_not_ready(tmp_path):
     review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
     path = review_dir / "retarget_manifest.json"
