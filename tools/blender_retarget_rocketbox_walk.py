@@ -1,0 +1,1351 @@
+"""Bake a Rocketbox neutral walk onto an approved textured avatar.
+
+Run with Blender 4.2 or newer:
+
+    blender --background --python tools/blender_retarget_rocketbox_walk.py -- \
+      --asset-id rocketbox_male_adult_01 --avatar-fbx /absolute/avatar.fbx \
+      --texture-dir /absolute/Textures --texture-prefix m002 \
+      --motion-fbx /absolute/m_walk_neutral.max.fbx \
+      --source-review-json /absolute/source_review.json \
+      --output-dir /absolute/output
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import re
+import struct
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from statistics import mean
+from typing import Any
+
+import bpy
+from mathutils import Matrix, Quaternion, Vector
+
+
+TOOLS_DIR = Path(__file__).resolve().parent
+SPIKE_RLR_DIR = TOOLS_DIR / "spike_rlr"
+for import_dir in (TOOLS_DIR, SPIKE_RLR_DIR):
+    if str(import_dir) not in sys.path:
+        sys.path.insert(0, str(import_dir))
+
+from blender_render_rocketbox_source_review import (  # noqa: E402
+    ImportedAvatar,
+    import_avatar,
+    material_uses_color_as_alpha,
+    reconnect_official_materials,
+)
+from rocketbox_human_review import assert_source_review_approved  # noqa: E402
+
+
+TARGET_BONES = (
+    "Bip01 Pelvis",
+    "Bip01 Spine",
+    "Bip01 Spine1",
+    "Bip01 Spine2",
+    "Bip01 Neck",
+    "Bip01 Head",
+    "Bip01 REye",
+    "Bip01 LEye",
+    "Bip01 MJaw",
+    "Bip01 MBottomLip",
+    "Bip01 MTongue",
+    "Bip01 LMouthBottom",
+    "Bip01 RMouthBottom",
+    "Bip01 RMasseter",
+    "Bip01 LMasseter",
+    "Bip01 MUpperLip",
+    "Bip01 RCaninus",
+    "Bip01 LCaninus",
+    "Bip01 REyeBlinkBottom",
+    "Bip01 LEyeBlinkBottom",
+    "Bip01 RUpperlip",
+    "Bip01 LUpperlip",
+    "Bip01 RMouthCorner",
+    "Bip01 LMouthCorner",
+    "Bip01 RCheek",
+    "Bip01 LCheek",
+    "Bip01 REyeBlinkTop",
+    "Bip01 LEyeBlinkTop",
+    "Bip01 RInnerEyebrow",
+    "Bip01 LInnerEyebrow",
+    "Bip01 MMiddleEyebrow",
+    "Bip01 ROuterEyebrow",
+    "Bip01 LOuterEyebrow",
+    "Bip01 MNose",
+    "Bip01 L Clavicle",
+    "Bip01 L UpperArm",
+    "Bip01 L Forearm",
+    "Bip01 L Hand",
+    "Bip01 L Finger0",
+    "Bip01 L Finger01",
+    "Bip01 L Finger02",
+    "Bip01 L Finger1",
+    "Bip01 L Finger11",
+    "Bip01 L Finger12",
+    "Bip01 L Finger2",
+    "Bip01 L Finger21",
+    "Bip01 L Finger22",
+    "Bip01 L Finger3",
+    "Bip01 L Finger31",
+    "Bip01 L Finger32",
+    "Bip01 L Finger4",
+    "Bip01 L Finger41",
+    "Bip01 L Finger42",
+    "Bip01 R Clavicle",
+    "Bip01 R UpperArm",
+    "Bip01 R Forearm",
+    "Bip01 R Hand",
+    "Bip01 R Finger0",
+    "Bip01 R Finger01",
+    "Bip01 R Finger02",
+    "Bip01 R Finger1",
+    "Bip01 R Finger11",
+    "Bip01 R Finger12",
+    "Bip01 R Finger2",
+    "Bip01 R Finger21",
+    "Bip01 R Finger22",
+    "Bip01 R Finger3",
+    "Bip01 R Finger31",
+    "Bip01 R Finger32",
+    "Bip01 R Finger4",
+    "Bip01 R Finger41",
+    "Bip01 R Finger42",
+    "Bip01 L Thigh",
+    "Bip01 L Calf",
+    "Bip01 L Foot",
+    "Bip01 L Toe0",
+    "Bip01 R Thigh",
+    "Bip01 R Calf",
+    "Bip01 R Foot",
+    "Bip01 R Toe0",
+)
+
+CORE_BONES = (
+    "Bip01 Pelvis",
+    "Bip01 Spine",
+    "Bip01 Spine1",
+    "Bip01 Spine2",
+    "Bip01 Neck",
+    "Bip01 Head",
+    "Bip01 L Clavicle",
+    "Bip01 L UpperArm",
+    "Bip01 L Forearm",
+    "Bip01 L Hand",
+    "Bip01 R Clavicle",
+    "Bip01 R UpperArm",
+    "Bip01 R Forearm",
+    "Bip01 R Hand",
+    "Bip01 L Thigh",
+    "Bip01 L Calf",
+    "Bip01 L Foot",
+    "Bip01 L Toe0",
+    "Bip01 R Thigh",
+    "Bip01 R Calf",
+    "Bip01 R Foot",
+    "Bip01 R Toe0",
+)
+
+IMMUTABLE_HASH_KEYS = (
+    "avatar_fbx",
+    "motion_fbx",
+    "source_review",
+    "body_color_texture",
+    "head_color_texture",
+    "opacity_color_texture",
+    "retarget_glb",
+)
+
+FOOT_BONES = (
+    "Bip01 L Foot",
+    "Bip01 L Toe0",
+    "Bip01 R Foot",
+    "Bip01 R Toe0",
+)
+AXIS_MAP = Matrix.Identity(3)
+ROOT_SCALE = 1.0
+FPS = 30
+EXPECTED_SOURCE_ONLY_NUB_BONES = 41
+MATRIX_TOLERANCE = 1.0e-4
+ROUNDTRIP_JOINT_TOLERANCE_M = 1.0e-4
+_BONE_PATH_RE = re.compile(r'^pose\.bones\["(.+)"\]')
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+assert len(TARGET_BONES) == 80
+assert len(set(TARGET_BONES)) == 80
+
+
+@dataclass(frozen=True)
+class SourceImport:
+    armature: bpy.types.Object
+    action: bpy.types.Action
+    helper: bpy.types.Object
+    imported_objects: tuple[bpy.types.Object, ...]
+    imported_actions: tuple[bpy.types.Action, ...]
+
+
+@dataclass(frozen=True)
+class CachedFrame:
+    frame: int
+    source_location: Vector
+    source_quaternion: Quaternion
+    bone_deltas: dict[str, Matrix]
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    if argv is None:
+        argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--asset-id", required=True)
+    parser.add_argument("--avatar-fbx", type=Path, required=True)
+    parser.add_argument("--texture-dir", type=Path, required=True)
+    parser.add_argument("--texture-prefix", required=True)
+    parser.add_argument("--motion-fbx", type=Path, required=True)
+    parser.add_argument("--source-review-json", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    return parser.parse_args(argv)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    temporary.replace(path)
+
+
+def configure_animation_scene() -> None:
+    scene = bpy.context.scene
+    fps = 30
+    if fps != FPS:
+        raise RuntimeError("Rocketbox FPS constants disagree")
+    scene.render.fps = fps
+    scene.render.fps_base = 1.0
+    scene.sync_mode = "NONE"
+
+
+def vector_list(value: Vector | Quaternion) -> list[float]:
+    return [float(component) for component in value]
+
+
+def matrix_max_abs(matrix: Matrix) -> float:
+    return max(abs(float(value)) for row in matrix for value in row)
+
+
+def matrix_difference_max_abs(actual: Matrix, expected: Matrix) -> float:
+    return matrix_max_abs(actual - expected)
+
+
+def shortest_rotation_angle(first: Quaternion, second: Quaternion) -> float:
+    angle = first.normalized().rotation_difference(second.normalized()).angle
+    return min(angle, (2.0 * math.pi) - angle)
+
+
+def parent_local_rest(bone: bpy.types.Bone) -> Matrix:
+    if bone.parent is None:
+        return bone.matrix_local.copy()
+    return bone.parent.matrix_local.inverted() @ bone.matrix_local
+
+
+def parent_local_pose(pose_bone: bpy.types.PoseBone) -> Matrix:
+    if pose_bone.parent is None:
+        return pose_bone.matrix.copy()
+    return pose_bone.parent.matrix.inverted() @ pose_bone.matrix
+
+
+def mesh_data_sha256(mesh: bpy.types.Object) -> str:
+    digest = hashlib.sha256()
+    digest.update(mesh.name.encode("utf-8"))
+    for vertex in mesh.data.vertices:
+        digest.update(struct.pack("<3d", *map(float, vertex.co)))
+        for group in sorted(vertex.groups, key=lambda item: item.group):
+            digest.update(struct.pack("<Id", int(group.group), float(group.weight)))
+    for polygon in mesh.data.polygons:
+        digest.update(struct.pack("<II", len(polygon.vertices), polygon.material_index))
+        digest.update(struct.pack(f"<{len(polygon.vertices)}I", *polygon.vertices))
+    for uv_layer in mesh.data.uv_layers:
+        digest.update(uv_layer.name.encode("utf-8"))
+        for uv_loop in uv_layer.data:
+            digest.update(struct.pack("<2d", *map(float, uv_loop.uv)))
+    for slot in mesh.material_slots:
+        digest.update((slot.material.name if slot.material else "").encode("utf-8"))
+    for group in mesh.vertex_groups:
+        digest.update(group.name.encode("utf-8"))
+    return digest.hexdigest()
+
+
+def mesh_metrics(mesh: bpy.types.Object, armature: bpy.types.Object) -> dict[str, Any]:
+    return {
+        "mesh_name": mesh.name,
+        "vertex_count": len(mesh.data.vertices),
+        "polygon_count": len(mesh.data.polygons),
+        "uv_layer_count": len(mesh.data.uv_layers),
+        "material_slot_count": len(mesh.material_slots),
+        "material_slot_names": [
+            slot.material.name if slot.material else None for slot in mesh.material_slots
+        ],
+        "vertex_group_count": len(mesh.vertex_groups),
+        "vertex_group_names": [group.name for group in mesh.vertex_groups],
+        "bone_count": len(armature.data.bones),
+        "bind_mesh_sha256": mesh_data_sha256(mesh),
+    }
+
+
+def reviewed_floor_z(mesh: bpy.types.Object) -> float:
+    return min(float((mesh.matrix_world @ vertex.co).z) for vertex in mesh.data.vertices)
+
+
+def validate_source_review(args: argparse.Namespace) -> dict[str, Any]:
+    review = assert_source_review_approved(args.source_review_json)
+    if review["asset_id"] != args.asset_id:
+        raise RuntimeError(
+            f"source review asset_id {review['asset_id']!r} does not match {args.asset_id!r}"
+        )
+    avatar_sha256 = sha256_file(args.avatar_fbx)
+    if avatar_sha256 != review["source_sha256"]:
+        raise RuntimeError("avatar FBX does not match the approved source review")
+
+    approved_by_basename = {
+        Path(record["local_path"]).name: record["sha256"]
+        for record in review["official_files"]
+    }
+    required_names = (
+        f"{args.texture_prefix}_body_color.tga",
+        f"{args.texture_prefix}_head_color.tga",
+        f"{args.texture_prefix}_opacity_color.tga",
+    )
+    for name in required_names:
+        texture_path = args.texture_dir / name
+        if not texture_path.is_file():
+            raise FileNotFoundError(f"required official texture is missing: {texture_path}")
+        if approved_by_basename.get(name) != sha256_file(texture_path):
+            raise RuntimeError(f"texture does not match approved source review: {name}")
+    return review
+
+
+def remove_avatar_helpers(avatar: ImportedAvatar) -> list[str]:
+    removed = []
+    for obj in avatar.imported_objects:
+        if obj not in {avatar.armature, avatar.mesh}:
+            removed.append(obj.name)
+            bpy.data.objects.remove(obj, do_unlink=True)
+    return sorted(removed)
+
+
+def validate_target_binding(avatar: ImportedAvatar) -> None:
+    modifiers = [
+        modifier
+        for modifier in avatar.mesh.modifiers
+        if modifier.type == "ARMATURE" and modifier.object == avatar.armature
+    ]
+    if len(modifiers) != 1:
+        raise RuntimeError("target mesh must have exactly one modifier bound to target armature")
+    actual_bones = tuple(bone.name for bone in avatar.armature.data.bones)
+    if set(actual_bones) != set(TARGET_BONES):
+        missing = sorted(set(TARGET_BONES) - set(actual_bones))
+        extra = sorted(set(actual_bones) - set(TARGET_BONES))
+        raise RuntimeError(f"target bone contract mismatch: missing={missing} extra={extra}")
+    missing_core = sorted(set(CORE_BONES) - set(actual_bones))
+    if missing_core:
+        raise RuntimeError(f"target is missing required body bones: {missing_core}")
+
+
+def validate_official_material_bindings(
+    avatar: ImportedAvatar, provenance: dict[str, dict[str, str]]
+) -> dict[str, Any]:
+    materials = {
+        slot.material.name: slot.material
+        for slot in avatar.mesh.material_slots
+        if slot.material is not None
+    }
+    validated = {}
+    for material_name, texture_records in provenance.items():
+        material = materials.get(material_name)
+        if material is None or not material.use_nodes or material.node_tree is None:
+            raise RuntimeError(f"official material graph is missing: {material_name}")
+        expected_paths = {
+            Path(value).resolve()
+            for role, value in texture_records.items()
+            if role in {"color", "normal", "specular"}
+        }
+        actual_paths = {
+            Path(bpy.path.abspath(node.image.filepath)).resolve()
+            for node in material.node_tree.nodes
+            if node.type == "TEX_IMAGE" and node.image is not None
+        }
+        missing_paths = sorted(str(path) for path in expected_paths - actual_paths)
+        if missing_paths:
+            raise RuntimeError(
+                f"official material graph missing images for {material_name}: {missing_paths}"
+            )
+        validated[material_name] = sorted(str(path) for path in actual_paths)
+
+    opacity_name = next(
+        (name for name in provenance if name.endswith("_opacity")), None
+    )
+    if opacity_name is None or not material_uses_color_as_alpha(materials[opacity_name]):
+        raise RuntimeError("official opacity material must use color luminance as alpha")
+    official_color_image_names = sorted(
+        Path(records["color"]).stem for records in provenance.values()
+    )
+    return {
+        "material_images": validated,
+        "official_color_image_names": official_color_image_names,
+        "opacity_uses_color_luminance": True,
+    }
+
+
+def import_source_motion(path: Path) -> SourceImport:
+    if not path.is_file():
+        raise FileNotFoundError(f"Rocketbox motion FBX does not exist: {path}")
+    before_objects = set(bpy.data.objects)
+    before_actions = set(bpy.data.actions)
+    bpy.ops.import_scene.fbx(filepath=str(path))
+    imported_objects = tuple(obj for obj in bpy.data.objects if obj not in before_objects)
+    imported_actions = tuple(action for action in bpy.data.actions if action not in before_actions)
+    armatures = [obj for obj in imported_objects if obj.type == "ARMATURE"]
+    if len(armatures) != 1:
+        raise RuntimeError(f"motion FBX must contain one armature, found {len(armatures)}")
+    armature = armatures[0]
+    if armature.animation_data is None or armature.animation_data.action is None:
+        raise RuntimeError("motion armature has no active action")
+    action = armature.animation_data.action
+    helpers = [
+        obj
+        for obj in imported_objects
+        if obj.type == "EMPTY" and obj.name.split(".")[0] == "MotionExtractionHelper"
+    ]
+    if len(helpers) != 1:
+        raise RuntimeError(
+            f"motion FBX must contain one MotionExtractionHelper, found {len(helpers)}"
+        )
+    return SourceImport(
+        armature=armature,
+        action=action,
+        helper=helpers[0],
+        imported_objects=imported_objects,
+        imported_actions=imported_actions,
+    )
+
+
+def action_driven_bones(action: bpy.types.Action) -> set[str]:
+    driven = set()
+    for curve in action.fcurves:
+        match = _BONE_PATH_RE.match(curve.data_path)
+        if match:
+            driven.add(match.group(1))
+    return driven
+
+
+def validate_mapping(
+    source_armature: bpy.types.Object, target_armature: bpy.types.Object
+) -> tuple[list[str], list[str], list[dict[str, str | None]]]:
+    source_names = {bone.name for bone in source_armature.data.bones}
+    target_names = {bone.name for bone in target_armature.data.bones}
+    missing_source = sorted(set(TARGET_BONES) - source_names)
+    missing_target = sorted(set(TARGET_BONES) - target_names)
+    if missing_source or missing_target:
+        raise RuntimeError(
+            f"required Rocketbox mapping is incomplete: source={missing_source} target={missing_target}"
+        )
+    source_only_bones = sorted(source_names - set(TARGET_BONES))
+    if len(source_only_bones) != EXPECTED_SOURCE_ONLY_NUB_BONES or any(
+        "Nub" not in name for name in source_only_bones
+    ):
+        raise RuntimeError(
+            "source-only bones must be exactly the 41 ignored Nub bones: "
+            f"actual={source_only_bones}"
+        )
+
+    hierarchy_mismatches = []
+    for name in TARGET_BONES:
+        source_parent = source_armature.data.bones[name].parent
+        target_parent = target_armature.data.bones[name].parent
+        source_parent_name = source_parent.name if source_parent else None
+        target_parent_name = target_parent.name if target_parent else None
+        if source_parent_name != target_parent_name:
+            hierarchy_mismatches.append(
+                {
+                    "bone": name,
+                    "source_parent": source_parent_name,
+                    "target_parent": target_parent_name,
+                }
+            )
+    if hierarchy_mismatches:
+        raise RuntimeError(f"source/target hierarchy mismatch: {hierarchy_mismatches}")
+    unmapped_target_bones = sorted(target_names - set(TARGET_BONES))
+    return source_only_bones, unmapped_target_bones, hierarchy_mismatches
+
+
+def parent_first_names(armature: bpy.types.Object) -> list[str]:
+    target_index = {name: index for index, name in enumerate(TARGET_BONES)}
+
+    def depth(name: str) -> int:
+        value = 0
+        parent = armature.data.bones[name].parent
+        while parent is not None:
+            value += 1
+            parent = parent.parent
+        return value
+
+    parent_first_bones = sorted(TARGET_BONES, key=lambda name: (depth(name), target_index[name]))
+    seen = set()
+    for name in parent_first_bones:
+        parent = armature.data.bones[name].parent
+        if parent is not None and parent.name in TARGET_BONES and parent.name not in seen:
+            raise RuntimeError(f"parent-first ordering failed at {name}")
+        seen.add(name)
+    return parent_first_bones
+
+
+def integer_frame_range(action: bpy.types.Action) -> tuple[int, int]:
+    start_value, end_value = map(float, action.frame_range)
+    start = int(round(start_value))
+    end = int(round(end_value))
+    if abs(start_value - start) > 1.0e-5 or abs(end_value - end) > 1.0e-5:
+        raise RuntimeError(f"source action frame range must be integral: {action.frame_range[:]} ")
+    if end <= start:
+        raise RuntimeError(f"source action frame range is empty: {start}-{end}")
+    return start, end
+
+
+def cache_source_frames(
+    source: SourceImport,
+    frame_start: int,
+    frame_end: int,
+    driven_bones: set[str],
+) -> tuple[list[CachedFrame], Quaternion]:
+    scene = bpy.context.scene
+    scene.frame_set(frame_start)
+    bpy.context.view_layer.update()
+    helper_basis = source.helper.matrix_world.to_quaternion().normalized()
+    cached_frames = []
+    for frame in range(frame_start, frame_end + 1):
+        scene.frame_set(frame)
+        bpy.context.view_layer.update()
+        deltas = {}
+        for name in TARGET_BONES:
+            if name not in driven_bones:
+                deltas[name] = Matrix.Identity(4)
+                continue
+            source_bone = source.armature.data.bones[name]
+            source_pb = source.armature.pose.bones[name]
+            source_rest_local = parent_local_rest(source_bone)
+            source_pose_local = parent_local_pose(source_pb)
+            source_delta = source_rest_local.inverted() @ source_pose_local
+            deltas[name] = source_delta.copy()
+        cached_frames.append(
+            CachedFrame(
+                frame=frame,
+                source_location=source.armature.matrix_world.translation.copy(),
+                source_quaternion=source.armature.matrix_world.to_quaternion().normalized(),
+                bone_deltas=deltas,
+            )
+        )
+    return cached_frames, helper_basis
+
+
+def rest_angle_statistics(
+    source_armature: bpy.types.Object, target_armature: bpy.types.Object
+) -> dict[str, Any]:
+    values = {}
+    for name in TARGET_BONES:
+        source_rotation = parent_local_rest(
+            source_armature.data.bones[name]
+        ).to_quaternion()
+        target_rotation = parent_local_rest(
+            target_armature.data.bones[name]
+        ).to_quaternion()
+        values[name] = math.degrees(
+            shortest_rotation_angle(source_rotation, target_rotation)
+        )
+    maximum_name = max(values, key=values.get)
+    return {
+        "minimum_deg": min(values.values()),
+        "mean_deg": mean(values.values()),
+        "maximum_deg": values[maximum_name],
+        "maximum_bone": maximum_name,
+        "per_bone_deg": values,
+    }
+
+
+def remove_source_import(source: SourceImport) -> list[str]:
+    helper_names = sorted(
+        obj.name for obj in source.imported_objects if obj.type != "ARMATURE"
+    )
+    source_armature_data = source.armature.data
+    for obj in source.imported_objects:
+        if obj.name in bpy.data.objects:
+            bpy.data.objects.remove(obj, do_unlink=True)
+    for action in source.imported_actions:
+        if action.name in bpy.data.actions:
+            bpy.data.actions.remove(action)
+    if source_armature_data.name in bpy.data.armatures and source_armature_data.users == 0:
+        bpy.data.armatures.remove(source_armature_data)
+    return helper_names
+
+
+def create_target_action(
+    target_armature: bpy.types.Object, asset_id: str
+) -> bpy.types.Action:
+    target_armature.animation_data_clear()
+    target_armature.animation_data_create()
+    target_action = bpy.data.actions.new(name=f"{asset_id}_walk_neutral_retarget")
+    target_armature.animation_data.action = target_action
+    return target_action
+
+
+def keyframe_transform(target: bpy.types.Object | bpy.types.PoseBone, frame: int) -> None:
+    target.keyframe_insert(data_path="location", frame=frame, group=target.name)
+    target.keyframe_insert(data_path="rotation_quaternion", frame=frame, group=target.name)
+    target.keyframe_insert(data_path="scale", frame=frame, group=target.name)
+
+
+def joint_head_world(armature: bpy.types.Object, bone_name: str) -> Vector:
+    return armature.matrix_world @ armature.pose.bones[bone_name].head
+
+
+def bake_target_action(
+    target_armature: bpy.types.Object,
+    cached_frames: list[CachedFrame],
+    helper_basis: Quaternion,
+    parent_first_bones: list[str],
+    target_action: bpy.types.Action,
+) -> tuple[
+    dict[int, dict[str, Vector]], float, list[float], dict[int, Vector]
+]:
+    target_armature.data.pose_position = "POSE"
+    target_armature.rotation_mode = "QUATERNION"
+    target_base_location = target_armature.matrix_world.translation.copy()
+    target_base_quaternion = target_armature.matrix_world.to_quaternion().normalized()
+    target_base_scale = target_armature.scale.copy()
+    target_rest_locals = {
+        name: parent_local_rest(target_armature.data.bones[name]) for name in TARGET_BONES
+    }
+    source_frame_one_location = cached_frames[0].source_location.copy()
+    sampled_positions: dict[int, dict[str, Vector]] = {}
+    baked_root_locations: dict[int, Vector] = {}
+    frame_errors = []
+
+    for cached in cached_frames:
+        bpy.context.scene.frame_set(cached.frame)
+        for target_pb in target_armature.pose.bones:
+            target_pb.rotation_mode = "QUATERNION"
+            target_pb.matrix_basis = Matrix.Identity(4)
+
+        source_location = cached.source_location
+        root_displacement = AXIS_MAP @ (
+            (source_location - source_frame_one_location) * ROOT_SCALE
+        )
+        target_armature.location = target_base_location + root_displacement
+        source_quaternion = cached.source_quaternion
+        root_motion_quaternion = helper_basis.inverted() @ source_quaternion
+        root_motion_quaternion.normalize()
+        target_armature.rotation_quaternion = (
+            target_base_quaternion @ root_motion_quaternion
+        ).normalized()
+        target_armature.scale = target_base_scale
+
+        for name in parent_first_bones:
+            target_pb = target_armature.pose.bones[name]
+            source_delta = cached.bone_deltas[name]
+            target_rest_local = target_rest_locals[name]
+            target_local = target_rest_local @ source_delta
+            target_armature_matrix = (
+                target_local
+                if target_pb.parent is None
+                else target_pb.parent.matrix @ target_local
+            )
+            target_pb.matrix = target_armature_matrix
+
+        bpy.context.view_layer.update()
+        maximum_error = 0.0
+        for name in TARGET_BONES:
+            target_pb = target_armature.pose.bones[name]
+            actual_local = parent_local_pose(target_pb)
+            requested_local = target_rest_locals[name] @ cached.bone_deltas[name]
+            maximum_error = max(
+                maximum_error,
+                matrix_difference_max_abs(actual_local, requested_local),
+            )
+        if maximum_error > MATRIX_TOLERANCE:
+            raise RuntimeError(
+                f"target pose invariant failed at frame {cached.frame}: {maximum_error}"
+            )
+        frame_errors.append(maximum_error)
+
+        keyframe_transform(target_armature, cached.frame)
+        for name in TARGET_BONES:
+            keyframe_transform(target_armature.pose.bones[name], cached.frame)
+        sampled_positions[cached.frame] = {
+            name: joint_head_world(target_armature, name).copy() for name in TARGET_BONES
+        }
+        baked_root_locations[cached.frame] = (
+            target_armature.matrix_world.translation.copy()
+        )
+
+    for curve in target_action.fcurves:
+        for keyframe in curve.keyframe_points:
+            keyframe.interpolation = "LINEAR"
+    bpy.context.scene.frame_set(cached_frames[0].frame)
+    bpy.context.view_layer.update()
+    return (
+        sampled_positions,
+        max(frame_errors),
+        vector_list(target_base_scale),
+        baked_root_locations,
+    )
+
+
+def validate_action_ownership(
+    target_armature: bpy.types.Object, target_action: bpy.types.Action
+) -> dict[str, Any]:
+    if target_armature.animation_data is None:
+        raise RuntimeError("target armature has no animation data after bake")
+    if target_armature.animation_data.action != target_action:
+        raise RuntimeError("new target action is not active on the target armature")
+    if not target_action.fcurves:
+        raise RuntimeError("new target action has no F-curves")
+    unresolved = []
+    for curve in target_action.fcurves:
+        try:
+            target_armature.path_resolve(curve.data_path)
+        except ValueError:
+            unresolved.append(curve.data_path)
+    if unresolved:
+        raise RuntimeError(f"target action contains unresolved F-curves: {unresolved}")
+    return {
+        "action_name": target_action.name,
+        "fcurve_count": len(target_action.fcurves),
+        "keyframe_count": sum(len(curve.keyframe_points) for curve in target_action.fcurves),
+        "unresolved_fcurve_paths": unresolved,
+    }
+
+
+def select_target_only(avatar: ImportedAvatar) -> None:
+    for obj in bpy.context.scene.objects:
+        obj.select_set(False)
+    avatar.armature.hide_set(False)
+    avatar.mesh.hide_set(False)
+    avatar.armature.select_set(True)
+    avatar.mesh.select_set(True)
+    bpy.context.view_layer.objects.active = avatar.armature
+    selected = set(bpy.context.selected_objects)
+    if selected != {avatar.armature, avatar.mesh}:
+        raise RuntimeError(f"target-only selection failed: {[obj.name for obj in selected]}")
+
+
+def only_target_objects_remain(avatar: ImportedAvatar) -> bool:
+    return set(bpy.context.scene.objects) == {avatar.armature, avatar.mesh}
+
+
+def save_target_blend(avatar: ImportedAvatar, path: Path) -> None:
+    select_target_only(avatar)
+    bpy.context.preferences.filepaths.save_version = 0
+    for backup in path.parent.glob(f"{path.name}[0-9]*"):
+        if backup.is_file():
+            backup.unlink()
+    result = bpy.ops.wm.save_as_mainfile(filepath=str(path))
+    if "FINISHED" not in result or not path.is_file() or path.stat().st_size == 0:
+        raise RuntimeError(f"target-only blend save failed: result={result} path={path}")
+
+
+def export_target_glb(avatar: ImportedAvatar, path: Path) -> None:
+    select_target_only(avatar)
+    result = bpy.ops.export_scene.gltf(
+        filepath=str(path),
+        export_format="GLB",
+        use_selection=True,
+        export_animations=True,
+        export_animation_mode="ACTIVE_ACTIONS",
+        export_force_sampling=True,
+        export_skins=True,
+        export_texcoords=True,
+        export_normals=True,
+    )
+    if "FINISHED" not in result or not path.is_file() or path.stat().st_size == 0:
+        raise RuntimeError(f"GLB export failed: result={result} path={path}")
+
+
+def read_glb_json(path: Path) -> dict[str, Any]:
+    raw = path.read_bytes()
+    if len(raw) < 20 or raw[:4] != b"glTF":
+        raise RuntimeError(f"not a GLB file: {path}")
+    version, declared_length = struct.unpack_from("<II", raw, 4)
+    if version != 2 or declared_length != len(raw):
+        raise RuntimeError(
+            f"invalid GLB header: version={version} length={declared_length}/{len(raw)}"
+        )
+    offset = 12
+    while offset + 8 <= len(raw):
+        chunk_length, chunk_type = struct.unpack_from("<II", raw, offset)
+        offset += 8
+        chunk = raw[offset : offset + chunk_length]
+        offset += chunk_length
+        if chunk_type == 0x4E4F534A:
+            return json.loads(chunk.rstrip(b" \t\r\n\x00").decode("utf-8"))
+    raise RuntimeError("GLB has no JSON chunk")
+
+
+def inspect_glb_structure(path: Path, texture_prefix: str) -> dict[str, Any]:
+    payload = read_glb_json(path)
+    nodes = payload.get("nodes", [])
+    skins = payload.get("skins", [])
+    animations = payload.get("animations", [])
+    image_names = {image.get("name", "") for image in payload.get("images", [])}
+    official_color_image_names = {
+        f"{texture_prefix}_body_color",
+        f"{texture_prefix}_head_color",
+        f"{texture_prefix}_opacity_color",
+    }
+    names = [node.get("name", "") for node in nodes]
+    helper_or_nub_names = sorted(
+        name
+        for name in names
+        if "Nub" in name
+        or name.startswith("MotionExtractionHelper")
+        or name.startswith("ExposeTransformHelper")
+        or name.startswith("Bip01 Footsteps")
+    )
+    if len(payload.get("meshes", [])) != 1:
+        raise RuntimeError("target GLB must contain exactly one mesh")
+    if len(skins) != 1 or len(skins[0].get("joints", [])) != len(TARGET_BONES):
+        raise RuntimeError("target GLB must contain one 80-joint skin")
+    joint_names = [names[index] for index in skins[0]["joints"]]
+    if set(joint_names) != set(TARGET_BONES):
+        raise RuntimeError("target GLB skin joint names do not match target contract")
+    if helper_or_nub_names:
+        raise RuntimeError(f"target GLB leaked source helpers/Nub bones: {helper_or_nub_names}")
+    missing_color_images = sorted(official_color_image_names - image_names)
+    if missing_color_images:
+        raise RuntimeError(
+            f"target GLB is missing official color images: {missing_color_images}"
+        )
+    if len(animations) != 1 or not animations[0].get("channels"):
+        raise RuntimeError("target GLB must contain one non-empty animation")
+    primitive_count = sum(len(mesh.get("primitives", [])) for mesh in payload["meshes"])
+    return {
+        "mesh_count": len(payload["meshes"]),
+        "mesh_primitive_count": primitive_count,
+        "skin_count": len(skins),
+        "skin_joint_count": len(skins[0]["joints"]),
+        "animation_count": len(animations),
+        "animation_channel_count": len(animations[0]["channels"]),
+        "helper_or_nub_names": helper_or_nub_names,
+        "official_color_image_names": sorted(official_color_image_names),
+    }
+
+
+def sample_frames(frame_start: int, frame_end: int) -> tuple[int, int, int]:
+    return frame_start, (frame_start + frame_end) // 2, frame_end
+
+
+def roundtrip_validate(
+    glb_path: Path,
+    expected_mesh: dict[str, Any],
+    expected_positions: dict[int, dict[str, Vector]],
+    frame_start: int,
+    frame_end: int,
+) -> dict[str, Any]:
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    configure_animation_scene()
+    bpy.ops.import_scene.gltf(filepath=str(glb_path))
+    scene = bpy.context.scene
+    if scene.render.fps != FPS:
+        raise RuntimeError(f"roundtrip scene FPS changed: {scene.render.fps}")
+    armatures = [obj for obj in scene.objects if obj.type == "ARMATURE"]
+    skinned_meshes = [
+        obj
+        for obj in scene.objects
+        if obj.type == "MESH"
+        and any(modifier.type == "ARMATURE" for modifier in obj.modifiers)
+    ]
+    if len(armatures) != 1 or len(skinned_meshes) != 1:
+        raise RuntimeError(
+            "GLB roundtrip must contain one armature and one skinned mesh: "
+            f"armatures={len(armatures)} meshes={len(skinned_meshes)}"
+        )
+    armature = armatures[0]
+    mesh = skinned_meshes[0]
+    actual_bones = {bone.name for bone in armature.data.bones}
+    if not set(CORE_BONES).issubset(actual_bones):
+        raise RuntimeError("GLB roundtrip is missing required core bones")
+    if actual_bones != set(TARGET_BONES) or any("Nub" in name for name in actual_bones):
+        raise RuntimeError("GLB roundtrip bone names do not match the 80-bone target")
+    if armature.animation_data is None or armature.animation_data.action is None:
+        raise RuntimeError("GLB roundtrip armature has no active action")
+    action = armature.animation_data.action
+    if not action.fcurves:
+        raise RuntimeError("GLB roundtrip action is empty")
+    actual_start, actual_end = integer_frame_range(action)
+    if (actual_start, actual_end) != (frame_start, frame_end):
+        raise RuntimeError(
+            "GLB roundtrip frame range changed at 30 fps: "
+            f"actual={actual_start}-{actual_end} expected={frame_start}-{frame_end}"
+        )
+
+    actual_mesh = mesh_metrics(mesh, armature)
+    invariant_count_fields = (
+        "polygon_count",
+        "uv_layer_count",
+        "material_slot_count",
+        "bone_count",
+    )
+    changed_counts = {
+        field: {"expected": expected_mesh[field], "actual": actual_mesh[field]}
+        for field in invariant_count_fields
+        if actual_mesh[field] != expected_mesh[field]
+    }
+    if actual_mesh["material_slot_names"] != expected_mesh["material_slot_names"]:
+        changed_counts["material_slot_names"] = {
+            "expected": expected_mesh["material_slot_names"],
+            "actual": actual_mesh["material_slot_names"],
+        }
+    if changed_counts:
+        raise RuntimeError(f"GLB roundtrip changed mesh/material counts: {changed_counts}")
+
+    maximum_joint_error = 0.0
+    per_frame_error = {}
+    for frame in sample_frames(frame_start, frame_end):
+        scene.frame_set(frame)
+        bpy.context.view_layer.update()
+        frame_error = 0.0
+        for name in TARGET_BONES:
+            expected = expected_positions[frame][name]
+            actual = joint_head_world(armature, name)
+            frame_error = max(frame_error, float((actual - expected).length))
+        per_frame_error[str(frame)] = frame_error
+        maximum_joint_error = max(maximum_joint_error, frame_error)
+    if maximum_joint_error >= ROUNDTRIP_JOINT_TOLERANCE_M:
+        raise RuntimeError(
+            f"GLB roundtrip joint error is too large: {maximum_joint_error} m"
+        )
+    return {
+        "fps": scene.render.fps,
+        "armature_count": len(armatures),
+        "skinned_mesh_count": len(skinned_meshes),
+        "action_name": action.name,
+        "action_fcurve_count": len(action.fcurves),
+        "frame_start": actual_start,
+        "frame_end": actual_end,
+        "core_bones_present": True,
+        "bone_count": len(actual_bones),
+        "nub_bone_count": sum("Nub" in name for name in actual_bones),
+        "mesh_counts": {
+            field: actual_mesh[field]
+            for field in ("vertex_count", *invariant_count_fields)
+        },
+        "serialized_vertex_count_change": (
+            actual_mesh["vertex_count"] - expected_mesh["vertex_count"]
+        ),
+        "material_slot_names": actual_mesh["material_slot_names"],
+        "sampled_world_joint_error_m": per_frame_error,
+        "maximum_world_joint_error_m": maximum_joint_error,
+        "joint_tolerance_m": ROUNDTRIP_JOINT_TOLERANCE_M,
+        "passed": True,
+    }
+
+
+def horizontal_unit(vector: Vector) -> Vector:
+    result = Vector((vector.x, vector.y, 0.0))
+    if result.length == 0.0:
+        raise RuntimeError("horizontal vector has zero length")
+    result.normalize()
+    return result
+
+
+def root_metrics(
+    cached_frames: list[CachedFrame],
+    helper_basis: Quaternion,
+    target_base_quaternion: Quaternion,
+    baked_root_locations: dict[int, Vector],
+) -> dict[str, Any]:
+    source_frame_one_location = cached_frames[0].source_location
+    source_translations = [
+        AXIS_MAP @ ((cached.source_location - source_frame_one_location) * ROOT_SCALE)
+        for cached in cached_frames
+    ]
+    baked_frame_one_location = baked_root_locations[cached_frames[0].frame]
+    translations = [
+        baked_root_locations[cached.frame] - baked_frame_one_location
+        for cached in cached_frames
+    ]
+    travel = translations[-1] - translations[0]
+    expected_travel = source_translations[-1] - source_translations[0]
+    travel_reconstruction_error = float((travel - expected_travel).length)
+    if travel_reconstruction_error > 1.0e-6:
+        raise RuntimeError(
+            "baked target root travel differs from measured source travel: "
+            f"{travel_reconstruction_error} m"
+        )
+    travel_unit = horizontal_unit(travel)
+    negative_y = Vector((0.0, -1.0, 0.0))
+    root_direction_dot = float(travel_unit.dot(negative_y))
+    if root_direction_dot < 0.999:
+        raise RuntimeError(f"root travel is not aligned to reviewed -Y: {root_direction_dot}")
+    facing_dots = []
+    for cached in cached_frames:
+        root_motion = helper_basis.inverted() @ cached.source_quaternion
+        target_root_quaternion = target_base_quaternion @ root_motion
+        facing = horizontal_unit(
+            target_root_quaternion @ Vector((1.0, 0.0, 0.0))
+        )
+        facing_dots.append(float(facing.dot(travel_unit)))
+    if min(facing_dots) < 0.98:
+        raise RuntimeError(f"root facing does not follow travel: minimum dot={min(facing_dots)}")
+
+    velocities = [
+        (translations[index + 1] - translations[index]) * FPS
+        for index in range(len(translations) - 1)
+    ]
+    boundary_velocity_difference = velocities[-1] - velocities[0]
+    return {
+        "axis_map": [list(map(float, row)) for row in AXIS_MAP],
+        "root_scale": ROOT_SCALE,
+        "source_frame_one_location_m": vector_list(source_frame_one_location),
+        "source_travel_vector_m": vector_list(
+            cached_frames[-1].source_location - cached_frames[0].source_location
+        ),
+        "target_travel_vector_m": vector_list(travel),
+        "travel_reconstruction_error_m": travel_reconstruction_error,
+        "travel_distance_m": float(travel.length),
+        "x_drift_m": float(max(item.x for item in translations) - min(item.x for item in translations)),
+        "z_bob_range_m": float(max(item.z for item in translations) - min(item.z for item in translations)),
+        "endpoint_direction_dot_negative_y": root_direction_dot,
+        "minimum_facing_travel_dot": min(facing_dots),
+        "maximum_facing_travel_dot": max(facing_dots),
+        "start_velocity_m_per_s": vector_list(velocities[0]),
+        "end_velocity_m_per_s": vector_list(velocities[-1]),
+        "boundary_velocity_difference_m_per_s": vector_list(
+            boundary_velocity_difference
+        ),
+    }
+
+
+def loop_metrics(
+    cached_frames: list[CachedFrame], baked_root_locations: dict[int, Vector]
+) -> dict[str, Any]:
+    start = cached_frames[0]
+    end = cached_frames[-1]
+    bone_residuals = {
+        name: matrix_difference_max_abs(end.bone_deltas[name], start.bone_deltas[name])
+        for name in TARGET_BONES
+    }
+    maximum_bone = max(bone_residuals, key=bone_residuals.get)
+    start_next = cached_frames[1]
+    end_previous = cached_frames[-2]
+    boundary_motion_residuals = {}
+    for name in TARGET_BONES:
+        start_velocity = start.bone_deltas[name].inverted() @ start_next.bone_deltas[name]
+        end_velocity = end_previous.bone_deltas[name].inverted() @ end.bone_deltas[name]
+        boundary_motion_residuals[name] = matrix_difference_max_abs(
+            start_velocity, end_velocity
+        )
+    maximum_velocity_bone = max(
+        boundary_motion_residuals, key=boundary_motion_residuals.get
+    )
+    expected_cycle_displacement = AXIS_MAP @ (
+        (end.source_location - start.source_location) * ROOT_SCALE
+    )
+    actual_cycle_displacement = (
+        baked_root_locations[end.frame] - baked_root_locations[start.frame]
+    )
+    root_loop_residual = (
+        actual_cycle_displacement - expected_cycle_displacement
+    ).length
+    return {
+        "expected_cycle_displacement_m": vector_list(expected_cycle_displacement),
+        "actual_cycle_displacement_m": vector_list(actual_cycle_displacement),
+        "root_residual_after_cycle_displacement_m": float(root_loop_residual),
+        "maximum_bone_delta_residual": bone_residuals[maximum_bone],
+        "maximum_bone_delta_residual_bone": maximum_bone,
+        "normalized_bone_delta_residual": bone_residuals[maximum_bone],
+        "maximum_boundary_motion_residual": boundary_motion_residuals[
+            maximum_velocity_bone
+        ],
+        "maximum_boundary_motion_residual_bone": maximum_velocity_bone,
+        "per_bone_delta_residual": bone_residuals,
+    }
+
+
+def floor_metrics(
+    positions: dict[int, dict[str, Vector]], reviewed_floor: float
+) -> dict[str, Any]:
+    frames = sorted(positions)
+    result = {}
+    for name in FOOT_BONES:
+        points = [positions[frame][name] for frame in frames]
+        minimum_z = min(point.z for point in points)
+        contact_limit = minimum_z + 0.02
+        contact_steps = []
+        for index in range(len(points) - 1):
+            if points[index].z <= contact_limit and points[index + 1].z <= contact_limit:
+                displacement = Vector(
+                    (
+                        points[index + 1].x - points[index].x,
+                        points[index + 1].y - points[index].y,
+                    )
+                ).length
+                contact_steps.append(float(displacement))
+        result[name] = {
+            "minimum_world_z_m": float(minimum_z),
+            "penetration_below_reviewed_floor_m": max(
+                0.0, float(reviewed_floor - minimum_z)
+            ),
+            "contact_height_threshold_m": float(contact_limit),
+            "contact_step_count": len(contact_steps),
+            "maximum_contact_xy_velocity_m_per_s": (
+                max(contact_steps) * FPS if contact_steps else 0.0
+            ),
+            "accumulated_contact_slide_m": sum(contact_steps),
+        }
+    return {
+        "reviewed_floor_z_m": reviewed_floor,
+        "bones": result,
+        "maximum_penetration_m": max(
+            item["penetration_below_reviewed_floor_m"] for item in result.values()
+        ),
+    }
+
+
+def build_manifest(
+    args: argparse.Namespace,
+    texture_paths: dict[str, Path],
+    glb_path: Path,
+    frame_start: int,
+    frame_end: int,
+) -> dict[str, Any]:
+    immutable_input_hashes = {
+        "avatar_fbx": sha256_file(args.avatar_fbx),
+        "motion_fbx": sha256_file(args.motion_fbx),
+        "source_review": sha256_file(args.source_review_json),
+        "body_color_texture": sha256_file(texture_paths["body"]),
+        "head_color_texture": sha256_file(texture_paths["head"]),
+        "opacity_color_texture": sha256_file(texture_paths["opacity"]),
+        "retarget_glb": sha256_file(glb_path),
+    }
+    if set(immutable_input_hashes) != set(IMMUTABLE_HASH_KEYS) or any(
+        _SHA256_RE.fullmatch(value) is None
+        for value in immutable_input_hashes.values()
+    ):
+        raise RuntimeError("immutable input hash contract is invalid")
+    return {
+        "schema_version": "rocketbox_retarget_manifest_v1",
+        "stage": "retargeted",
+        "asset_id": args.asset_id,
+        "immutable_input_hashes": immutable_input_hashes,
+        "binding": {
+            "target_asset_id": args.asset_id,
+            "target_mesh_bound": True,
+            "official_textures_attached": True,
+        },
+        "source_animation": {
+            "fps": FPS,
+            "frame_start": frame_start,
+            "frame_end": frame_end,
+            "frame_count": frame_end - frame_start + 1,
+        },
+        "artifacts": {
+            "blend": "retarget.blend",
+            "glb": "retarget.glb",
+            "metrics": "retarget_metrics.json",
+        },
+        "automatic_checks": {
+            "overall": "passed",
+            "retarget_bake": {"status": "passed"},
+            "glb_roundtrip": {"status": "passed"},
+        },
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    review = validate_source_review(args)
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    configure_animation_scene()
+    avatar = import_avatar(args.avatar_fbx.resolve(), args.texture_prefix)
+    configure_animation_scene()
+    validate_target_binding(avatar)
+    material_provenance = reconnect_official_materials(
+        avatar, args.texture_dir, args.texture_prefix
+    )
+    official_material_bindings = validate_official_material_bindings(
+        avatar, material_provenance
+    )
+    removed_target_helpers = remove_avatar_helpers(avatar)
+    target_base_matrix = avatar.armature.matrix_world.copy()
+    target_base_scale = avatar.armature.scale.copy()
+    pre_retarget_mesh = mesh_metrics(avatar.mesh, avatar.armature)
+    floor_z = reviewed_floor_z(avatar.mesh)
+
+    source = import_source_motion(args.motion_fbx.resolve())
+    configure_animation_scene()
+    source_only_bones, unmapped_target_bones, hierarchy_mismatches = validate_mapping(
+        source.armature, avatar.armature
+    )
+    driven_bones = action_driven_bones(source.action)
+    missing_driven_core = sorted(set(CORE_BONES) - driven_bones)
+    if missing_driven_core:
+        raise RuntimeError(f"source action does not drive core bones: {missing_driven_core}")
+    frame_start, frame_end = integer_frame_range(source.action)
+    parent_first_bones = parent_first_names(avatar.armature)
+    rest_angles = rest_angle_statistics(source.armature, avatar.armature)
+    cached_frames, helper_basis = cache_source_frames(
+        source, frame_start, frame_end, driven_bones
+    )
+    excluded_source_helpers = remove_source_import(source)
+
+    avatar.armature.matrix_world = target_base_matrix
+    avatar.armature.scale = target_base_scale
+    target_action = create_target_action(avatar.armature, args.asset_id)
+    scene = bpy.context.scene
+    scene.frame_start = frame_start
+    scene.frame_end = frame_end
+    (
+        sampled_positions,
+        maximum_space_error,
+        preserved_target_scale,
+        baked_root_locations,
+    ) = bake_target_action(
+        avatar.armature,
+        cached_frames,
+        helper_basis,
+        parent_first_bones,
+        target_action,
+    )
+    action_metrics = validate_action_ownership(avatar.armature, target_action)
+    post_retarget_mesh = mesh_metrics(avatar.mesh, avatar.armature)
+    if post_retarget_mesh != pre_retarget_mesh:
+        raise RuntimeError("retarget changed target mesh, materials, weights, or bind data")
+    if not only_target_objects_remain(avatar):
+        raise RuntimeError(
+            f"retarget scene is not target-only: {[obj.name for obj in scene.objects]}"
+        )
+
+    texture_paths = {
+        "body": args.texture_dir / f"{args.texture_prefix}_body_color.tga",
+        "head": args.texture_dir / f"{args.texture_prefix}_head_color.tga",
+        "opacity": args.texture_dir / f"{args.texture_prefix}_opacity_color.tga",
+    }
+    blend_path = args.output_dir / "retarget.blend"
+    glb_path = args.output_dir / "retarget.glb"
+    metrics_path = args.output_dir / "retarget_metrics.json"
+    manifest_path = args.output_dir / "retarget_manifest.json"
+
+    scene.frame_set(frame_start)
+    save_target_blend(avatar, blend_path)
+    export_target_glb(avatar, glb_path)
+    glb_structure = inspect_glb_structure(glb_path, args.texture_prefix)
+    roundtrip = roundtrip_validate(
+        glb_path,
+        pre_retarget_mesh,
+        sampled_positions,
+        frame_start,
+        frame_end,
+    )
+
+    roots = root_metrics(
+        cached_frames,
+        helper_basis,
+        target_base_matrix.to_quaternion(),
+        baked_root_locations,
+    )
+    loops = loop_metrics(cached_frames, baked_root_locations)
+    feet = floor_metrics(sampled_positions, floor_z)
+    metrics = {
+        "schema_version": "rocketbox_retarget_metrics_v1",
+        "asset_id": args.asset_id,
+        "blender_version": bpy.app.version_string,
+        "source_review_schema": review["schema_version"],
+        "source_animation": {
+            "fps": FPS,
+            "frame_start": frame_start,
+            "frame_end": frame_end,
+            "frame_count": frame_end - frame_start + 1,
+        },
+        "mapping": {
+            "mapped_bone_count": len(TARGET_BONES),
+            "mapped_bones": list(TARGET_BONES),
+            "parent_first_bones": parent_first_bones,
+            "unmapped_target_bones": unmapped_target_bones,
+            "source_only_bone_count": len(source_only_bones),
+            "source_only_bones": source_only_bones,
+            "hierarchy_mismatches": hierarchy_mismatches,
+            "driven_source_bone_count": len(driven_bones & set(TARGET_BONES)),
+            "undriven_target_bones_kept_at_rest": sorted(
+                set(TARGET_BONES) - driven_bones
+            ),
+        },
+        "rest_angle_statistics": rest_angles,
+        "root_alignment": {
+            **roots,
+            "helper_basis_quaternion_wxyz": vector_list(helper_basis),
+            "target_base_matrix": [list(map(float, row)) for row in target_base_matrix],
+            "target_scale_preserved": preserved_target_scale,
+            "displacement_rotated_by_target_base": False,
+            "extra_180_degree_rotation": False,
+        },
+        "loop_residual": loops,
+        "floor_metrics": feet,
+        "mesh_invariants": {
+            "before_retarget": pre_retarget_mesh,
+            "after_retarget": post_retarget_mesh,
+            "unchanged": pre_retarget_mesh == post_retarget_mesh,
+        },
+        "materials": {
+            "official_texture_graphs": material_provenance,
+            "validated_bindings": official_material_bindings,
+            "material_slots_cleared": False,
+        },
+        "action": action_metrics,
+        "glb_structure": glb_structure,
+        "roundtrip": roundtrip,
+        "excluded": {
+            "target_helpers": removed_target_helpers,
+            "source_helpers": excluded_source_helpers,
+            "source_nub_bones": source_only_bones,
+        },
+        "invariants": {
+            "overall": "passed",
+            "space_invariant_max_abs_error": maximum_space_error,
+            "space_invariant_tolerance": MATRIX_TOLERANCE,
+            "mapped_80_of_80": len(TARGET_BONES) == 80,
+            "hierarchy_mismatch_count": len(hierarchy_mismatches),
+            "target_mesh_unchanged": pre_retarget_mesh == post_retarget_mesh,
+            "target_only_blend": True,
+            "target_only_glb": True,
+            "official_textures_attached": True,
+            "glb_roundtrip_passed": roundtrip["passed"],
+        },
+        "artifacts": {
+            "blend": str(blend_path.resolve()),
+            "glb": str(glb_path.resolve()),
+            "metrics": str(metrics_path.resolve()),
+            "manifest": str(manifest_path.resolve()),
+        },
+    }
+    write_json(metrics_path, metrics)
+    write_json(
+        manifest_path,
+        build_manifest(args, texture_paths, glb_path, frame_start, frame_end),
+    )
+    print(f"ROCKETBOX_RETARGET_OK asset_id={args.asset_id}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
