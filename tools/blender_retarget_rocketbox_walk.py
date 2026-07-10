@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (c) 2025 The SPEAR Development Team. Licensed under the MIT License <http://opensource.org/licenses/MIT>.
+# Copyright (c) 2022 Intel. Licensed under the MIT License <http://opensource.org/licenses/MIT>.
+#
+
 """Bake a Rocketbox neutral walk onto an approved textured avatar.
 
 Run with Blender 4.2 or newer:
@@ -9,37 +16,37 @@ Run with Blender 4.2 or newer:
       --source-review-json /absolute/source_review.json \
       --output-dir /absolute/output
 """
-from __future__ import annotations
 
 import argparse
 import hashlib
 import json
 import math
+import os
 import re
 import struct
 import sys
-from dataclasses import dataclass
+import tempfile
 from pathlib import Path
 from statistics import mean
-from typing import Any
 
 import bpy
 from mathutils import Matrix, Quaternion, Vector
+from mathutils.kdtree import KDTree
 
 
 TOOLS_DIR = Path(__file__).resolve().parent
-SPIKE_RLR_DIR = TOOLS_DIR / "spike_rlr"
+SPIKE_RLR_DIR = TOOLS_DIR/"spike_rlr"
 for import_dir in (TOOLS_DIR, SPIKE_RLR_DIR):
     if str(import_dir) not in sys.path:
         sys.path.insert(0, str(import_dir))
 
-from blender_render_rocketbox_source_review import (  # noqa: E402
+from blender_render_rocketbox_source_review import (
     ImportedAvatar,
     import_avatar,
     material_uses_color_as_alpha,
     reconnect_official_materials,
 )
-from rocketbox_human_review import assert_source_review_approved  # noqa: E402
+from rocketbox_human_review import assert_source_review_approved
 
 
 TARGET_BONES = (
@@ -160,6 +167,17 @@ IMMUTABLE_HASH_KEYS = (
     "retarget_glb",
 )
 
+CONSUMED_TEXTURE_SUFFIXES = (
+    "body_color",
+    "body_normal",
+    "body_specular",
+    "head_color",
+    "head_normal",
+    "head_specular",
+    "opacity_color",
+)
+READINESS_FILES = ("retarget_manifest.json", "motion_review.json")
+
 FOOT_BONES = (
     "Bip01 L Foot",
     "Bip01 L Toe0",
@@ -172,6 +190,9 @@ FPS = 30
 EXPECTED_SOURCE_ONLY_NUB_BONES = 41
 MATRIX_TOLERANCE = 1.0e-4
 ROUNDTRIP_JOINT_TOLERANCE_M = 1.0e-4
+SKIN_POSITION_TOLERANCE_M = 2.0e-6
+SKIN_WEIGHT_L1_TOLERANCE = 1.0e-6
+SKIN_WEIGHT_SUM_TOLERANCE = 1.0e-6
 _BONE_PATH_RE = re.compile(r'^pose\.bones\["(.+)"\]')
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
@@ -179,27 +200,27 @@ assert len(TARGET_BONES) == 80
 assert len(set(TARGET_BONES)) == 80
 
 
-@dataclass(frozen=True)
 class SourceImport:
-    armature: bpy.types.Object
-    action: bpy.types.Action
-    helper: bpy.types.Object
-    imported_objects: tuple[bpy.types.Object, ...]
-    imported_actions: tuple[bpy.types.Action, ...]
+    def __init__(self, armature, action, helper, imported_objects, imported_actions):
+        self.armature = armature
+        self.action = action
+        self.helper = helper
+        self.imported_objects = imported_objects
+        self.imported_actions = imported_actions
 
 
-@dataclass(frozen=True)
 class CachedFrame:
-    frame: int
-    source_location: Vector
-    source_quaternion: Quaternion
-    bone_deltas: dict[str, Matrix]
+    def __init__(self, frame, source_location, source_quaternion, bone_deltas):
+        self.frame = frame
+        self.source_location = source_location
+        self.source_quaternion = source_quaternion
+        self.bone_deltas = bone_deltas
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def parse_args(argv=None):
     if argv is None:
         argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--asset-id", required=True)
     parser.add_argument("--avatar-fbx", type=Path, required=True)
     parser.add_argument("--texture-dir", type=Path, required=True)
@@ -210,23 +231,39 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def sha256_file(path: Path) -> str:
+def sha256_file(path):
     digest = hashlib.sha256()
     with Path(path).open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        for chunk in iter(lambda: stream.read(1024*1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
 
 
-def write_json(path: Path, payload: dict[str, Any]) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    temporary.replace(path)
+def write_json(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Writing JSON: {path}")
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            json.dump(payload, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
 
 
-def configure_animation_scene() -> None:
+def configure_animation_scene():
     scene = bpy.context.scene
     fps = 30
     if fps != FPS:
@@ -236,36 +273,38 @@ def configure_animation_scene() -> None:
     scene.sync_mode = "NONE"
 
 
-def vector_list(value: Vector | Quaternion) -> list[float]:
-    return [float(component) for component in value]
+def vector_list(value):
+    return [ float(component) for component in value ]
 
 
-def matrix_max_abs(matrix: Matrix) -> float:
+def matrix_max_abs(matrix):
     return max(abs(float(value)) for row in matrix for value in row)
 
 
-def matrix_difference_max_abs(actual: Matrix, expected: Matrix) -> float:
+def matrix_difference_max_abs(actual, expected):
     return matrix_max_abs(actual - expected)
 
 
-def shortest_rotation_angle(first: Quaternion, second: Quaternion) -> float:
+def shortest_rotation_angle(first, second):
     angle = first.normalized().rotation_difference(second.normalized()).angle
-    return min(angle, (2.0 * math.pi) - angle)
+    return min(angle, 2.0*math.pi - angle)
 
 
-def parent_local_rest(bone: bpy.types.Bone) -> Matrix:
+def parent_local_rest(bone):
     if bone.parent is None:
         return bone.matrix_local.copy()
-    return bone.parent.matrix_local.inverted() @ bone.matrix_local
+    else:
+        return bone.parent.matrix_local.inverted() @ bone.matrix_local
 
 
-def parent_local_pose(pose_bone: bpy.types.PoseBone) -> Matrix:
+def parent_local_pose(pose_bone):
     if pose_bone.parent is None:
         return pose_bone.matrix.copy()
-    return pose_bone.parent.matrix.inverted() @ pose_bone.matrix
+    else:
+        return pose_bone.parent.matrix.inverted() @ pose_bone.matrix
 
 
-def mesh_data_sha256(mesh: bpy.types.Object) -> str:
+def mesh_data_sha256(mesh):
     digest = hashlib.sha256()
     digest.update(mesh.name.encode("utf-8"))
     for vertex in mesh.data.vertices:
@@ -286,7 +325,7 @@ def mesh_data_sha256(mesh: bpy.types.Object) -> str:
     return digest.hexdigest()
 
 
-def mesh_metrics(mesh: bpy.types.Object, armature: bpy.types.Object) -> dict[str, Any]:
+def mesh_metrics(mesh, armature):
     return {
         "mesh_name": mesh.name,
         "vertex_count": len(mesh.data.vertices),
@@ -297,17 +336,17 @@ def mesh_metrics(mesh: bpy.types.Object, armature: bpy.types.Object) -> dict[str
             slot.material.name if slot.material else None for slot in mesh.material_slots
         ],
         "vertex_group_count": len(mesh.vertex_groups),
-        "vertex_group_names": [group.name for group in mesh.vertex_groups],
+        "vertex_group_names": [ group.name for group in mesh.vertex_groups ],
         "bone_count": len(armature.data.bones),
         "bind_mesh_sha256": mesh_data_sha256(mesh),
     }
 
 
-def reviewed_floor_z(mesh: bpy.types.Object) -> float:
+def reviewed_floor_z(mesh):
     return min(float((mesh.matrix_world @ vertex.co).z) for vertex in mesh.data.vertices)
 
 
-def validate_source_review(args: argparse.Namespace) -> dict[str, Any]:
+def validate_source_review(args):
     review = assert_source_review_approved(args.source_review_json)
     if review["asset_id"] != args.asset_id:
         raise RuntimeError(
@@ -316,26 +355,35 @@ def validate_source_review(args: argparse.Namespace) -> dict[str, Any]:
     avatar_sha256 = sha256_file(args.avatar_fbx)
     if avatar_sha256 != review["source_sha256"]:
         raise RuntimeError("avatar FBX does not match the approved source review")
+    if not args.motion_fbx.is_file():
+        raise FileNotFoundError(f"Rocketbox motion FBX does not exist: {args.motion_fbx}")
 
     approved_by_basename = {
         Path(record["local_path"]).name: record["sha256"]
         for record in review["official_files"]
+        if record.get("role") == "texture"
     }
-    required_names = (
-        f"{args.texture_prefix}_body_color.tga",
-        f"{args.texture_prefix}_head_color.tga",
-        f"{args.texture_prefix}_opacity_color.tga",
-    )
-    for name in required_names:
-        texture_path = args.texture_dir / name
+    for suffix in CONSUMED_TEXTURE_SUFFIXES:
+        name = f"{args.texture_prefix}_{suffix}.tga"
+        texture_path = args.texture_dir/name
         if not texture_path.is_file():
             raise FileNotFoundError(f"required official texture is missing: {texture_path}")
         if approved_by_basename.get(name) != sha256_file(texture_path):
-            raise RuntimeError(f"texture does not match approved source review: {name}")
+            raise RuntimeError(f"approved texture hash mismatch: {texture_path}")
     return review
 
 
-def remove_avatar_helpers(avatar: ImportedAvatar) -> list[str]:
+def invalidate_review_readiness(output_dir):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for filename in READINESS_FILES:
+        path = output_dir/filename
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+
+def remove_avatar_helpers(avatar):
     removed = []
     for obj in avatar.imported_objects:
         if obj not in {avatar.armature, avatar.mesh}:
@@ -344,7 +392,7 @@ def remove_avatar_helpers(avatar: ImportedAvatar) -> list[str]:
     return sorted(removed)
 
 
-def validate_target_binding(avatar: ImportedAvatar) -> None:
+def validate_target_binding(avatar):
     modifiers = [
         modifier
         for modifier in avatar.mesh.modifiers
@@ -362,9 +410,7 @@ def validate_target_binding(avatar: ImportedAvatar) -> None:
         raise RuntimeError(f"target is missing required body bones: {missing_core}")
 
 
-def validate_official_material_bindings(
-    avatar: ImportedAvatar, provenance: dict[str, dict[str, str]]
-) -> dict[str, Any]:
+def validate_official_material_bindings(avatar, provenance):
     materials = {
         slot.material.name: slot.material
         for slot in avatar.mesh.material_slots
@@ -407,7 +453,7 @@ def validate_official_material_bindings(
     }
 
 
-def import_source_motion(path: Path) -> SourceImport:
+def import_source_motion(path):
     if not path.is_file():
         raise FileNotFoundError(f"Rocketbox motion FBX does not exist: {path}")
     before_objects = set(bpy.data.objects)
@@ -415,7 +461,7 @@ def import_source_motion(path: Path) -> SourceImport:
     bpy.ops.import_scene.fbx(filepath=str(path))
     imported_objects = tuple(obj for obj in bpy.data.objects if obj not in before_objects)
     imported_actions = tuple(action for action in bpy.data.actions if action not in before_actions)
-    armatures = [obj for obj in imported_objects if obj.type == "ARMATURE"]
+    armatures = [ obj for obj in imported_objects if obj.type == "ARMATURE" ]
     if len(armatures) != 1:
         raise RuntimeError(f"motion FBX must contain one armature, found {len(armatures)}")
     armature = armatures[0]
@@ -440,7 +486,7 @@ def import_source_motion(path: Path) -> SourceImport:
     )
 
 
-def action_driven_bones(action: bpy.types.Action) -> set[str]:
+def action_driven_bones(action):
     driven = set()
     for curve in action.fcurves:
         match = _BONE_PATH_RE.match(curve.data_path)
@@ -449,9 +495,7 @@ def action_driven_bones(action: bpy.types.Action) -> set[str]:
     return driven
 
 
-def validate_mapping(
-    source_armature: bpy.types.Object, target_armature: bpy.types.Object
-) -> tuple[list[str], list[str], list[dict[str, str | None]]]:
+def validate_mapping(source_armature, target_armature):
     source_names = {bone.name for bone in source_armature.data.bones}
     target_names = {bone.name for bone in target_armature.data.bones}
     missing_source = sorted(set(TARGET_BONES) - source_names)
@@ -489,10 +533,10 @@ def validate_mapping(
     return source_only_bones, unmapped_target_bones, hierarchy_mismatches
 
 
-def parent_first_names(armature: bpy.types.Object) -> list[str]:
+def parent_first_names(armature):
     target_index = {name: index for index, name in enumerate(TARGET_BONES)}
 
-    def depth(name: str) -> int:
+    def depth(name):
         value = 0
         parent = armature.data.bones[name].parent
         while parent is not None:
@@ -510,7 +554,7 @@ def parent_first_names(armature: bpy.types.Object) -> list[str]:
     return parent_first_bones
 
 
-def integer_frame_range(action: bpy.types.Action) -> tuple[int, int]:
+def integer_frame_range(action):
     start_value, end_value = map(float, action.frame_range)
     start = int(round(start_value))
     end = int(round(end_value))
@@ -521,12 +565,7 @@ def integer_frame_range(action: bpy.types.Action) -> tuple[int, int]:
     return start, end
 
 
-def cache_source_frames(
-    source: SourceImport,
-    frame_start: int,
-    frame_end: int,
-    driven_bones: set[str],
-) -> tuple[list[CachedFrame], Quaternion]:
+def cache_source_frames(source, frame_start, frame_end, driven_bones):
     scene = bpy.context.scene
     scene.frame_set(frame_start)
     bpy.context.view_layer.update()
@@ -557,9 +596,7 @@ def cache_source_frames(
     return cached_frames, helper_basis
 
 
-def rest_angle_statistics(
-    source_armature: bpy.types.Object, target_armature: bpy.types.Object
-) -> dict[str, Any]:
+def rest_angle_statistics(source_armature, target_armature):
     values = {}
     for name in TARGET_BONES:
         source_rotation = parent_local_rest(
@@ -581,7 +618,7 @@ def rest_angle_statistics(
     }
 
 
-def remove_source_import(source: SourceImport) -> list[str]:
+def remove_source_import(source):
     helper_names = sorted(
         obj.name for obj in source.imported_objects if obj.type != "ARMATURE"
     )
@@ -597,9 +634,7 @@ def remove_source_import(source: SourceImport) -> list[str]:
     return helper_names
 
 
-def create_target_action(
-    target_armature: bpy.types.Object, asset_id: str
-) -> bpy.types.Action:
+def create_target_action(target_armature, asset_id):
     target_armature.animation_data_clear()
     target_armature.animation_data_create()
     target_action = bpy.data.actions.new(name=f"{asset_id}_walk_neutral_retarget")
@@ -607,25 +642,23 @@ def create_target_action(
     return target_action
 
 
-def keyframe_transform(target: bpy.types.Object | bpy.types.PoseBone, frame: int) -> None:
+def keyframe_transform(target, frame):
     target.keyframe_insert(data_path="location", frame=frame, group=target.name)
     target.keyframe_insert(data_path="rotation_quaternion", frame=frame, group=target.name)
     target.keyframe_insert(data_path="scale", frame=frame, group=target.name)
 
 
-def joint_head_world(armature: bpy.types.Object, bone_name: str) -> Vector:
+def joint_head_world(armature, bone_name):
     return armature.matrix_world @ armature.pose.bones[bone_name].head
 
 
 def bake_target_action(
-    target_armature: bpy.types.Object,
-    cached_frames: list[CachedFrame],
-    helper_basis: Quaternion,
-    parent_first_bones: list[str],
-    target_action: bpy.types.Action,
-) -> tuple[
-    dict[int, dict[str, Vector]], float, list[float], dict[int, Vector]
-]:
+    target_armature,
+    cached_frames,
+    helper_basis,
+    parent_first_bones,
+    target_action,
+):
     target_armature.data.pose_position = "POSE"
     target_armature.rotation_mode = "QUATERNION"
     target_base_location = target_armature.matrix_world.translation.copy()
@@ -635,8 +668,8 @@ def bake_target_action(
         name: parent_local_rest(target_armature.data.bones[name]) for name in TARGET_BONES
     }
     source_frame_one_location = cached_frames[0].source_location.copy()
-    sampled_positions: dict[int, dict[str, Vector]] = {}
-    baked_root_locations: dict[int, Vector] = {}
+    sampled_positions = {}
+    baked_root_locations = {}
     frame_errors = []
 
     for cached in cached_frames:
@@ -647,7 +680,7 @@ def bake_target_action(
 
         source_location = cached.source_location
         root_displacement = AXIS_MAP @ (
-            (source_location - source_frame_one_location) * ROOT_SCALE
+            (source_location - source_frame_one_location)*ROOT_SCALE
         )
         target_armature.location = target_base_location + root_displacement
         source_quaternion = cached.source_quaternion
@@ -709,9 +742,7 @@ def bake_target_action(
     )
 
 
-def validate_action_ownership(
-    target_armature: bpy.types.Object, target_action: bpy.types.Action
-) -> dict[str, Any]:
+def validate_action_ownership(target_armature, target_action):
     if target_armature.animation_data is None:
         raise RuntimeError("target armature has no animation data after bake")
     if target_armature.animation_data.action != target_action:
@@ -734,7 +765,7 @@ def validate_action_ownership(
     }
 
 
-def select_target_only(avatar: ImportedAvatar) -> None:
+def select_target_only(avatar):
     for obj in bpy.context.scene.objects:
         obj.select_set(False)
     avatar.armature.hide_set(False)
@@ -744,26 +775,28 @@ def select_target_only(avatar: ImportedAvatar) -> None:
     bpy.context.view_layer.objects.active = avatar.armature
     selected = set(bpy.context.selected_objects)
     if selected != {avatar.armature, avatar.mesh}:
-        raise RuntimeError(f"target-only selection failed: {[obj.name for obj in selected]}")
+        raise RuntimeError(f"target-only selection failed: {[ obj.name for obj in selected ]}")
 
 
-def only_target_objects_remain(avatar: ImportedAvatar) -> bool:
+def only_target_objects_remain(avatar):
     return set(bpy.context.scene.objects) == {avatar.armature, avatar.mesh}
 
 
-def save_target_blend(avatar: ImportedAvatar, path: Path) -> None:
+def save_target_blend(avatar, path):
     select_target_only(avatar)
     bpy.context.preferences.filepaths.save_version = 0
     for backup in path.parent.glob(f"{path.name}[0-9]*"):
         if backup.is_file():
             backup.unlink()
+    print(f"Saving target blend: {path}")
     result = bpy.ops.wm.save_as_mainfile(filepath=str(path))
     if "FINISHED" not in result or not path.is_file() or path.stat().st_size == 0:
         raise RuntimeError(f"target-only blend save failed: result={result} path={path}")
 
 
-def export_target_glb(avatar: ImportedAvatar, path: Path) -> None:
+def export_target_glb(avatar, path):
     select_target_only(avatar)
+    print(f"Exporting target GLB: {path}")
     result = bpy.ops.export_scene.gltf(
         filepath=str(path),
         export_format="GLB",
@@ -779,7 +812,7 @@ def export_target_glb(avatar: ImportedAvatar, path: Path) -> None:
         raise RuntimeError(f"GLB export failed: result={result} path={path}")
 
 
-def read_glb_json(path: Path) -> dict[str, Any]:
+def read_glb_json(path):
     raw = path.read_bytes()
     if len(raw) < 20 or raw[:4] != b"glTF":
         raise RuntimeError(f"not a GLB file: {path}")
@@ -799,18 +832,96 @@ def read_glb_json(path: Path) -> dict[str, Any]:
     raise RuntimeError("GLB has no JSON chunk")
 
 
-def inspect_glb_structure(path: Path, texture_prefix: str) -> dict[str, Any]:
+def gltf_texture_image_name(payload, texture_info):
+    if not isinstance(texture_info, dict) or not isinstance(texture_info.get("index"), int):
+        return None
+    texture_index = texture_info["index"]
+    textures = payload.get("textures", [])
+    if texture_index < 0 or texture_index >= len(textures):
+        return None
+    texture = textures[texture_index]
+    image_index = texture.get("source")
+    if image_index is None:
+        image_index = texture.get("extensions", {}).get("KHR_texture_basisu", {}).get("source")
+    images = payload.get("images", [])
+    if not isinstance(image_index, int) or image_index < 0 or image_index >= len(images):
+        return None
+    return images[image_index].get("name")
+
+
+def inspect_semantic_material_bindings(payload, texture_prefix):
+    material_binding_errors = []
+    checks = {}
+    materials = {
+        material.get("name"): material for material in payload.get("materials", [])
+    }
+    for suffix in ("body", "head"):
+        material_name = f"{texture_prefix}_{suffix}"
+        material = materials.get(material_name, {})
+        actual = {
+            "base_color": gltf_texture_image_name(
+                payload,
+                material.get("pbrMetallicRoughness", {}).get("baseColorTexture"),
+            ),
+            "normal": gltf_texture_image_name(payload, material.get("normalTexture")),
+            "specular": gltf_texture_image_name(
+                payload,
+                material.get("extensions", {})
+                .get("KHR_materials_specular", {})
+                .get("specularTexture"),
+            ),
+        }
+        expected = {
+            "base_color": f"{texture_prefix}_{suffix}_color",
+            "normal": f"{texture_prefix}_{suffix}_normal",
+            "specular": f"{texture_prefix}_{suffix}_specular",
+        }
+        checks[material_name] = {"actual": actual, "expected": expected}
+        for role in expected:
+            if actual[role] != expected[role]:
+                material_binding_errors.append(
+                    f"{material_name}.{role}: actual={actual[role]!r} expected={expected[role]!r}"
+                )
+
+    opacity_name = f"{texture_prefix}_opacity"
+    opacity = materials.get(opacity_name, {})
+    actual_opacity = {
+        "base_color": gltf_texture_image_name(
+            payload,
+            opacity.get("pbrMetallicRoughness", {}).get("baseColorTexture"),
+        ),
+        "alpha_mode": opacity.get("alphaMode"),
+    }
+    expected_opacity = {
+        "base_color": f"{texture_prefix}_opacity_color",
+        "alpha_mode": "BLEND",
+    }
+    checks[opacity_name] = {"actual": actual_opacity, "expected": expected_opacity}
+    for role in expected_opacity:
+        if actual_opacity[role] != expected_opacity[role]:
+            material_binding_errors.append(
+                f"{opacity_name}.{role}: actual={actual_opacity[role]!r} "
+                f"expected={expected_opacity[role]!r}"
+            )
+    return {
+        "passed": not material_binding_errors,
+        "errors": material_binding_errors,
+        "materials": checks,
+    }
+
+
+def inspect_glb_structure(path, texture_prefix):
     payload = read_glb_json(path)
     nodes = payload.get("nodes", [])
     skins = payload.get("skins", [])
     animations = payload.get("animations", [])
-    image_names = {image.get("name", "") for image in payload.get("images", [])}
+    image_names = { image.get("name", "") for image in payload.get("images", []) }
     official_color_image_names = {
         f"{texture_prefix}_body_color",
         f"{texture_prefix}_head_color",
         f"{texture_prefix}_opacity_color",
     }
-    names = [node.get("name", "") for node in nodes]
+    names = [ node.get("name", "") for node in nodes ]
     helper_or_nub_names = sorted(
         name
         for name in names
@@ -823,19 +934,24 @@ def inspect_glb_structure(path: Path, texture_prefix: str) -> dict[str, Any]:
         raise RuntimeError("target GLB must contain exactly one mesh")
     if len(skins) != 1 or len(skins[0].get("joints", [])) != len(TARGET_BONES):
         raise RuntimeError("target GLB must contain one 80-joint skin")
-    joint_names = [names[index] for index in skins[0]["joints"]]
+    joint_names = [ names[index] for index in skins[0]["joints"] ]
     if set(joint_names) != set(TARGET_BONES):
         raise RuntimeError("target GLB skin joint names do not match target contract")
     if helper_or_nub_names:
         raise RuntimeError(f"target GLB leaked source helpers/Nub bones: {helper_or_nub_names}")
     missing_color_images = sorted(official_color_image_names - image_names)
-    if missing_color_images:
-        raise RuntimeError(
-            f"target GLB is missing official color images: {missing_color_images}"
-        )
     if len(animations) != 1 or not animations[0].get("channels"):
         raise RuntimeError("target GLB must contain one non-empty animation")
     primitive_count = sum(len(mesh.get("primitives", [])) for mesh in payload["meshes"])
+    semantic_material_bindings = inspect_semantic_material_bindings(
+        payload, texture_prefix
+    )
+    semantic_material_bindings["missing_color_images"] = missing_color_images
+    if missing_color_images:
+        semantic_material_bindings["passed"] = False
+        semantic_material_bindings["errors"].append(
+            f"missing official color images: {missing_color_images}"
+        )
     return {
         "mesh_count": len(payload["meshes"]),
         "mesh_primitive_count": primitive_count,
@@ -845,27 +961,130 @@ def inspect_glb_structure(path: Path, texture_prefix: str) -> dict[str, Any]:
         "animation_channel_count": len(animations[0]["channels"]),
         "helper_or_nub_names": helper_or_nub_names,
         "official_color_image_names": sorted(official_color_image_names),
+        "semantic_material_bindings": semantic_material_bindings,
     }
 
 
-def sample_frames(frame_start: int, frame_end: int) -> tuple[int, int, int]:
-    return frame_start, (frame_start + frame_end) // 2, frame_end
+def sample_frames(frame_start, frame_end):
+    return frame_start, (frame_start + frame_end)//2, frame_end
+
+
+def normalized_vertex_weights(mesh, vertex):
+    group_names = [ group.name for group in mesh.vertex_groups ]
+    weights = {
+        group_names[influence.group]: float(influence.weight)
+        for influence in vertex.groups
+        if influence.weight > 0.0
+    }
+    total = sum(weights.values())
+    if total <= 0.0:
+        return {}, total
+    else:
+        return { name: weight/total for name, weight in weights.items() }, total
+
+
+def capture_skin_contract(mesh):
+    if tuple(group.name for group in mesh.vertex_groups) != TARGET_BONES:
+        raise RuntimeError("target mesh vertex groups do not match the exact 80-bone contract")
+    vertices = []
+    for vertex in mesh.data.vertices:
+        weights, total = normalized_vertex_weights(mesh, vertex)
+        if not weights or abs(total - 1.0) > SKIN_WEIGHT_SUM_TOLERANCE:
+            raise RuntimeError(
+                f"target bind vertex {vertex.index} has invalid influence sum {total}"
+            )
+        vertices.append(
+            {
+                "position": (mesh.matrix_world @ vertex.co).copy(),
+                "weights": weights,
+            }
+        )
+    return {"group_names": TARGET_BONES, "vertices": vertices}
+
+
+def validate_roundtrip_skin(mesh, expected_skin):
+    errors = []
+    actual_group_names = tuple(group.name for group in mesh.vertex_groups)
+    if actual_group_names != TARGET_BONES:
+        errors.append(
+            f"vertex groups differ: actual={actual_group_names} expected={TARGET_BONES}"
+        )
+
+    expected_vertices = expected_skin["vertices"]
+    position_index = KDTree(len(expected_vertices))
+    for index, expected in enumerate(expected_vertices):
+        position_index.insert(expected["position"], index)
+    position_index.balance()
+
+    vertices_without_influences = []
+    mapped_original_indices = set()
+    maximum_position_error = 0.0
+    maximum_weight_l1_error = 0.0
+    maximum_weight_sum_error = 0.0
+    for vertex in mesh.data.vertices:
+        weights, total = normalized_vertex_weights(mesh, vertex)
+        if not weights:
+            vertices_without_influences.append(vertex.index)
+            continue
+        maximum_weight_sum_error = max(maximum_weight_sum_error, abs(total - 1.0))
+        position = mesh.matrix_world @ vertex.co
+        _, original_index, position_error = position_index.find(position)
+        mapped_original_indices.add(original_index)
+        maximum_position_error = max(maximum_position_error, float(position_error))
+        expected_weights = expected_vertices[original_index]["weights"]
+        names = set(weights) | set(expected_weights)
+        weight_l1_error = sum(
+            abs(weights.get(name, 0.0) - expected_weights.get(name, 0.0))
+            for name in names
+        )
+        maximum_weight_l1_error = max(maximum_weight_l1_error, weight_l1_error)
+
+    mapped_original_vertex_count = len(mapped_original_indices)
+    if vertices_without_influences:
+        errors.append(
+            f"vertices without influences: count={len(vertices_without_influences)}"
+        )
+    if maximum_weight_sum_error > SKIN_WEIGHT_SUM_TOLERANCE:
+        errors.append(f"maximum weight sum error: {maximum_weight_sum_error}")
+    if maximum_position_error > SKIN_POSITION_TOLERANCE_M:
+        errors.append(f"maximum seam position error: {maximum_position_error}")
+    if maximum_weight_l1_error > SKIN_WEIGHT_L1_TOLERANCE:
+        errors.append(f"maximum normalized weight L1 error: {maximum_weight_l1_error}")
+    unmapped_original_vertex_count = len(expected_vertices) - mapped_original_vertex_count
+    return {
+        "passed": not errors,
+        "errors": errors,
+        "vertex_group_count": len(actual_group_names),
+        "vertex_group_names": list(actual_group_names),
+        "serialized_vertex_count": len(mesh.data.vertices),
+        "vertices_without_influences": vertices_without_influences,
+        "mapped_original_vertex_count": mapped_original_vertex_count,
+        "unmapped_original_vertex_count": unmapped_original_vertex_count,
+        "expected_original_vertex_count": len(expected_vertices),
+        "maximum_position_error_m": maximum_position_error,
+        "position_tolerance_m": SKIN_POSITION_TOLERANCE_M,
+        "maximum_weight_sum_error": maximum_weight_sum_error,
+        "weight_sum_tolerance": SKIN_WEIGHT_SUM_TOLERANCE,
+        "maximum_weight_l1_error": maximum_weight_l1_error,
+        "weight_l1_tolerance": SKIN_WEIGHT_L1_TOLERANCE,
+    }
 
 
 def roundtrip_validate(
-    glb_path: Path,
-    expected_mesh: dict[str, Any],
-    expected_positions: dict[int, dict[str, Vector]],
-    frame_start: int,
-    frame_end: int,
-) -> dict[str, Any]:
+    glb_path,
+    expected_mesh,
+    expected_positions,
+    expected_skin,
+    frame_start,
+    frame_end,
+):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     configure_animation_scene()
     bpy.ops.import_scene.gltf(filepath=str(glb_path))
     scene = bpy.context.scene
     if scene.render.fps != FPS:
         raise RuntimeError(f"roundtrip scene FPS changed: {scene.render.fps}")
-    armatures = [obj for obj in scene.objects if obj.type == "ARMATURE"]
+    armatures = [ obj for obj in scene.objects if obj.type == "ARMATURE" ]
     skinned_meshes = [
         obj
         for obj in scene.objects
@@ -895,6 +1114,10 @@ def roundtrip_validate(
             "GLB roundtrip frame range changed at 30 fps: "
             f"actual={actual_start}-{actual_end} expected={frame_start}-{frame_end}"
         )
+
+    scene.frame_set(frame_start)
+    bpy.context.view_layer.update()
+    skin_weight_validation = validate_roundtrip_skin(mesh, expected_skin)
 
     actual_mesh = mesh_metrics(mesh, armature)
     invariant_count_fields = (
@@ -954,11 +1177,12 @@ def roundtrip_validate(
         "sampled_world_joint_error_m": per_frame_error,
         "maximum_world_joint_error_m": maximum_joint_error,
         "joint_tolerance_m": ROUNDTRIP_JOINT_TOLERANCE_M,
-        "passed": True,
+        "skin_weight_validation": skin_weight_validation,
+        "passed": skin_weight_validation["passed"],
     }
 
 
-def horizontal_unit(vector: Vector) -> Vector:
+def horizontal_unit(vector):
     result = Vector((vector.x, vector.y, 0.0))
     if result.length == 0.0:
         raise RuntimeError("horizontal vector has zero length")
@@ -967,14 +1191,14 @@ def horizontal_unit(vector: Vector) -> Vector:
 
 
 def root_metrics(
-    cached_frames: list[CachedFrame],
-    helper_basis: Quaternion,
-    target_base_quaternion: Quaternion,
-    baked_root_locations: dict[int, Vector],
-) -> dict[str, Any]:
+    cached_frames,
+    helper_basis,
+    target_base_quaternion,
+    baked_root_locations,
+):
     source_frame_one_location = cached_frames[0].source_location
     source_translations = [
-        AXIS_MAP @ ((cached.source_location - source_frame_one_location) * ROOT_SCALE)
+        AXIS_MAP @ ((cached.source_location - source_frame_one_location)*ROOT_SCALE)
         for cached in cached_frames
     ]
     baked_frame_one_location = baked_root_locations[cached_frames[0].frame]
@@ -1007,12 +1231,12 @@ def root_metrics(
         raise RuntimeError(f"root facing does not follow travel: minimum dot={min(facing_dots)}")
 
     velocities = [
-        (translations[index + 1] - translations[index]) * FPS
+        (translations[index + 1] - translations[index])*FPS
         for index in range(len(translations) - 1)
     ]
     boundary_velocity_difference = velocities[-1] - velocities[0]
     return {
-        "axis_map": [list(map(float, row)) for row in AXIS_MAP],
+        "axis_map": [ list(map(float, row)) for row in AXIS_MAP ],
         "root_scale": ROOT_SCALE,
         "source_frame_one_location_m": vector_list(source_frame_one_location),
         "source_travel_vector_m": vector_list(
@@ -1034,9 +1258,7 @@ def root_metrics(
     }
 
 
-def loop_metrics(
-    cached_frames: list[CachedFrame], baked_root_locations: dict[int, Vector]
-) -> dict[str, Any]:
+def loop_metrics(cached_frames, baked_root_locations):
     start = cached_frames[0]
     end = cached_frames[-1]
     bone_residuals = {
@@ -1057,7 +1279,7 @@ def loop_metrics(
         boundary_motion_residuals, key=boundary_motion_residuals.get
     )
     expected_cycle_displacement = AXIS_MAP @ (
-        (end.source_location - start.source_location) * ROOT_SCALE
+        (end.source_location - start.source_location)*ROOT_SCALE
     )
     actual_cycle_displacement = (
         baked_root_locations[end.frame] - baked_root_locations[start.frame]
@@ -1080,13 +1302,11 @@ def loop_metrics(
     }
 
 
-def floor_metrics(
-    positions: dict[int, dict[str, Vector]], reviewed_floor: float
-) -> dict[str, Any]:
+def floor_metrics(positions, reviewed_floor):
     frames = sorted(positions)
     result = {}
     for name in FOOT_BONES:
-        points = [positions[frame][name] for frame in frames]
+        points = [ positions[frame][name] for frame in frames ]
         minimum_z = min(point.z for point in points)
         contact_limit = minimum_z + 0.02
         contact_steps = []
@@ -1107,7 +1327,7 @@ def floor_metrics(
             "contact_height_threshold_m": float(contact_limit),
             "contact_step_count": len(contact_steps),
             "maximum_contact_xy_velocity_m_per_s": (
-                max(contact_steps) * FPS if contact_steps else 0.0
+                max(contact_steps)*FPS if contact_steps else 0.0
             ),
             "accumulated_contact_slide_m": sum(contact_steps),
         }
@@ -1120,13 +1340,7 @@ def floor_metrics(
     }
 
 
-def build_manifest(
-    args: argparse.Namespace,
-    texture_paths: dict[str, Path],
-    glb_path: Path,
-    frame_start: int,
-    frame_end: int,
-) -> dict[str, Any]:
+def build_manifest(args, texture_paths, glb_path, frame_start, frame_end):
     immutable_input_hashes = {
         "avatar_fbx": sha256_file(args.avatar_fbx),
         "motion_fbx": sha256_file(args.motion_fbx),
@@ -1170,10 +1384,10 @@ def build_manifest(
     }
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv=None):
     args = parse_args(argv)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
     review = validate_source_review(args)
+    invalidate_review_readiness(args.output_dir)
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
     configure_animation_scene()
@@ -1233,27 +1447,31 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError("retarget changed target mesh, materials, weights, or bind data")
     if not only_target_objects_remain(avatar):
         raise RuntimeError(
-            f"retarget scene is not target-only: {[obj.name for obj in scene.objects]}"
+            f"retarget scene is not target-only: {[ obj.name for obj in scene.objects ]}"
         )
 
     texture_paths = {
-        "body": args.texture_dir / f"{args.texture_prefix}_body_color.tga",
-        "head": args.texture_dir / f"{args.texture_prefix}_head_color.tga",
-        "opacity": args.texture_dir / f"{args.texture_prefix}_opacity_color.tga",
+        "body": args.texture_dir/f"{args.texture_prefix}_body_color.tga",
+        "head": args.texture_dir/f"{args.texture_prefix}_head_color.tga",
+        "opacity": args.texture_dir/f"{args.texture_prefix}_opacity_color.tga",
     }
-    blend_path = args.output_dir / "retarget.blend"
-    glb_path = args.output_dir / "retarget.glb"
-    metrics_path = args.output_dir / "retarget_metrics.json"
-    manifest_path = args.output_dir / "retarget_manifest.json"
+    blend_path = args.output_dir/"retarget.blend"
+    glb_path = args.output_dir/"retarget.glb"
+    metrics_path = args.output_dir/"retarget_metrics.json"
+    manifest_path = args.output_dir/"retarget_manifest.json"
 
     scene.frame_set(frame_start)
+    expected_skin = capture_skin_contract(avatar.mesh)
     save_target_blend(avatar, blend_path)
     export_target_glb(avatar, glb_path)
+    if os.environ.get("ROCKETBOX_RETARGET_FAIL_AFTER_EXPORT") == "1":
+        raise RuntimeError("injected Rocketbox post-export failure")
     glb_structure = inspect_glb_structure(glb_path, args.texture_prefix)
     roundtrip = roundtrip_validate(
         glb_path,
         pre_retarget_mesh,
         sampled_positions,
+        expected_skin,
         frame_start,
         frame_end,
     )
@@ -1266,6 +1484,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     loops = loop_metrics(cached_frames, baked_root_locations)
     feet = floor_metrics(sampled_positions, floor_z)
+    semantic_material_bindings = glb_structure["semantic_material_bindings"]
+    validation_errors = (
+        semantic_material_bindings["errors"]
+        + roundtrip["skin_weight_validation"]["errors"]
+    )
     metrics = {
         "schema_version": "rocketbox_retarget_metrics_v1",
         "asset_id": args.asset_id,
@@ -1294,7 +1517,7 @@ def main(argv: list[str] | None = None) -> int:
         "root_alignment": {
             **roots,
             "helper_basis_quaternion_wxyz": vector_list(helper_basis),
-            "target_base_matrix": [list(map(float, row)) for row in target_base_matrix],
+            "target_base_matrix": [ list(map(float, row)) for row in target_base_matrix ],
             "target_scale_preserved": preserved_target_scale,
             "displacement_rotated_by_target_base": False,
             "extra_180_degree_rotation": False,
@@ -1309,6 +1532,7 @@ def main(argv: list[str] | None = None) -> int:
         "materials": {
             "official_texture_graphs": material_provenance,
             "validated_bindings": official_material_bindings,
+            "semantic_glb_bindings": semantic_material_bindings,
             "material_slots_cleared": False,
         },
         "action": action_metrics,
@@ -1320,7 +1544,8 @@ def main(argv: list[str] | None = None) -> int:
             "source_nub_bones": source_only_bones,
         },
         "invariants": {
-            "overall": "passed",
+            "overall": "passed" if not validation_errors else "failed",
+            "errors": validation_errors,
             "space_invariant_max_abs_error": maximum_space_error,
             "space_invariant_tolerance": MATRIX_TOLERANCE,
             "mapped_80_of_80": len(TARGET_BONES) == 80,
@@ -1330,6 +1555,10 @@ def main(argv: list[str] | None = None) -> int:
             "target_only_glb": True,
             "official_textures_attached": True,
             "glb_roundtrip_passed": roundtrip["passed"],
+            "glb_skin_weights_preserved": roundtrip["skin_weight_validation"][
+                "passed"
+            ],
+            "glb_material_bindings_preserved": semantic_material_bindings["passed"],
         },
         "artifacts": {
             "blend": str(blend_path.resolve()),
@@ -1339,6 +1568,8 @@ def main(argv: list[str] | None = None) -> int:
         },
     }
     write_json(metrics_path, metrics)
+    if validation_errors:
+        raise RuntimeError(f"retarget validation failed: {validation_errors}")
     write_json(
         manifest_path,
         build_manifest(args, texture_paths, glb_path, frame_start, frame_end),

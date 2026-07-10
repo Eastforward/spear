@@ -1,9 +1,16 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (c) 2025 The SPEAR Development Team. Licensed under the MIT License <http://opensource.org/licenses/MIT>.
+# Copyright (c) 2022 Intel. Licensed under the MIT License <http://opensource.org/licenses/MIT>.
+#
+
 import ast
 from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[2]
-SCRIPT = REPO / "tools" / "blender_retarget_rocketbox_walk.py"
+SCRIPT = REPO/"tools"/"blender_retarget_rocketbox_walk.py"
 
 TARGET_BONES = (
     "Bip01 Pelvis",
@@ -124,12 +131,12 @@ IMMUTABLE_HASH_KEYS = (
 )
 
 
-def renderer_source() -> str:
-    assert SCRIPT.is_file(), f"missing Task 3 Blender script: {SCRIPT}"
+def renderer_source():
+    assert SCRIPT.is_file()
     return SCRIPT.read_text(encoding="utf-8")
 
 
-def tuple_constant(name: str):
+def tuple_constant(name):
     tree = ast.parse(renderer_source())
     for node in tree.body:
         if isinstance(node, ast.Assign):
@@ -141,7 +148,7 @@ def tuple_constant(name: str):
     raise AssertionError(f"missing module constant {name}")
 
 
-def function_node(name: str) -> ast.FunctionDef:
+def function_node(name):
     tree = ast.parse(renderer_source())
     for node in tree.body:
         if isinstance(node, ast.FunctionDef) and node.name == name:
@@ -149,7 +156,7 @@ def function_node(name: str) -> ast.FunctionDef:
     raise AssertionError(f"missing function {name}")
 
 
-def compact_source() -> str:
+def compact_source():
     return "".join(renderer_source().split())
 
 
@@ -195,7 +202,7 @@ def test_script_reports_shortest_rest_angles_and_reconstructed_target_facing():
     source = compact_source()
 
     assert "defshortest_rotation_angle(" in source
-    assert "min(angle,(2.0*math.pi)-angle)" in source
+    assert "min(angle,2.0*math.pi-angle)" in source
     assert "target_root_quaternion@Vector((1.0,0.0,0.0))" in source
 
 
@@ -233,6 +240,79 @@ def test_script_preserves_target_mesh_materials_weights_and_facial_bones():
     assert "def validate_official_material_bindings" in source
     assert "material_uses_color_as_alpha(" in source
     assert "official_color_image_names" in source
+
+
+def test_script_authenticates_every_consumed_official_texture_before_import():
+    source = renderer_source()
+
+    assert tuple_constant("CONSUMED_TEXTURE_SUFFIXES") == (
+        "body_color",
+        "body_normal",
+        "body_specular",
+        "head_color",
+        "head_normal",
+        "head_specular",
+        "opacity_color",
+    )
+    assert "approved texture hash mismatch" in source
+    assert "for suffix in CONSUMED_TEXTURE_SUFFIXES" in source
+
+
+def test_script_invalidates_readiness_before_blender_outputs_and_can_fail_after_export():
+    source = renderer_source()
+    compact = compact_source()
+    main_source = ast.get_source_segment(source, function_node("main"))
+
+    assert 'READINESS_FILES=("retarget_manifest.json","motion_review.json")' in compact
+    assert "def invalidate_review_readiness(" in source
+    assert "os.unlink(" in source
+    assert "ROCKETBOX_RETARGET_FAIL_AFTER_EXPORT" in source
+    assert main_source.index("invalidate_review_readiness(args.output_dir)") < main_source.index(
+        "bpy.ops.wm.read_factory_settings(use_empty=True)"
+    )
+
+
+def test_script_uses_unique_same_directory_json_replacement():
+    source = renderer_source()
+
+    assert "tempfile.NamedTemporaryFile(" in source
+    assert "dir=path.parent" in source
+    assert "os.replace(" in source
+    assert 'with_suffix(path.suffix + ".tmp")' not in source
+    for message in ("Writing JSON", "Saving target blend", "Exporting target GLB"):
+        assert message in source
+
+
+def test_script_validates_roundtrip_vertex_groups_and_normalized_weights():
+    source = renderer_source()
+
+    assert "KDTree" in source
+    assert "SKIN_POSITION_TOLERANCE_M" in source
+    assert "SKIN_WEIGHT_L1_TOLERANCE" in source
+    assert "tuple(group.name for group in mesh.vertex_groups) != TARGET_BONES" in source
+    assert "vertices_without_influences" in source
+    assert "maximum_weight_sum_error" in source
+    assert "maximum_weight_l1_error" in source
+    assert "mapped_original_vertex_count" in source
+    assert "unmapped_original_vertex_count" in source
+    assert "seam mapping did not cover every original vertex" not in source
+    assert '"skin_weight_validation"' in source
+
+
+def test_script_validates_semantic_gltf_material_bindings():
+    source = renderer_source()
+
+    for field in (
+        "baseColorTexture",
+        "normalTexture",
+        "KHR_materials_specular",
+        "specularTexture",
+        "alphaMode",
+        "BLEND",
+    ):
+        assert field in source
+    assert "material_binding_errors" in source
+    assert '"semantic_material_bindings"' in source
 
 
 def test_script_creates_and_keyframes_a_new_target_action():
@@ -334,3 +414,29 @@ def test_script_computes_loop_residual_from_baked_target_root_motion():
     assert "baked_root_locations" in source
     assert "actual_cycle_displacement" in source
     assert "actual_cycle_displacement-expected_cycle_displacement" in source
+
+
+def test_new_python_files_follow_repository_style_contract():
+    copyright_lines = (
+        "Copyright (c) 2025 The SPEAR Development Team",
+        "Copyright (c) 2022 Intel",
+    )
+    forbidden_strings = (
+        "# " + "noqa",
+        "from dataclasses import " + "dataclass",
+        "@data" + "class",
+        "ArgumentParser(" + "description=",
+    )
+    for path in (SCRIPT, Path(__file__)):
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        for line in copyright_lines:
+            assert line in source
+        for forbidden in forbidden_strings:
+            assert forbidden not in source
+        assert not any(isinstance(node, ast.AnnAssign) for node in ast.walk(tree))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                assert node.returns is None
+                args = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
+                assert all(arg.annotation is None for arg in args)
