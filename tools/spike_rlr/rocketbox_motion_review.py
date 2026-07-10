@@ -258,7 +258,7 @@ def _pending_payload(
     }
 
 
-def ensure_pending_review(review_dir: Path) -> dict:
+def _resolve_review_state(review_dir: Path) -> tuple[dict[str, Any], bool]:
     manifest, media_paths = validate_ready_manifest(review_dir)
     review_path = _existing_review_path(review_dir)
     manifest_sha256, media_sha256 = _current_hashes(review_dir, media_paths)
@@ -269,10 +269,20 @@ def ensure_pending_review(review_dir: Path) -> dict:
             and existing.get("retarget_manifest_sha256") == manifest_sha256
             and existing.get("media_sha256") == media_sha256
         ):
-            return existing
-    payload = _pending_payload(manifest, manifest_sha256, media_sha256)
-    _atomic_write_json(Path(review_dir) / "motion_review.json", payload)
-    return payload
+            return existing, True
+    return _pending_payload(manifest, manifest_sha256, media_sha256), False
+
+
+def read_review_state(review_dir: Path) -> dict:
+    state, _ = _resolve_review_state(review_dir)
+    return state
+
+
+def ensure_pending_review(review_dir: Path) -> dict:
+    state, is_current = _resolve_review_state(review_dir)
+    if not is_current:
+        _atomic_write_json(Path(review_dir) / "motion_review.json", state)
+    return state
 
 
 def record_decision(

@@ -8,6 +8,8 @@ import pytest
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
 
+import rocketbox_motion_review as review_contract  # noqa: E402
+
 from rocketbox_motion_review import (  # noqa: E402
     EXPECTED_ASSET_IDS,
     REQUIRED_MEDIA,
@@ -468,3 +470,56 @@ def test_ensure_pending_review_writes_current_pending_record(tmp_path):
         review_dir / "retarget_manifest.json"
     )
     assert (review_dir / "motion_review.json").exists()
+
+
+def test_read_review_state_returns_ephemeral_pending_without_writing(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+
+    result = review_contract.read_review_state(review_dir)
+
+    assert result["decision"] == "pending"
+    assert result["retarget_manifest_sha256"] == sha256_file(
+        review_dir / "retarget_manifest.json"
+    )
+    assert result["media_sha256"]["front"] == sha256_file(
+        review_dir / "front.mp4"
+    )
+    assert not (review_dir / "motion_review.json").exists()
+
+
+def test_read_review_state_returns_pending_without_rewriting_stale_file(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    record_decision(review_dir, "approved", "jzy", "approved")
+    review_path = review_dir / "motion_review.json"
+    stale_bytes = review_path.read_bytes()
+    (review_dir / "front.mp4").write_bytes(b"rerendered")
+
+    result = review_contract.read_review_state(review_dir)
+
+    assert result["decision"] == "pending"
+    assert result["media_sha256"]["front"] == sha256_file(
+        review_dir / "front.mp4"
+    )
+    assert review_path.read_bytes() == stale_bytes
+
+
+@pytest.mark.parametrize("decision", ("approved", "rejected"))
+def test_read_review_state_returns_current_decision_unchanged(tmp_path, decision):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    expected = record_decision(review_dir, decision, "jzy", f"{decision} notes")
+    review_path = review_dir / "motion_review.json"
+    original_bytes = review_path.read_bytes()
+
+    result = review_contract.read_review_state(review_dir)
+
+    assert result == expected
+    assert review_path.read_bytes() == original_bytes
+
+
+def test_read_review_state_still_validates_retarget_glb(tmp_path):
+    review_dir = write_ready_fixture(tmp_path, "rocketbox_male_adult_01")
+    (review_dir / "retarget.glb").write_bytes(b"stale")
+
+    with pytest.raises(ValueError, match="retarget.*GLB|GLB.*hash"):
+        review_contract.read_review_state(review_dir)
+    assert not (review_dir / "motion_review.json").exists()
