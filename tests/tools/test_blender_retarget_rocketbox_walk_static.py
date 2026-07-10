@@ -206,6 +206,37 @@ def test_script_reports_shortest_rest_angles_and_reconstructed_target_facing():
     assert "target_root_quaternion@Vector((1.0,0.0,0.0))" in source
 
 
+def test_facing_gate_reconstructs_source_motion_and_preserves_forward_floor():
+    source = compact_source()
+    reconstruction_tolerance = tuple_constant("FACING_RECONSTRUCTION_TOLERANCE")
+    forward_floor = tuple_constant("FACING_FORWARD_DOT_FLOOR")
+    measured_source_dot = 0.964627385
+    measured_target_dot = 0.964627802
+    double_axis_target_dot = 0.0
+    reversed_target_dot = -measured_target_dot
+
+    assert reconstruction_tolerance <= 1.0e-5
+    assert forward_floor >= 0.90
+    assert abs(measured_target_dot - measured_source_dot) <= reconstruction_tolerance
+    assert measured_target_dot >= forward_floor
+    assert abs(double_axis_target_dot - measured_source_dot) > reconstruction_tolerance
+    assert double_axis_target_dot < forward_floor
+    assert abs(reversed_target_dot - measured_source_dot) > reconstruction_tolerance
+    assert reversed_target_dot < forward_floor
+    assert "source_facing_dots=[]" in source
+    assert "target_facing_dots=[]" in source
+    assert "source_facing_dots.append(float(source_facing.dot(source_travel_unit)))" in source
+    assert "target_facing_dots.append(float(target_facing.dot(travel_unit)))" in source
+    assert "maximum_facing_reconstruction_error=max(" in source
+    assert "ifmaximum_facing_reconstruction_error>FACING_RECONSTRUCTION_TOLERANCE" in source
+    assert "ifmin(target_facing_dots)<FACING_FORWARD_DOT_FLOOR" in source
+    assert '"source_minimum_facing_travel_dot"' in source
+    assert '"source_maximum_facing_travel_dot"' in source
+    assert '"target_minimum_facing_travel_dot"' in source
+    assert '"target_maximum_facing_travel_dot"' in source
+    assert '"maximum_facing_reconstruction_error"' in source
+
+
 def test_script_rebases_object_root_once_without_axis_or_scale_changes():
     source = compact_source()
 

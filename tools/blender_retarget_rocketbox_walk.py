@@ -193,6 +193,9 @@ ROUNDTRIP_JOINT_TOLERANCE_M = 1.0e-4
 SKIN_POSITION_TOLERANCE_M = 2.0e-6
 SKIN_WEIGHT_L1_TOLERANCE = 1.0e-6
 SKIN_WEIGHT_SUM_TOLERANCE = 1.0e-6
+FACING_RECONSTRUCTION_TOLERANCE = 1.0e-5
+# Allows measured gait sway while rejecting sideways or backward reconstruction.
+FACING_FORWARD_DOT_FLOOR = 0.90
 _BONE_PATH_RE = re.compile(r'^pose\.bones\["(.+)"\]')
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
@@ -1219,16 +1222,34 @@ def root_metrics(
     root_direction_dot = float(travel_unit.dot(negative_y))
     if root_direction_dot < 0.999:
         raise RuntimeError(f"root travel is not aligned to reviewed -Y: {root_direction_dot}")
-    facing_dots = []
+    source_travel_unit = horizontal_unit(expected_travel)
+    source_facing_dots = []
+    target_facing_dots = []
     for cached in cached_frames:
+        source_facing = horizontal_unit(
+            cached.source_quaternion @ Vector((1.0, 0.0, 0.0))
+        )
         root_motion = helper_basis.inverted() @ cached.source_quaternion
         target_root_quaternion = target_base_quaternion @ root_motion
-        facing = horizontal_unit(
+        target_facing = horizontal_unit(
             target_root_quaternion @ Vector((1.0, 0.0, 0.0))
         )
-        facing_dots.append(float(facing.dot(travel_unit)))
-    if min(facing_dots) < 0.98:
-        raise RuntimeError(f"root facing does not follow travel: minimum dot={min(facing_dots)}")
+        source_facing_dots.append(float(source_facing.dot(source_travel_unit)))
+        target_facing_dots.append(float(target_facing.dot(travel_unit)))
+    maximum_facing_reconstruction_error = max(
+        abs(target_dot - source_dot)
+        for source_dot, target_dot in zip(source_facing_dots, target_facing_dots)
+    )
+    if maximum_facing_reconstruction_error > FACING_RECONSTRUCTION_TOLERANCE:
+        raise RuntimeError(
+            "target root facing does not reconstruct source facing: "
+            f"maximum dot error={maximum_facing_reconstruction_error}"
+        )
+    if min(target_facing_dots) < FACING_FORWARD_DOT_FLOOR:
+        raise RuntimeError(
+            "reconstructed root facing is not forward: "
+            f"minimum dot={min(target_facing_dots)}"
+        )
 
     velocities = [
         (translations[index + 1] - translations[index])*FPS
@@ -1248,8 +1269,15 @@ def root_metrics(
         "x_drift_m": float(max(item.x for item in translations) - min(item.x for item in translations)),
         "z_bob_range_m": float(max(item.z for item in translations) - min(item.z for item in translations)),
         "endpoint_direction_dot_negative_y": root_direction_dot,
-        "minimum_facing_travel_dot": min(facing_dots),
-        "maximum_facing_travel_dot": max(facing_dots),
+        "source_minimum_facing_travel_dot": min(source_facing_dots),
+        "source_maximum_facing_travel_dot": max(source_facing_dots),
+        "target_minimum_facing_travel_dot": min(target_facing_dots),
+        "target_maximum_facing_travel_dot": max(target_facing_dots),
+        "maximum_facing_reconstruction_error": maximum_facing_reconstruction_error,
+        "facing_reconstruction_tolerance": FACING_RECONSTRUCTION_TOLERANCE,
+        "facing_forward_dot_floor": FACING_FORWARD_DOT_FLOOR,
+        "minimum_facing_travel_dot": min(target_facing_dots),
+        "maximum_facing_travel_dot": max(target_facing_dots),
         "start_velocity_m_per_s": vector_list(velocities[0]),
         "end_velocity_m_per_s": vector_list(velocities[-1]),
         "boundary_velocity_difference_m_per_s": vector_list(
