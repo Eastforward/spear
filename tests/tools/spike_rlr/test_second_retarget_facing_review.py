@@ -299,3 +299,46 @@ def test_review_html_rejects_malformed_or_non_33_frame_metrics():
     metrics["frame_count"] = 32
     with pytest.raises(Exception, match="exactly 33 frames"):
         _module().build_review_html(metrics)
+
+
+def _gait_frame(*, phase: float, sideways: bool) -> dict:
+    value = _frame(y=-phase * 0.1)
+    for side, hip_x in (("left", -0.15), ("right", 0.15)):
+        sign = -1.0 if side == "left" else 1.0
+        hip = (hip_x, -phase * 0.1, 0.9)
+        if sideways:
+            knee = (hip_x + sign * (0.10 + phase * 0.08), -phase * 0.1, 0.5)
+            ankle = (hip_x + sign * phase * 0.24, -phase * 0.1, 0.1)
+        else:
+            knee = (hip_x, -phase * 0.1 - 0.10 - phase * 0.08, 0.5)
+            ankle = (hip_x, -phase * 0.1 - phase * 0.24, 0.1)
+        value[f"{side}_thigh"] = hip
+        value[f"{side}_calf"] = knee
+        value[f"{side}_foot"] = ankle
+    return value
+
+
+def test_gait_plane_distinguishes_forward_walk_from_sideways_leg_swing():
+    review = _module()
+    forward = review.compute_gait_plane_samples(
+        [_gait_frame(phase=value, sideways=False) for value in (0.0, 0.5, 1.0)],
+        fps=30,
+    )
+    sideways = review.compute_gait_plane_samples(
+        [_gait_frame(phase=value, sideways=True) for value in (0.0, 0.5, 1.0)],
+        fps=30,
+    )
+    for side in ("left", "right"):
+        assert forward["legs"][side]["lateral_to_forward_excursion_ratio"] < 0.2
+        assert forward["legs"][side]["mean_knee_normal_dot_lateral_abs"] > 0.95
+        assert sideways["legs"][side]["lateral_to_forward_excursion_ratio"] > 4.0
+        assert sideways["legs"][side]["mean_knee_normal_dot_forward_abs"] > 0.95
+    assert forward["overall_classification"] == "sagittal_forward_gait"
+    assert sideways["overall_classification"] == "sideways_leg_swing"
+
+
+def test_gait_plane_requires_bilateral_hip_knee_ankle_semantics():
+    frame = _gait_frame(phase=0.0, sideways=False)
+    del frame["left_calf"]
+    with pytest.raises(Exception, match="left_calf"):
+        _module().compute_gait_plane_samples([frame, frame], fps=30)

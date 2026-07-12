@@ -450,6 +450,203 @@ def compute_facing_samples(
     }
 
 
+def compute_gait_plane_samples(
+    frames: Sequence[Mapping[str, Sequence[float]]],
+    *,
+    fps: int,
+) -> dict[str, Any]:
+    if not isinstance(fps, int) or isinstance(fps, bool) or fps <= 0:
+        raise FacingReviewError("gait-plane FPS must be a positive integer")
+    if len(frames) < 2:
+        raise FacingReviewError("gait-plane review needs at least two frames")
+    required = {
+        "pelvis",
+        "left_clavicle",
+        "right_clavicle",
+        "left_thigh",
+        "left_calf",
+        "left_foot",
+        "right_thigh",
+        "right_calf",
+        "right_foot",
+    }
+    per_side: dict[str, list[dict[str, float | None]]] = {"left": [], "right": []}
+    frame_evidence = []
+    for index, frame in enumerate(frames, start=1):
+        missing = sorted(required - set(frame))
+        if missing:
+            raise FacingReviewError(
+                f"gait-plane frame {index} is missing semantic roles: {missing}"
+            )
+        pelvis = _point(frame, "pelvis", f"gait-plane frame {index}")
+        body_right = _body_right(frame, f"gait-plane frame {index}")
+        body_forward = _horizontal_normalized(
+            _cross(body_right, UP), f"gait-plane frame {index} body forward"
+        )
+        if _dot(body_forward, CANONICAL_FRONT) < 0.0:
+            body_forward = _scale(body_forward, -1.0)
+        frame_legs = {}
+        for side in ("left", "right"):
+            hip = _point(frame, f"{side}_thigh", f"gait-plane frame {index}")
+            knee = _point(frame, f"{side}_calf", f"gait-plane frame {index}")
+            ankle = _point(frame, f"{side}_foot", f"gait-plane frame {index}")
+            upper = _sub(knee, hip)
+            lower = _sub(ankle, knee)
+            normal_raw = _cross(upper, lower)
+            normal_length = math.sqrt(_dot(normal_raw, normal_raw))
+            hip_ankle = _sub(ankle, hip)
+            hip_ankle_length = math.sqrt(_dot(hip_ankle, hip_ankle))
+            bend_m = normal_length / max(hip_ankle_length, 1.0e-12)
+            if normal_length <= 1.0e-10:
+                normal_lateral = None
+                normal_forward = None
+            else:
+                normal = _scale(normal_raw, 1.0 / normal_length)
+                normal_lateral = abs(_dot(normal, body_right))
+                normal_forward = abs(_dot(normal, body_forward))
+            relative = _sub(ankle, pelvis)
+            entry = {
+                "foot_forward_m": _dot(relative, body_forward),
+                "foot_lateral_m": _dot(relative, body_right),
+                "knee_bend_m": bend_m,
+                "knee_normal_dot_lateral_abs": normal_lateral,
+                "knee_normal_dot_forward_abs": normal_forward,
+            }
+            per_side[side].append(entry)
+            frame_legs[side] = entry
+        frame_evidence.append(
+            {
+                "frame": index,
+                "body_forward": list(body_forward),
+                "body_right": list(body_right),
+                "legs": frame_legs,
+            }
+        )
+    summaries = {}
+    for side, values in per_side.items():
+        forward_values = [float(value["foot_forward_m"]) for value in values]
+        lateral_values = [float(value["foot_lateral_m"]) for value in values]
+        valid = [
+            value
+            for value in values
+            if value["knee_normal_dot_lateral_abs"] is not None
+            and float(value["knee_bend_m"]) >= 0.005
+        ]
+        if not valid:
+            raise FacingReviewError(f"{side} gait has no measurable knee-bend plane")
+        forward_excursion = max(forward_values) - min(forward_values)
+        lateral_excursion = max(lateral_values) - min(lateral_values)
+        summaries[side] = {
+            "foot_forward_excursion_m": forward_excursion,
+            "foot_lateral_excursion_m": lateral_excursion,
+            "lateral_to_forward_excursion_ratio": lateral_excursion
+            / max(forward_excursion, 1.0e-12),
+            "valid_knee_plane_frame_count": len(valid),
+            "mean_knee_normal_dot_lateral_abs": statistics.mean(
+                float(value["knee_normal_dot_lateral_abs"]) for value in valid
+            ),
+            "mean_knee_normal_dot_forward_abs": statistics.mean(
+                float(value["knee_normal_dot_forward_abs"]) for value in valid
+            ),
+            "minimum_knee_normal_dot_lateral_abs": min(
+                float(value["knee_normal_dot_lateral_abs"]) for value in valid
+            ),
+            "maximum_knee_normal_dot_forward_abs": max(
+                float(value["knee_normal_dot_forward_abs"]) for value in valid
+            ),
+        }
+    sagittal = all(
+        summary["lateral_to_forward_excursion_ratio"] <= 0.5
+        and summary["mean_knee_normal_dot_lateral_abs"] >= 0.8
+        for summary in summaries.values()
+    )
+    sideways = any(
+        summary["lateral_to_forward_excursion_ratio"] >= 0.65
+        or summary["mean_knee_normal_dot_forward_abs"]
+        > summary["mean_knee_normal_dot_lateral_abs"]
+        for summary in summaries.values()
+    )
+    overall = (
+        "sagittal_forward_gait"
+        if sagittal
+        else "sideways_leg_swing"
+        if sideways
+        else "ambiguous_gait_plane"
+    )
+    return {
+        "schema": "human_gait_plane_audit_v1",
+        "fps": fps,
+        "frame_count": len(frames),
+        "basis": {
+            "forward": "signed bilateral shoulder/hip perpendicular",
+            "lateral": "bilateral shoulder/hip right axis",
+            "knee_plane": "cross(hip_to_knee, knee_to_ankle)",
+        },
+        "frames": frame_evidence,
+        "legs": summaries,
+        "overall_classification": overall,
+    }
+
+
+def validate_facing_bundle(bundle_dir: Path | str) -> dict[str, Any]:
+    root = _real_directory(Path(bundle_dir), "facing review bundle")
+    manifest_path = _real_file(
+        root / "facing_review_manifest.json", "facing review manifest"
+    )
+    manifest = _load_object(manifest_path, "facing review manifest")
+    if (
+        manifest.get("schema") != "second_retarget_facing_review_render_v1"
+        or manifest.get("asset_id") != ASSET_ID
+        or manifest.get("classification") != "technical_diagnostic_only"
+        or manifest.get("decision") != "rejected"
+        or manifest.get("formal_dataset_asset") is not False
+        or manifest.get("readiness_bundle_published") is not False
+    ):
+        raise FacingReviewError("facing review bundle classification is invalid")
+    if "user_approved" in json.dumps(manifest, sort_keys=True):
+        raise FacingReviewError("facing review bundle may not claim user approval")
+    derived = manifest.get("derived_artifacts")
+    expected = {
+        "top_facing.png",
+        "top_facing.mp4",
+        "facing_metrics.json",
+        "review.html",
+    }
+    if not isinstance(derived, Mapping) or set(derived) != expected:
+        raise FacingReviewError("facing review derived artifact inventory is invalid")
+    for filename in expected:
+        _validate_local_record(root, filename, derived[filename])
+    metrics = _load_object(root / "facing_metrics.json", "facing metrics")
+    if (
+        metrics.get("schema") != "second_retarget_facing_metrics_v1"
+        or metrics.get("fps") != 30
+        or metrics.get("frame_count") != 33
+        or len(metrics.get("frames", [])) != 33
+        or metrics.get("summary") != manifest.get("metrics_summary")
+    ):
+        raise FacingReviewError("facing metrics do not match the bundle manifest")
+    source = manifest.get("source")
+    if not isinstance(source, Mapping):
+        raise FacingReviewError("facing bundle source snapshot is missing")
+    source_manifest = source.get("manifest")
+    if not isinstance(source_manifest, Mapping) or not isinstance(
+        source_manifest.get("path"), str
+    ):
+        raise FacingReviewError("facing bundle source manifest path is missing")
+    current_source = authenticate_second_attempt(Path(source_manifest["path"]).parent)
+    if current_source != source:
+        raise FacingReviewError("facing bundle source snapshot changed")
+    environment = manifest.get("environment")
+    if not isinstance(environment, Mapping) or (
+        environment.get("blender_version"),
+        environment.get("fps"),
+        environment.get("frame_count"),
+        environment.get("resolution"),
+    ) != ("4.2.1", 30, 33, [640, 360]):
+        raise FacingReviewError("facing bundle environment is not pinned")
+    return manifest
+
+
 def build_review_html(metrics: Mapping[str, Any]) -> bytes:
     if (
         metrics.get("schema") != "second_retarget_facing_metrics_v1"

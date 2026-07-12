@@ -21,6 +21,7 @@ from second_retarget_facing_review import (
     FacingReviewError,
     authenticate_second_attempt,
     sha256_file,
+    validate_facing_bundle,
 )
 
 
@@ -64,64 +65,6 @@ def _check_record(path: Path, record: Any, description: str) -> Path:
     if record.get("sha256") != sha256_file(path):
         raise FacingReviewError(f"{description} hash changed")
     return path
-
-
-def validate_facing_bundle(bundle_dir: Path | str) -> dict[str, Any]:
-    root = _real_directory(Path(bundle_dir), "facing review bundle")
-    manifest_path = _real_file(root / "facing_review_manifest.json", "facing review manifest")
-    manifest = _load_object(manifest_path, "facing review manifest")
-    if (
-        manifest.get("schema") != BUNDLE_SCHEMA
-        or manifest.get("asset_id") != "rocketbox_male_adult_01"
-        or manifest.get("classification") != "technical_diagnostic_only"
-        or manifest.get("decision") != "rejected"
-        or manifest.get("formal_dataset_asset") is not False
-        or manifest.get("readiness_bundle_published") is not False
-    ):
-        raise FacingReviewError("facing review bundle classification is invalid")
-    if "user_approved" in json.dumps(manifest, sort_keys=True):
-        raise FacingReviewError("facing review bundle may not claim user approval")
-    derived = manifest.get("derived_artifacts")
-    expected = {
-        "top_facing.png",
-        "top_facing.mp4",
-        "facing_metrics.json",
-        "review.html",
-    }
-    if not isinstance(derived, Mapping) or set(derived) != expected:
-        raise FacingReviewError("facing review derived artifact inventory is invalid")
-    for filename in expected:
-        record = derived[filename]
-        if not isinstance(record, Mapping) or record.get("filename") != filename:
-            raise FacingReviewError(f"{filename} local record is invalid")
-        _check_record(root / filename, record, filename)
-    metrics = _load_object(root / "facing_metrics.json", "facing metrics")
-    if (
-        metrics.get("schema") != "second_retarget_facing_metrics_v1"
-        or metrics.get("fps") != 30
-        or metrics.get("frame_count") != 33
-        or len(metrics.get("frames", [])) != 33
-        or metrics.get("summary") != manifest.get("metrics_summary")
-    ):
-        raise FacingReviewError("facing metrics do not match the bundle manifest")
-    source = manifest.get("source")
-    if not isinstance(source, Mapping):
-        raise FacingReviewError("facing bundle source snapshot is missing")
-    source_manifest = source.get("manifest")
-    if not isinstance(source_manifest, Mapping) or not isinstance(source_manifest.get("path"), str):
-        raise FacingReviewError("facing bundle source manifest path is missing")
-    current_source = authenticate_second_attempt(Path(source_manifest["path"]).parent)
-    if current_source != source:
-        raise FacingReviewError("facing bundle source snapshot changed")
-    environment = manifest.get("environment")
-    if not isinstance(environment, Mapping) or (
-        environment.get("blender_version"),
-        environment.get("fps"),
-        environment.get("frame_count"),
-        environment.get("resolution"),
-    ) != ("4.2.1", 30, 33, [640, 360]):
-        raise FacingReviewError("facing bundle environment is not pinned")
-    return manifest
 
 
 def _record_path(root: Path, record: Mapping[str, Any], description: str) -> Path:
