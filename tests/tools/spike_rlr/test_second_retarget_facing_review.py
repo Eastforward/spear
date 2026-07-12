@@ -231,3 +231,71 @@ def test_rejects_extra_or_wrong_glb_action(second_attempt: Path):
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(Exception, match="exactly one Walking animation"):
         _module().authenticate_second_attempt(second_attempt)
+
+
+def _metrics_payload() -> dict:
+    frames = []
+    for frame in range(1, 34):
+        frames.append(
+            {
+                "frame": frame,
+                "body_travel_dot": 0.95,
+                "body_travel_signed_angle_deg": 18.0,
+                "classification": "aligned",
+                "travel_speed_mps": 0.8,
+            }
+        )
+    return {
+        "schema": "second_retarget_facing_metrics_v1",
+        "fps": 30,
+        "frame_count": 33,
+        "bind_authentication": {
+            "dot": 1.0,
+            "sign_selected_without_travel": True,
+        },
+        "frames": frames,
+        "summary": {
+            "median_body_travel_dot": 0.95,
+            "worst_body_travel_dot": 0.90,
+            "overall_classification": "aligned",
+        },
+    }
+
+
+def test_review_html_is_four_view_synchronized_and_human_authoritative():
+    html = _module().build_review_html(_metrics_payload()).decode("utf-8")
+    for label in ("正面 Front", "侧面 Side", "脚部 Feet", "俯视朝向 Top + arrows"):
+        assert label in html
+    for route in ("/media/front", "/media/side", "/media/feet", "/media/top"):
+        assert route in html
+    for token in (
+        'id="master-toggle"',
+        'data-step="-1"',
+        'data-step="1"',
+        'id="playback-rate"',
+        "currentTime",
+        "0.5 / FPS",
+        "body_travel_signed_angle_deg",
+        "body_travel_dot",
+        "localStorage",
+        "sideways",
+        "reversed",
+        "aligned_but_deformed",
+        "第二次 retarget 已拒绝",
+        "最终视觉判断由你决定",
+        "蓝色：身体前向",
+        "红色：root 位移方向",
+        "灰色：FRONT -Y",
+    ):
+        assert token in html
+    assert "<form" not in html
+    assert "method=\"post\"" not in html.lower()
+    assert "Approve" not in html
+    assert ".fbx" not in html.lower()
+
+
+def test_review_html_rejects_malformed_or_non_33_frame_metrics():
+    metrics = _metrics_payload()
+    metrics["frame_count"] = 32
+    with pytest.raises(Exception, match="exactly 33 frames"):
+        _module().build_review_html(metrics)

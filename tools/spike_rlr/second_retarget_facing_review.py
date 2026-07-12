@@ -448,3 +448,166 @@ def compute_facing_samples(
             "overall_classification": overall,
         },
     }
+
+
+def build_review_html(metrics: Mapping[str, Any]) -> bytes:
+    if (
+        metrics.get("schema") != "second_retarget_facing_metrics_v1"
+        or metrics.get("fps") != 30
+        or metrics.get("frame_count") != 33
+        or not isinstance(metrics.get("frames"), list)
+        or len(metrics["frames"]) != 33
+    ):
+        raise FacingReviewError("facing review HTML requires exactly 33 frames at 30 fps")
+    for index, sample in enumerate(metrics["frames"], start=1):
+        if not isinstance(sample, Mapping) or sample.get("frame") != index:
+            raise FacingReviewError("facing review frame metrics are not contiguous")
+    payload = json.dumps(metrics, separators=(",", ":"), sort_keys=True).replace(
+        "<", "\\u003c"
+    )
+    template = r'''<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第二次 Retarget 朝向审核</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, "Noto Sans SC", system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #e7edf2; background: #0d1217; }
+    main { max-width: 1500px; margin: 0 auto; padding: 18px; }
+    header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: start; border-bottom: 1px solid #34404b; padding-bottom: 14px; }
+    h1 { margin: 0 0 6px; font-size: 24px; }
+    .warning { margin: 0; color: #ffcb77; font-weight: 650; }
+    .authority { max-width: 460px; color: #c9d5de; line-height: 1.5; }
+    .legend { display: flex; flex-wrap: wrap; gap: 12px; margin: 14px 0; font-size: 13px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .swatch { width: 16px; height: 5px; border-radius: 3px; }
+    .blue { background: #207cf2; } .red { background: #ef3b2d; } .grey { background: #888; } .yellow { background: #e7a82b; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    figure { margin: 0; min-width: 0; border: 1px solid #34404b; background: #161d24; }
+    figcaption { padding: 8px 10px; color: #c9d5de; font-size: 13px; font-weight: 650; }
+    video { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #070a0d; }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 14px 0; }
+    button, select, textarea { color: #e7edf2; background: #18232c; border: 1px solid #51606c; border-radius: 6px; font: inherit; }
+    button, select { min-height: 38px; padding: 7px 12px; cursor: pointer; }
+    .frame { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 700; }
+    .evidence { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+    .metric { border: 1px solid #34404b; background: #131a20; padding: 10px; }
+    .metric small { display: block; color: #91a1ad; margin-bottom: 5px; }
+    .metric strong { font-variant-numeric: tabular-nums; }
+    .review { border-top: 1px solid #34404b; margin-top: 16px; padding-top: 14px; }
+    .choices { display: flex; flex-wrap: wrap; gap: 8px; }
+    .choice[aria-pressed="true"] { border-color: #42b7d2; background: #173c47; }
+    textarea { width: 100%; min-height: 76px; padding: 9px; margin: 9px 0; resize: vertical; }
+    .fine { color: #91a1ad; font-size: 12px; line-height: 1.5; }
+    @media (max-width: 850px) {
+      header { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .frame { margin-left: 0; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>第二次 Retarget：人物朝向与动作方向审核</h1>
+      <p class="warning">第二次 retarget 已拒绝；本页只用于定位“侧着走/反着走”的根因。</p>
+    </div>
+    <div class="authority">自动箭头只描述骨架数学关系。人物网格是否真的面向箭头、绑定是否从一开始就错位，最终视觉判断由你决定。</div>
+  </header>
+  <div class="legend" aria-label="方向图例">
+    <span><i class="swatch blue"></i>蓝色：身体前向</span>
+    <span><i class="swatch red"></i>红色：root 位移方向</span>
+    <span><i class="swatch grey"></i>灰色：FRONT -Y</span>
+    <span><i class="swatch yellow"></i>黄色：root 完整轨迹</span>
+  </div>
+  <section class="grid" aria-label="同步视频">
+    <figure><figcaption>正面 Front</figcaption><video data-view="front" src="/media/front" muted loop playsinline preload="auto"></video></figure>
+    <figure><figcaption>侧面 Side</figcaption><video data-view="side" src="/media/side" muted loop playsinline preload="auto"></video></figure>
+    <figure><figcaption>脚部 Feet</figcaption><video data-view="feet" src="/media/feet" muted loop playsinline preload="auto"></video></figure>
+    <figure><figcaption>俯视朝向 Top + arrows</figcaption><video data-view="top" src="/media/top" muted loop playsinline preload="auto"></video></figure>
+  </section>
+  <div class="controls">
+    <button id="master-toggle" type="button">播放 / Play</button>
+    <button type="button" data-step="-1">上一帧</button>
+    <button type="button" data-step="1">下一帧</button>
+    <label>速度 <select id="playback-rate"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option></select></label>
+    <span class="frame" id="frame-label">Frame 1 / 33</span>
+  </div>
+  <section class="evidence" aria-label="当前帧指标">
+    <div class="metric"><small>人工状态</small><strong id="classification">—</strong></div>
+    <div class="metric"><small>身体/位移点积</small><strong id="dot">—</strong></div>
+    <div class="metric"><small>有符号夹角</small><strong id="angle">—</strong></div>
+    <div class="metric"><small>root 速度</small><strong id="speed">—</strong></div>
+    <div class="metric"><small>自动整段摘要</small><strong id="summary">—</strong></div>
+  </section>
+  <section class="review">
+    <h2>你的观察（仅保存在本浏览器）</h2>
+    <div class="choices">
+      <button class="choice" type="button" data-observation="sideways">人物侧着走 sideways</button>
+      <button class="choice" type="button" data-observation="reversed">人物反着走 reversed</button>
+      <button class="choice" type="button" data-observation="aligned_but_deformed">方向一致但绑定/变形错误</button>
+      <button class="choice" type="button" data-observation="camera_misleading">相机造成误导</button>
+    </div>
+    <textarea id="notes" placeholder="可记录具体帧号、身体朝向、腿部动作或绑定问题"></textarea>
+    <button id="export" type="button">导出我的观察 JSON</button>
+    <p class="fine">本页没有正式数据审批接口，也不会改写第二次失败记录。你的选择用于接管视觉诊断。</p>
+  </section>
+</main>
+<script id="metrics-data" type="application/json">__METRICS__</script>
+<script>
+  const metrics = JSON.parse(document.getElementById("metrics-data").textContent);
+  const FPS = 30;
+  const videos = Array.from(document.querySelectorAll("video"));
+  const master = videos.find((video) => video.dataset.view === "top");
+  const toggle = document.getElementById("master-toggle");
+  const storageKey = "second-retarget-facing-review-v1";
+  let observation = null;
+  function frameIndex() { return Math.max(0, Math.min(32, Math.round(master.currentTime * FPS))); }
+  function syncFollowers() {
+    videos.filter((video) => video !== master).forEach((video) => {
+      if (Math.abs(video.currentTime - master.currentTime) > 0.5 / FPS) video.currentTime = master.currentTime;
+    });
+  }
+  function updateEvidence() {
+    const index = frameIndex();
+    const sample = metrics.frames[index];
+    document.getElementById("frame-label").textContent = `Frame ${index + 1} / 33`;
+    document.getElementById("classification").textContent = sample.classification;
+    document.getElementById("dot").textContent = sample.body_travel_dot == null ? "undefined" : sample.body_travel_dot.toFixed(4);
+    document.getElementById("angle").textContent = sample.body_travel_signed_angle_deg == null ? "undefined" : `${sample.body_travel_signed_angle_deg.toFixed(2)}°`;
+    document.getElementById("speed").textContent = `${sample.travel_speed_mps.toFixed(3)} m/s`;
+    document.getElementById("summary").textContent = metrics.summary.overall_classification;
+    syncFollowers();
+  }
+  async function playAll() { await Promise.all(videos.map((video) => video.play().catch(() => null))); toggle.textContent = "暂停 / Pause"; }
+  function pauseAll() { videos.forEach((video) => video.pause()); toggle.textContent = "播放 / Play"; }
+  toggle.addEventListener("click", () => master.paused ? playAll() : pauseAll());
+  document.querySelectorAll("[data-step]").forEach((button) => button.addEventListener("click", () => {
+    pauseAll(); master.currentTime = Math.max(0, Math.min((33 - 1) / FPS, master.currentTime + Number(button.dataset.step) / FPS)); syncFollowers(); updateEvidence();
+  }));
+  document.getElementById("playback-rate").addEventListener("change", (event) => videos.forEach((video) => video.playbackRate = Number(event.target.value)));
+  master.addEventListener("timeupdate", updateEvidence);
+  master.addEventListener("seeked", updateEvidence);
+  function saveObservation() { localStorage.setItem(storageKey, JSON.stringify({observation, notes: document.getElementById("notes").value})); }
+  document.querySelectorAll(".choice").forEach((button) => button.addEventListener("click", () => {
+    observation = button.dataset.observation;
+    document.querySelectorAll(".choice").forEach((candidate) => candidate.setAttribute("aria-pressed", String(candidate === button)));
+    saveObservation();
+  }));
+  document.getElementById("notes").addEventListener("input", saveObservation);
+  const saved = JSON.parse(localStorage.getItem(storageKey) || "null");
+  if (saved) { observation = saved.observation; document.getElementById("notes").value = saved.notes || ""; document.querySelectorAll(".choice").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.observation === observation))); }
+  document.getElementById("export").addEventListener("click", () => {
+    const value = {schema: "second_retarget_facing_human_observation_v1", asset_id: "rocketbox_male_adult_01", rejected_attempt: 2, observation, notes: document.getElementById("notes").value, automatic_summary: metrics.summary};
+    const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], {type: "application/json"})); link.download = "second_retarget_facing_observation.json"; link.click(); URL.revokeObjectURL(link.href);
+  });
+  updateEvidence();
+</script>
+</body>
+</html>
+'''
+    return template.replace("__METRICS__", payload).encode("utf-8")
