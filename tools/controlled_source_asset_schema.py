@@ -1506,6 +1506,8 @@ def _instance_view(value: Mapping[str, Any]) -> dict[str, Any]:
             "taxonomy": request["taxonomy"],
             "fixed_attributes": request["fixed_attributes"],
             "sampled_attributes": request["sampled_attributes"],
+            "target_physical_profile": request["target_physical_profile"],
+            "physical_measurements": None,
             "evidence_state": "planned",
         }
     if schema_name == SOURCE_ASSET_SCHEMA:
@@ -1516,6 +1518,8 @@ def _instance_view(value: Mapping[str, Any]) -> dict[str, Any]:
             "taxonomy": asset["taxonomy"],
             "fixed_attributes": asset["fixed_attributes"],
             "sampled_attributes": asset["sampled_attributes"],
+            "target_physical_profile": asset["target_physical_profile"],
+            "physical_measurements": asset["physical_measurements"],
             "evidence_state": "realized",
         }
     raise ContractError("QA input must be an instance request or source_asset_v2")
@@ -1526,6 +1530,54 @@ def _question_id(pair_key: str, index: int, question: Mapping[str, Any]) -> str:
         f"{pair_key}\0{index}\0{canonical_json(question)}".encode("utf-8")
     ).hexdigest()
     return f"qa_{digest[:16]}"
+
+
+def _realized_ordered_measurement_supports_difference(
+    *,
+    left: Mapping[str, Any],
+    right: Mapping[str, Any],
+    attribute: str,
+    qa_record: Mapping[str, Any],
+) -> bool:
+    """Require observed metric order to agree with a realized size label.
+
+    Planned requests intentionally have no metric evidence yet.  For realized
+    assets, however, a categorical ordered answer must not claim that A is
+    larger when the generated/UE-measured artifact is actually smaller.
+    """
+
+    if left["evidence_state"] != "realized":
+        return True
+    physical = left.get("target_physical_profile")
+    if not isinstance(physical, Mapping) or physical.get("control_attribute") != attribute:
+        return True
+    if qa_record.get("kind") != "ordered":
+        return True
+    if right.get("target_physical_profile", {}).get("control_attribute") != attribute:
+        return False
+    measurement_name = physical.get("measurement")
+    if right["target_physical_profile"].get("measurement") != measurement_name:
+        return False
+    try:
+        left_runtime = left["physical_measurements"]["runtime"]
+        right_runtime = right["physical_measurements"]["runtime"]
+        left_number = float(left_runtime[measurement_name])
+        right_number = float(right_runtime[measurement_name])
+        order = qa_record["value_order"]
+        left_index = order.index(left["sampled_attributes"][attribute])
+        right_index = order.index(right["sampled_attributes"][attribute])
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+    if not math.isfinite(left_number) or not math.isfinite(right_number):
+        return False
+    # Half a centimetre keeps near-equal/noisy measurements out of a visual QA
+    # comparison while remaining far below the configured category spacing.
+    margin_cm = 0.5
+    return (
+        left_number + margin_cm < right_number
+        if left_index < right_index
+        else right_number + margin_cm < left_number
+    )
 
 
 def _questions_for_difference(
@@ -1609,6 +1661,10 @@ def build_instance_qa_pairs(
             continue
         if left["evidence_state"] != right["evidence_state"]:
             raise ContractError("QA pairs cannot mix planned requests and realized assets")
+        profile_id = left["profile_schema_id"]
+        if profile_id not in profiles:
+            raise ContractError(f"missing QA profile: {profile_id}")
+        profile = profiles[profile_id]
         differences = {
             attribute: {
                 "a": left["sampled_attributes"][attribute],
@@ -1617,6 +1673,12 @@ def build_instance_qa_pairs(
             for attribute in sorted(left["sampled_attributes"])
             if left["sampled_attributes"][attribute]
             != right["sampled_attributes"][attribute]
+            and _realized_ordered_measurement_supports_difference(
+                left=left,
+                right=right,
+                attribute=attribute,
+                qa_record=profile["qa_contract"]["attributes"][attribute],
+            )
         }
         if not differences or (single_attribute_only and len(differences) != 1):
             continue
@@ -1646,6 +1708,12 @@ def build_instance_qa_pairs(
             for attribute in sorted(left["sampled_attributes"])
             if left["sampled_attributes"][attribute]
             != right["sampled_attributes"][attribute]
+            and _realized_ordered_measurement_supports_difference(
+                left=left,
+                right=right,
+                attribute=attribute,
+                qa_record=profile["qa_contract"]["attributes"][attribute],
+            )
         }
         combined_a = {
             **left["taxonomy"],

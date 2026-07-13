@@ -656,13 +656,16 @@ def test_animal_size_qa_waits_for_metric_measurement_evidence():
         "size" not in row["qa_evidence_attributes"] for row in pending["assets"]
     )
 
+    size_height = {"small": 45.0, "medium": 55.0, "large": 65.0}
     for asset in assets:
         asset["physical_measurements"] = {
             "status": "measured",
             "method": "fixture_measurement_v1",
             "runtime": {
                 "actor_scale": 1.0,
-                "shoulder_height_cm": 55.0,
+                "shoulder_height_cm": size_height[
+                    asset["sampled_attributes"]["size"]
+                ],
             },
         }
     measured = schema.build_dataset_manifest(
@@ -677,6 +680,41 @@ def test_animal_size_qa_waits_for_metric_measurement_evidence():
         "size" in pair["different_attributes"] for pair in measured["qa_pairs"]
     )
     assert all("size" in row["qa_evidence_attributes"] for row in measured["assets"])
+
+
+def test_realized_size_pair_is_removed_when_metric_order_contradicts_label():
+    profile = animal_profile()
+    requests = schema.sample_instance_requests(profile, count=27, batch_seed=29)
+    small_request = next(
+        request for request in requests if request["sampled_attributes"]["size"] == "small"
+    )
+    large_request = next(
+        request
+        for request in requests
+        if request["sampled_attributes"]["size"] == "large"
+        and all(
+            request["sampled_attributes"][key]
+            == small_request["sampled_attributes"][key]
+            for key in request["sampled_attributes"]
+            if key != "size"
+        )
+    )
+    assets = [realized_asset(small_request), realized_asset(large_request)]
+    for asset, height in zip(assets, (60.0, 50.0)):
+        asset["qa"]["reference_2d"] = "passed"
+        asset["qa"]["static_mesh"] = "passed"
+        asset["physical_measurements"] = {
+            "status": "measured",
+            "method": "fixture_measurement_v1",
+            "runtime": {
+                "actor_scale": 1.0,
+                "shoulder_height_cm": height,
+            },
+        }
+
+    pairs = schema.build_instance_qa_pairs(assets, {profile["profile_schema_id"]: profile})
+
+    assert pairs == []
 
 
 def test_cli_publishes_normalized_requests_jobs_and_qa_without_overwrite(tmp_path):
