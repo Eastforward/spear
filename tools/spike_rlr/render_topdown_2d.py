@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 sys.path.insert(0, str(REPO_ROOT / "tools" / "spike_rlr"))
 from apartment_builtin_obstacles import apartment_builtin_visual_obstacles  # noqa: E402
+from review_video_encode import encode_rgb_frames  # noqa: E402
 
 
 def _style_for_tag(tag):
@@ -38,6 +40,14 @@ def _style_for_tag(tag):
         "cat_british_shorthair_v2": {
             "color": "#6b5fb5",
             "label": "BRITISH SHORTHAIR",
+        },
+        "hy3d_rocketbox_male_adult_01_spike": {
+            "color": "#1b7489",
+            "label": "MALE",
+        },
+        "hy3d_rocketbox_female_adult_01_spike": {
+            "color": "#ba484e",
+            "label": "FEMALE",
         },
     }
     if tag in styles:
@@ -93,7 +103,35 @@ def render_frame(frame_idx, scene, spec, tmp_dir):
     return _render_frame_shoebox(frame_idx, scene, spec, tmp_dir)
 
 
-def _render_frame_shoebox(frame_idx, scene, spec, tmp_dir):
+def render_frame_rgb(frame_idx, scene, spec):
+    """Render directly to an even-sized RGB array for streamed video encoding."""
+    if spec.get("spec_version") == "apartment_v1":
+        return _render_frame_apartment(
+            frame_idx, scene, spec, tmp_dir=None, return_rgb=True
+        )
+    return _render_frame_shoebox(
+        frame_idx, scene, spec, tmp_dir=None, return_rgb=True
+    )
+
+
+def _finish_figure(fig, *, frame_idx, tmp_dir, return_rgb):
+    if return_rgb:
+        fig.canvas.draw()
+        rgba = np.asarray(fig.canvas.buffer_rgba(), dtype=np.uint8)
+        height = rgba.shape[0] - (rgba.shape[0] % 2)
+        width = rgba.shape[1] - (rgba.shape[1] % 2)
+        rgb = np.ascontiguousarray(rgba[:height, :width, :3])
+        plt.close(fig)
+        return rgb
+    fpath = Path(tmp_dir) / f"frame_{frame_idx:03d}.png"
+    fig.savefig(fpath, dpi=100, bbox_inches="tight")
+    plt.close(fig)
+    return fpath
+
+
+def _render_frame_shoebox(
+    frame_idx, scene, spec, tmp_dir, *, return_rgb=False
+):
     """Shoebox v2 top-down: uses room_size_m + furniture[0]==sofa."""
     fig, ax = plt.subplots(figsize=(6.4, 6.0), dpi=100)
     rs = spec["room_size_m"]
@@ -186,13 +224,14 @@ def _render_frame_shoebox(frame_idx, scene, spec, tmp_dir):
     ax.set_ylabel('Y (world, meters) --- audio: back to front')
     ax.grid(True, alpha=0.3)
 
-    fpath = tmp_dir / f"frame_{frame_idx:03d}.png"
-    fig.savefig(fpath, dpi=100, bbox_inches='tight')
-    plt.close(fig)
-    return fpath
+    return _finish_figure(
+        fig, frame_idx=frame_idx, tmp_dir=tmp_dir, return_rgb=return_rgb
+    )
 
 
-def _render_frame_apartment(frame_idx, scene, spec, tmp_dir):
+def _render_frame_apartment(
+    frame_idx, scene, spec, tmp_dir, *, return_rgb=False
+):
     """Apartment v1 top-down: uses apartment_shell_map.json for room outline
     and apartment_furniture_map.json for furniture rectangles."""
     fig, ax = plt.subplots(figsize=(7.5, 7.0), dpi=100)
@@ -343,10 +382,9 @@ def _render_frame_apartment(frame_idx, scene, spec, tmp_dir):
     ax.set_ylabel('Y (world, meters) --- audio: back to front')
     ax.grid(True, alpha=0.3)
 
-    fpath = tmp_dir / f"frame_{frame_idx:03d}.png"
-    fig.savefig(fpath, dpi=100, bbox_inches='tight')
-    plt.close(fig)
-    return fpath
+    return _finish_figure(
+        fig, frame_idx=frame_idx, tmp_dir=tmp_dir, return_rgb=return_rgb
+    )
 
 
 def build_video(spec_path, audio_wav_path, out_mp4_path, tmp_frames_dir=None):
@@ -357,28 +395,30 @@ def build_video(spec_path, audio_wav_path, out_mp4_path, tmp_frames_dir=None):
     if tmp_frames_dir is None:
         tmp_frames_dir = REPO_ROOT / "tmp" / "spike_rlr" / "topdown_frames"
     tmp_frames_dir = Path(tmp_frames_dir)
-    tmp_frames_dir.mkdir(parents=True, exist_ok=True)
+    if tmp_frames_dir.exists():
+        shutil.rmtree(tmp_frames_dir)
 
     n_frames = spec["render_config"]["n_frames"]
     fps = spec["render_config"]["fps"]
 
-    print(f"[topdown] rendering {n_frames} frames -> {tmp_frames_dir}")
-    for f in range(n_frames):
-        render_frame(f, scene, spec, tmp_frames_dir)
-        if f % 15 == 0:
-            print(f"  frame {f}/{n_frames}")
-
     # Silent video first
     silent_mp4 = out_mp4_path.parent / f"{out_mp4_path.stem}_silent.mp4"
     out_mp4_path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run([
-        "ffmpeg", "-y", "-loglevel", "error",
-        "-framerate", str(fps),
-        "-i", str(tmp_frames_dir / "frame_%03d.png"),
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-        str(silent_mp4),
-    ], check=True)
+    print(f"[topdown] streaming {n_frames} RGB frames -> {silent_mp4}")
+
+    def iter_topdown_frames():
+        for frame_index in range(n_frames):
+            yield render_frame_rgb(frame_index, scene, spec)
+            if frame_index % 15 == 0:
+                print(f"  frame {frame_index}/{n_frames}")
+
+    encoded_count = encode_rgb_frames(
+        iter_topdown_frames(), silent_mp4, fps=int(fps)
+    )
+    if encoded_count != n_frames:
+        raise RuntimeError(
+            f"top-down frame count changed: expected {n_frames}, got {encoded_count}"
+        )
     print(f"[topdown] silent video -> {silent_mp4}")
 
     # Mux audio
@@ -399,8 +439,14 @@ def main():
     ap.add_argument("--spec", default=str(REPO_ROOT / "data" / "shoebox_v2_spec.json"))
     ap.add_argument("--audio", default=str(REPO_ROOT / "tmp" / "spike_output" / "raw_audio" / "audio_B_rlr_stereo.wav"))
     ap.add_argument("--out", default=str(REPO_ROOT / "tmp" / "spike_output" / "videos" / "B_rlr_topdown.mp4"))
+    ap.add_argument("--tmp-frames-dir", type=Path)
     args = ap.parse_args()
-    build_video(args.spec, args.audio, Path(args.out))
+    build_video(
+        args.spec,
+        args.audio,
+        Path(args.out),
+        tmp_frames_dir=args.tmp_frames_dir,
+    )
 
 
 if __name__ == "__main__":

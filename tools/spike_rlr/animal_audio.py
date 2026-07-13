@@ -48,6 +48,24 @@ _FALLBACK_LOOKUP_BY_SPECIES = {
     "cat": "cat_meow",
 }
 
+_ANIMAL_TAG_PREFIXES = (
+    "dog_",
+    "cat_",
+    "chipmunk",
+    "goat",
+    "sheep",
+    "pig",
+    "horse",
+    "cattle_bovinae",
+    "yak",
+    "donkey_ass",
+)
+
+_TECHNICAL_TAG_NAMESPACES = (
+    "gate_pixal_",
+    "pixal_",
+)
+
 
 def is_synthetic_audio_path(path: str | Path | None) -> bool:
     if path is None:
@@ -60,11 +78,18 @@ def is_synthetic_audio_path(path: str | Path | None) -> bool:
 
 def species_for_tag(tag: str) -> str | None:
     tag_l = tag.lower()
-    if tag_l.startswith("dog_") or tag_l == "dog":
-        return "dog"
-    if tag_l.startswith("cat_") or tag_l == "cat":
-        return "cat"
+    for namespace in _TECHNICAL_TAG_NAMESPACES:
+        if tag_l.startswith(namespace):
+            tag_l = tag_l[len(namespace) :]
+            break
+    for prefix in _ANIMAL_TAG_PREFIXES:
+        if tag_l == prefix.rstrip("_") or tag_l.startswith(prefix):
+            return prefix.rstrip("_")
     return None
+
+
+def is_animal_tag(tag: str) -> bool:
+    return species_for_tag(tag) is not None
 
 
 def _lookup_for_tag(tag: str, audio_lookup: str | None) -> str:

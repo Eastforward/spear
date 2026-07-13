@@ -2,17 +2,20 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from review_video_encode import encode_rgb_frames  # noqa: E402
 
 
 _MARKER_STYLES = {
@@ -22,12 +25,22 @@ _MARKER_STYLES = {
         "label": "BRITISH SHORTHAIR",
         "color": (124, 88, 211),
     },
+    "hy3d_rocketbox_male_adult_01_spike": {
+        "label": "MALE",
+        "color": (27, 116, 137),
+    },
+    "hy3d_rocketbox_female_adult_01_spike": {
+        "label": "FEMALE",
+        "color": (186, 72, 78),
+    },
 }
 
 _SOURCE_SHORT_LABELS = {
     "dog_golden": "GOLDEN",
     "dog_beagle_v2": "BEAGLE",
     "cat_british_shorthair_v2": "BRITISH",
+    "hy3d_rocketbox_male_adult_01_spike": "MALE",
+    "hy3d_rocketbox_female_adult_01_spike": "FEMALE",
 }
 
 _FLAG_SHORT_LABELS = {
@@ -44,6 +57,12 @@ _FLAG_SHORT_LABELS = {
     "stop_and_go": "stopGo",
     "sources_pass_each_other": "passSrc",
 }
+
+
+def review_work_key(clip_dir: Path) -> str:
+    """Stable per-clip key so concurrent clips never share temporary frames."""
+    resolved = str(Path(clip_dir).resolve()).encode("utf-8")
+    return hashlib.sha256(resolved).hexdigest()[:20]
 
 
 def _format_flag_names(flag_names: list[str]) -> str:
@@ -180,10 +199,6 @@ def write_ue_marker_video(clip_dir: Path, out_video: Path) -> Path:
     spec = json.loads((clip_dir / "spec.json").read_text())
     metadata = json.loads((clip_dir / "apartment_v1_metadata.json").read_text())
     frames_dir = clip_dir / "videos" / "apartment_v1_view0"
-    work_dir = REPO_ROOT / "tmp" / "spike_rlr" / "ue_marker_frames" / clip_dir.name
-    if work_dir.exists():
-        shutil.rmtree(work_dir)
-    work_dir.mkdir(parents=True, exist_ok=True)
 
     mic = metadata["mic_pose_6DoF"]
     mic_pos = mic["pos_m"]
@@ -195,32 +210,34 @@ def write_ue_marker_video(clip_dir: Path, out_video: Path) -> Path:
     n_frames = int(metadata["n_frames"])
     actor_visual_by_tag = load_actor_visual_metadata(clip_dir)
 
-    for i in range(n_frames):
-        frame_path = frames_dir / f"frame_{i:04d}.png"
-        image = Image.open(frame_path).convert("RGB")
-        draw = ImageDraw.Draw(image)
-        width, height = image.size
-        for src in metadata.get("sources", []):
-            in_fov = src.get("source_in_fov_per_frame", [])
-            if i >= len(in_fov) or not bool(in_fov[i]):
-                continue
-            xyz = marker_xyz_for_source_frame(src, i, actor_visual_by_tag)
-            xy = project_source_to_frame(
-                xyz, mic_pos, mic_yaw, fov_h, fov_v, width, height
-            )
-            if xy is None:
-                continue
-            style = _marker_style(src["tag"])
-            _draw_marker(draw, xy, style["label"], style["color"], width, height)
-        image.save(work_dir / f"frame_{i:04d}.png")
+    def iter_marker_frames():
+        for i in range(n_frames):
+            frame_path = frames_dir / f"frame_{i:04d}.png"
+            with Image.open(frame_path) as source_image:
+                image = source_image.convert("RGB")
+            draw = ImageDraw.Draw(image)
+            width, height = image.size
+            for src in metadata.get("sources", []):
+                in_fov = src.get("source_in_fov_per_frame", [])
+                if i >= len(in_fov) or not bool(in_fov[i]):
+                    continue
+                xyz = marker_xyz_for_source_frame(src, i, actor_visual_by_tag)
+                xy = project_source_to_frame(
+                    xyz, mic_pos, mic_yaw, fov_h, fov_v, width, height
+                )
+                if xy is None:
+                    continue
+                style = _marker_style(src["tag"])
+                _draw_marker(
+                    draw, xy, style["label"], style["color"], width, height
+                )
+            yield np.asarray(image, dtype=np.uint8)
 
-    _run([
-        "ffmpeg", "-y", "-loglevel", "error",
-        "-framerate", str(fps),
-        "-i", str(work_dir / "frame_%04d.png"),
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        str(out_video),
-    ])
+    encoded_count = encode_rgb_frames(iter_marker_frames(), out_video, fps=fps)
+    if encoded_count != n_frames:
+        raise RuntimeError(
+            f"UE marker frame count changed: expected {n_frames}, got {encoded_count}"
+        )
     return out_video
 
 
@@ -298,6 +315,13 @@ def build_review_videos(clip_dir: Path, python_exe: str = sys.executable) -> dic
     side_by_side = videos_dir / "side_by_side_review.mp4"
     annotated = videos_dir / "side_by_side_review_annotated.mp4"
     overlay = write_overlay_file(clip_dir)
+    topdown_work_dir = (
+        REPO_ROOT
+        / "tmp"
+        / "spike_rlr"
+        / "topdown_frames"
+        / review_work_key(clip_dir)
+    )
 
     write_ue_marker_video(clip_dir, ue_marked)
     _run([
@@ -306,6 +330,7 @@ def build_review_videos(clip_dir: Path, python_exe: str = sys.executable) -> dic
         "--spec", str(spec),
         "--audio", str(audio),
         "--out", str(topdown),
+        "--tmp-frames-dir", str(topdown_work_dir),
     ])
     _run([
         "ffmpeg", "-y", "-loglevel", "error",

@@ -83,6 +83,397 @@ def test_in_frame_api_exists():
         )
 
 
+def test_in_frame_bone_query_uses_unreal_service_class_marshalling():
+    from rig_direction_check import (
+        find_body_bone_in_frame,
+        sample_body_bone_position_in_frame,
+    )
+
+    class Actor:
+        def GetComponentByClass(self, **_kwargs):
+            raise AssertionError("unsafe dynamic UClass string marshalling was used")
+
+    class Component:
+        def GetNumBones(self):
+            return 80
+
+        def GetBoneIndex(self, BoneName):
+            assert BoneName == "Root"
+            return 0
+
+        def GetBoneTransform(self, InBoneName, TransformSpace, as_dict):
+            assert InBoneName == "Root"
+            assert TransformSpace == "RTS_World"
+            assert as_dict is True
+            return {
+                "ReturnValue": {
+                    "translation": {"x": 1.0, "y": 2.0, "z": 3.0},
+                    "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+                    "scale3D": {"x": 1.0, "y": 1.0, "z": 1.0},
+                }
+            }
+
+    actor = Actor()
+    component = Component()
+
+    class UnrealService:
+        def get_components_by_class(self, *, actor, uclass):
+            assert actor is actor_instance
+            assert uclass == "USkeletalMeshComponent"
+            return [component]
+
+    actor_instance = actor
+    service = UnrealService()
+
+    np.testing.assert_allclose(
+        sample_body_bone_position_in_frame(
+            actor, "Root", unreal_service=service
+        ),
+        [1.0, 2.0, 3.0],
+    )
+    assert find_body_bone_in_frame(actor, unreal_service=service) == "Root"
+
+
+def test_missing_bone_is_rejected_by_index_before_transform_query():
+    from rig_direction_check import sample_body_bone_position_in_frame
+
+    class Component:
+        def GetNumBones(self):
+            return 80
+
+        def GetBoneIndex(self, BoneName):
+            assert BoneName == "NotARealBone"
+            return -1
+
+        def GetBoneTransform(self, **_kwargs):
+            raise AssertionError("missing bones must not query fallback transform")
+
+    class UnrealService:
+        def get_components_by_class(self, **_kwargs):
+            return [Component()]
+
+    diagnostics = []
+    assert sample_body_bone_position_in_frame(
+        object(),
+        "NotARealBone",
+        unreal_service=UnrealService(),
+        diagnostics=diagnostics,
+    ) is None
+    assert diagnostics == [{
+        "bone_name": "NotARealBone",
+        "stage": "bone_lookup",
+        "error_type": "MissingBone",
+        "error": "GetBoneIndex returned -1",
+    }]
+
+
+def test_in_frame_bone_query_never_falls_back_to_unsafe_actor_uclass_call():
+    from rig_direction_check import sample_body_bone_position_in_frame
+
+    class Actor:
+        called = False
+
+        def GetComponentByClass(self, **_kwargs):
+            self.called = True
+            raise AssertionError("must not be called")
+
+    actor = Actor()
+    with pytest.raises(RuntimeError, match="unreal_service"):
+        sample_body_bone_position_in_frame(actor, "Root")
+    assert actor.called is False
+
+
+def test_body_bone_candidates_include_rocketbox_bip01_root():
+    from rig_direction_check import _BODY_BONE_CANDIDATES
+
+    assert "Bip01" in _BODY_BONE_CANDIDATES
+    assert "Bip01 Pelvis" in _BODY_BONE_CANDIDATES
+    assert "Bip02" in _BODY_BONE_CANDIDATES
+    assert "Bip02 Pelvis" in _BODY_BONE_CANDIDATES
+
+
+def test_missing_body_bone_diagnostic_lists_actual_component_bones():
+    from rig_direction_check import find_body_bone_in_frame
+
+    class Component:
+        bone_names = ["Armature", "Bip01-Pelvis", "Bip01-Spine"]
+
+        def GetNumBones(self):
+            return len(self.bone_names)
+
+        def GetBoneIndex(self, BoneName):
+            return -1
+
+        def GetBoneName(self, BoneIndex):
+            return self.bone_names[BoneIndex]
+
+    class UnrealService:
+        def get_components_by_class(self, **_kwargs):
+            return [Component()]
+
+    diagnostics = []
+    assert find_body_bone_in_frame(
+        object(),
+        unreal_service=UnrealService(),
+        diagnostics=diagnostics,
+    ) is None
+    assert diagnostics[-1] == {
+        "stage": "bone_inventory",
+        "available_bone_names": ["Armature", "Bip01-Pelvis", "Bip01-Spine"],
+    }
+
+
+def test_find_body_bone_matches_interchange_sanitized_rocketbox_name():
+    from rig_direction_check import find_body_bone_in_frame
+
+    class Component:
+        bone_names = ["Bip01-Pelvis", "Bip01-Spine", "Bip01-Spine1"]
+
+        def GetNumBones(self):
+            return len(self.bone_names)
+
+        def GetBoneName(self, BoneIndex):
+            return self.bone_names[BoneIndex]
+
+        def GetBoneIndex(self, BoneName):
+            try:
+                return self.bone_names.index(BoneName)
+            except ValueError:
+                return -1
+
+        def GetBoneTransform(self, InBoneName, TransformSpace, as_dict):
+            assert InBoneName == "Bip01-Pelvis"
+            assert TransformSpace == "RTS_World"
+            assert as_dict is True
+            return {"translation": {"x": 1.0, "y": 2.0, "z": 3.0}}
+
+    class UnrealService:
+        def get_components_by_class(self, **_kwargs):
+            return [Component()]
+
+    assert find_body_bone_in_frame(
+        object(),
+        unreal_service=UnrealService(),
+    ) == "Bip01-Pelvis"
+
+
+def test_body_basis_from_bones_recovers_forward_and_upright_axes():
+    from rig_direction_check import body_basis_from_positions
+
+    # UE body convention is +X forward, +Y anatomical right, +Z up.
+    basis = body_basis_from_positions(
+        pelvis=[0.0, 0.0, 0.0],
+        spine=[0.0, 0.0, 1.0],
+        left_clavicle=[0.0, -1.0, 1.0],
+        right_clavicle=[0.0, 1.0, 1.0],
+    )
+
+    np.testing.assert_allclose(basis["up_vector_ue"], [0.0, 0.0, 1.0])
+    np.testing.assert_allclose(basis["right_vector_ue"], [0.0, 1.0, 0.0])
+    np.testing.assert_allclose(basis["forward_vector_ue"], [1.0, 0.0, 0.0])
+    assert basis["forward_yaw_ue_deg"] == pytest.approx(0.0)
+    assert basis["up_alignment_z"] == pytest.approx(1.0)
+
+
+def test_sample_body_basis_matches_sanitized_rocketbox_bones():
+    from rig_direction_check import sample_body_basis_in_frame
+
+    positions = {
+        "Bip01-Pelvis": [0.0, 0.0, 100.0],
+        "Bip01-Spine2": [0.0, 0.0, 150.0],
+        "Bip01-L-Clavicle": [0.0, -20.0, 150.0],
+        "Bip01-R-Clavicle": [0.0, 20.0, 150.0],
+    }
+
+    class Component:
+        bone_names = list(positions)
+
+        def GetNumBones(self):
+            return len(self.bone_names)
+
+        def GetBoneName(self, BoneIndex):
+            return self.bone_names[BoneIndex]
+
+        def GetBoneIndex(self, BoneName):
+            return self.bone_names.index(BoneName)
+
+        def GetBoneTransform(self, InBoneName, TransformSpace, as_dict):
+            assert TransformSpace == "RTS_World"
+            assert as_dict is True
+            x, y, z = positions[InBoneName]
+            return {"translation": {"x": x, "y": y, "z": z}}
+
+    class UnrealService:
+        def get_components_by_class(self, **_kwargs):
+            return [Component()]
+
+    basis = sample_body_basis_in_frame(
+        object(),
+        unreal_service=UnrealService(),
+    )
+
+    assert basis["bone_names"] == {
+        "pelvis": "Bip01-Pelvis",
+        "spine": "Bip01-Spine2",
+        "left_clavicle": "Bip01-L-Clavicle",
+        "right_clavicle": "Bip01-R-Clavicle",
+    }
+    assert basis["forward_yaw_ue_deg"] == pytest.approx(0.0)
+
+
+def test_sample_body_basis_matches_sanitized_rocketbox_bip02_child_bones():
+    from rig_direction_check import sample_body_basis_in_frame
+
+    positions = {
+        "Bip02-Pelvis": [0.0, 0.0, 80.0],
+        "Bip02-Spine2": [0.0, 0.0, 120.0],
+        "Bip02-L-Clavicle": [0.0, -15.0, 120.0],
+        "Bip02-R-Clavicle": [0.0, 15.0, 120.0],
+    }
+
+    class Component:
+        bone_names = list(positions)
+
+        def GetNumBones(self):
+            return len(self.bone_names)
+
+        def GetBoneName(self, BoneIndex):
+            return self.bone_names[BoneIndex]
+
+        def GetBoneIndex(self, BoneName):
+            return self.bone_names.index(BoneName)
+
+        def GetBoneTransform(self, InBoneName, TransformSpace, as_dict):
+            x, y, z = positions[InBoneName]
+            return {"translation": {"x": x, "y": y, "z": z}}
+
+    class UnrealService:
+        def get_components_by_class(self, **_kwargs):
+            return [Component()]
+
+    basis = sample_body_basis_in_frame(
+        object(), unreal_service=UnrealService()
+    )
+
+    assert basis["bone_names"]["pelvis"] == "Bip02-Pelvis"
+    assert basis["forward_yaw_ue_deg"] == pytest.approx(0.0)
+
+
+def test_sample_body_basis_matches_quaternius_numeric_dog_bones():
+    from rig_direction_check import sample_body_basis_in_frame
+
+    positions = {
+        "bone": [0.0, 0.0, 100.0],
+        "Bone_002": [100.0, 0.0, 105.0],
+        "Bone_010": [-10.0, -30.0, 0.0],
+        "Bone_013": [-10.0, 30.0, 0.0],
+    }
+
+    class Component:
+        bone_names = list(positions)
+
+        def GetNumBones(self):
+            return len(self.bone_names)
+
+        def GetBoneName(self, BoneIndex):
+            return self.bone_names[BoneIndex]
+
+        def GetBoneIndex(self, BoneName):
+            return self.bone_names.index(BoneName)
+
+        def GetBoneTransform(self, InBoneName, TransformSpace, as_dict):
+            x, y, z = positions[InBoneName]
+            return {"translation": {"x": x, "y": y, "z": z}}
+
+    class UnrealService:
+        def get_components_by_class(self, **_kwargs):
+            return [Component()]
+
+    basis = sample_body_basis_in_frame(
+        object(), unreal_service=UnrealService()
+    )
+
+    assert basis["basis_kind"] == "quadruped_longitudinal_v1"
+    assert basis["bone_names"] == {
+        "rear": "bone",
+        "front": "Bone_002",
+        "body": "bone",
+        "left_foot": "Bone_010",
+        "right_foot": "Bone_013",
+    }
+    assert basis["forward_yaw_ue_deg"] == pytest.approx(0.0, abs=3.0)
+    assert basis["up_alignment_z"] > 0.99
+
+
+def test_sample_body_basis_matches_quaternius_farm_horse_bones():
+    from rig_direction_check import sample_body_basis_in_frame
+
+    positions = {
+        "Hips": [0.0, 0.0, 105.0],
+        "Shoulders": [100.0, 0.0, 110.0],
+        "Body": [45.0, 0.0, 100.0],
+        "BackFoot_L": [-10.0, -30.0, 0.0],
+        "BackFoot_R": [-10.0, 30.0, 0.0],
+    }
+
+    class Component:
+        bone_names = list(positions)
+
+        def GetNumBones(self):
+            return len(self.bone_names)
+
+        def GetBoneName(self, BoneIndex):
+            return self.bone_names[BoneIndex]
+
+        def GetBoneIndex(self, BoneName):
+            return self.bone_names.index(BoneName)
+
+        def GetBoneTransform(self, InBoneName, TransformSpace, as_dict):
+            x, y, z = positions[InBoneName]
+            return {"translation": {"x": x, "y": y, "z": z}}
+
+    class UnrealService:
+        def get_components_by_class(self, **_kwargs):
+            return [Component()]
+
+    basis = sample_body_basis_in_frame(
+        object(), unreal_service=UnrealService()
+    )
+
+    assert basis["basis_kind"] == "quadruped_longitudinal_v1"
+    assert basis["bone_names"] == {
+        "rear": "Hips",
+        "front": "Shoulders",
+        "body": "Hips",
+        "left_foot": "BackFoot_L",
+        "right_foot": "BackFoot_R",
+    }
+    assert basis["forward_yaw_ue_deg"] == pytest.approx(0.0, abs=3.0)
+    assert basis["up_alignment_z"] > 0.95
+
+
+def test_bone_query_records_rpc_or_parse_diagnostics_instead_of_hiding_them():
+    from rig_direction_check import sample_body_bone_position_in_frame
+
+    class UnrealService:
+        def get_components_by_class(self, **_kwargs):
+            raise ValueError("diagnostic failure")
+
+    diagnostics = []
+    assert sample_body_bone_position_in_frame(
+        object(),
+        "Bip01",
+        unreal_service=UnrealService(),
+        diagnostics=diagnostics,
+    ) is None
+    assert diagnostics == [{
+        "bone_name": "Bip01",
+        "stage": "query",
+        "error_type": "ValueError",
+        "error": "diagnostic failure",
+    }]
+
+
 def test_read_nonexistent_calibration_returns_none(tmp_path, monkeypatch):
     from rig_direction_check import read_rig_calibration_json
     calib_path = tmp_path / "does_not_exist.json"

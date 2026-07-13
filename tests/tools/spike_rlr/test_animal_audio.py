@@ -24,6 +24,15 @@ def test_cat_tags_resolve_to_real_cat_audio():
     assert "cat" in path.name.lower() or "meow" in path.name.lower()
 
 
+def test_pixal_namespace_preserves_animal_species_detection():
+    from animal_audio import is_animal_tag, species_for_tag
+
+    assert species_for_tag("pixal_dog_golden_retriever_example") == "dog"
+    assert species_for_tag("pixal_cat_siamese_example") == "cat"
+    assert species_for_tag("gate_pixal_dog_pug_example") == "dog"
+    assert is_animal_tag("pixal_dog_golden_retriever_example")
+
+
 def test_explicit_audio_path_wins():
     from animal_audio import resolve_animal_audio_path
 

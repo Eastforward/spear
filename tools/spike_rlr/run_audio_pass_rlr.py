@@ -36,8 +36,18 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from animal_audio import is_synthetic_audio_path, resolve_animal_audio_path
+TOOLS_ROOT = Path(__file__).resolve().parents[1]
+if str(TOOLS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOOLS_ROOT))
+
+from audio_event_schedule import prepare_animal_call
+from animal_audio import (
+    is_animal_tag,
+    is_synthetic_audio_path,
+    resolve_animal_audio_path,
+)
 from speech_audio import is_speech_lookup, resolve_speech_audio_path
+from source_trajectory import acoustic_trajectory
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -245,7 +255,14 @@ def _synth_hf_tone(sample_rate, duration_s, base_hz=2000.0, vibrato_hz=6.0,
     return y
 
 
-def _load_dry_source(tag, sample_rate, duration_s, seed=42, source_spec=None):
+def _load_dry_source(
+    tag,
+    sample_rate,
+    duration_s,
+    seed=42,
+    source_spec=None,
+    schedule_metadata_out=None,
+):
     """Load a dry source wav for a given tag.
 
     Source spec audio_path/audio_lookup wins, then _TAG_AUDIO_OVERRIDES, then
@@ -253,10 +270,16 @@ def _load_dry_source(tag, sample_rate, duration_s, seed=42, source_spec=None):
     are still supported when explicitly requested.
     """
     n_samples = int(round(sample_rate * duration_s))
+    is_speech_source = False
+    manual_repeat_applied = False
     try:
         source_spec = source_spec or {}
         if source_spec.get("mute_audio") or source_spec.get("audio_lookup") == "silent":
             print(f"[audio] {tag}: muted by source spec")
+            if schedule_metadata_out is not None:
+                schedule_metadata_out.update(
+                    {"schema": "animal_audio_event_schedule_v1", "mode": "muted", "event_count": 0}
+                )
             return np.zeros(n_samples, dtype=np.float32)
         override = None
         explicit_path = source_spec.get("audio_path") or source_spec.get("dry_audio_path")
@@ -264,11 +287,14 @@ def _load_dry_source(tag, sample_rate, duration_s, seed=42, source_spec=None):
         if explicit_path and is_synthetic_audio_path(explicit_path):
             override = str(explicit_path)
         elif audio_lookup and is_speech_lookup(audio_lookup):
-            wav_path = str(resolve_speech_audio_path(
-                audio_lookup,
-                explicit_path=explicit_path,
-                root=source_spec.get("speech_root"),
-            ))
+            is_speech_source = True
+            speech_kwargs = {
+                "explicit_path": explicit_path,
+                "root": source_spec.get("speech_root"),
+            }
+            if source_spec.get("speech_speaker_gender") is not None:
+                speech_kwargs["speaker_gender"] = source_spec["speech_speaker_gender"]
+            wav_path = str(resolve_speech_audio_path(audio_lookup, **speech_kwargs))
             print(f"[audio] {tag}: using speech lookup {audio_lookup} -> {os.path.basename(wav_path)}")
         elif explicit_path:
             wav_path = str(resolve_animal_audio_path(
@@ -341,19 +367,77 @@ def _load_dry_source(tag, sample_rate, duration_s, seed=42, source_spec=None):
                     end_idx = min(start_idx + len(segment), n_samples)
                     repeated[start_idx:end_idx] += segment[:end_idx - start_idx]
                 y = repeated
+                manual_repeat_applied = True
             else:
                 y = segment
-        # Loop / trim to n_samples
-        if len(y) < n_samples:
-            reps = int(np.ceil(n_samples / max(len(y), 1)))
-            y = np.tile(y, reps)
-        y = y[:n_samples]
+        adaptive_repeat = bool(source_spec.get("adaptive_repeat_short_calls", True))
+        if (
+            is_animal_tag(tag)
+            and not is_speech_source
+            and not manual_repeat_applied
+            and adaptive_repeat
+        ):
+            y, schedule = prepare_animal_call(
+                y,
+                sample_rate=sample_rate,
+                duration_s=duration_s,
+                rng=np.random.default_rng(seed),
+            )
+            schedule.update(
+                {
+                    "tag": tag,
+                    "audio_path": str(wav_path),
+                    "adaptive_repeat_short_calls": True,
+                }
+            )
+        else:
+            # Speech and explicitly scheduled sources are never seamless-looped.
+            fixed = np.zeros(n_samples, dtype=np.float32)
+            event_start_s = float(source_spec.get("audio_event_start_s", 0.0))
+            if not np.isfinite(event_start_s) or event_start_s < 0.0:
+                raise ValueError(f"invalid audio_event_start_s for {tag}: {event_start_s}")
+            event_start_sample = min(
+                n_samples,
+                int(round(event_start_s * sample_rate)),
+            )
+            copy_samples = min(len(y), n_samples - event_start_sample)
+            fixed[
+                event_start_sample : event_start_sample + copy_samples
+            ] = y[:copy_samples]
+            y = fixed
+            schedule = {
+                "schema": "animal_audio_event_schedule_v1",
+                "tag": tag,
+                "audio_path": str(wav_path),
+                "mode": (
+                    "manual_repeat_interval"
+                    if manual_repeat_applied
+                    else "single_clip_silence_padded"
+                ),
+                "event_count": None if manual_repeat_applied else 1,
+                "adaptive_repeat_short_calls": False,
+                "is_speech_source": bool(is_speech_source),
+                "target_duration_s": float(duration_s),
+                "events": [
+                    {
+                        "index": 0,
+                        "start_sample": event_start_sample,
+                        "end_sample": event_start_sample + copy_samples,
+                        "start_s": event_start_sample / sample_rate,
+                        "end_s": (event_start_sample + copy_samples) / sample_rate,
+                    }
+                ],
+            }
+        if schedule_metadata_out is not None:
+            schedule_metadata_out.update(schedule)
         # Peak normalize to prevent clipping in convolution
         peak = np.abs(y).max()
         if peak > 1e-9:
             y = y * (0.8 / peak)
         return y
     except Exception as e:
+        if (source_spec or {}).get("strict_audio"):
+            raise RuntimeError(f"strict audio source {tag} failed: {e}") from e
         # Fallback: use a bark-like AM sinusoid (obvious placeholder)
         print(f"[audio] WARNING: audio_registry failed for {tag}: {e}. Using placeholder tone.")
         t = np.linspace(0, duration_s, n_samples, endpoint=False, dtype=np.float32)
@@ -362,6 +446,25 @@ def _load_dry_source(tag, sample_rate, duration_s, seed=42, source_spec=None):
         env = np.abs(np.sin(2 * np.pi * 3 * t))  # 3 barks/sec
         y = 0.5 * env * np.sin(2 * np.pi * base_hz * t).astype(np.float32)
         return y
+
+
+def _write_source_schedule_manifest(out_wav_path, schedules):
+    path = Path(out_wav_path).with_name(
+        Path(out_wav_path).stem + "_source_schedule.json"
+    )
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "rlr_audio_source_schedules_v1",
+                "sources": schedules,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def build_rlr_sim(glb_path, materials_json_path, sample_rate=16000,
@@ -534,6 +637,7 @@ def compute_rir_and_render(spec_path, glb_path, materials_sidecar_path,
     n_channels = 4  # 1st-order FOA
     wet = np.zeros((n_channels, n_samples_total), dtype=np.float32)
     per_source_wet_map = {}  # tag -> (n_channels, n_samples) FOA buffer
+    source_schedules = {}
 
     # Function-scope wall clock start so 0-source clips can still return
     # {"wall_time_s": ...} without UnboundLocalError. Overwritten below per
@@ -547,13 +651,16 @@ def compute_rir_and_render(spec_path, glb_path, materials_sidecar_path,
         if source_spec.get("mute_audio") or source_spec.get("audio_lookup") == "silent":
             print(f"[rlr] source {tag}: muted, skipping RIR/audio render")
             continue
-        traj_scene = a.trajectory_m  # (n_frames, 3)
+        traj_scene = acoustic_trajectory(a.trajectory_m, source_spec)
+        schedule_metadata = {}
         dry = _load_dry_source(
             tag,
             sample_rate,
             duration_s,
             source_spec=source_spec,
+            schedule_metadata_out=schedule_metadata,
         )
+        source_schedules[tag] = schedule_metadata
         if verbose:
             print(f"[rlr] source {tag}: dry rms = {np.sqrt(np.mean(dry**2)):.4f}, "
                   f"peak = {np.max(np.abs(dry)):.4f}")
@@ -633,6 +740,8 @@ def compute_rir_and_render(spec_path, glb_path, materials_sidecar_path,
     # Write 4-channel FOA wav (mixed)
     sf.write(str(out_wav_path), wet.T, sample_rate, subtype="PCM_16")
     print(f"[rlr] wrote {out_wav_path}  shape={wet.shape}  sr={sample_rate}")
+    schedule_path = _write_source_schedule_manifest(out_wav_path, source_schedules)
+    print(f"[rlr] wrote source schedules {schedule_path}")
 
     # FOA -> stereo downmix.
     # RLR outputs 1st-order ambisonics but empirically the channel that
@@ -707,6 +816,7 @@ def compute_binaural(spec_path, glb_path, materials_sidecar_path,
 
     wet = np.zeros((2, n_samples_total), dtype=np.float32)
     per_source_wet_map = {}
+    source_schedules = {}
 
     for a in scene.animals:
         tag = a.tag
@@ -714,13 +824,16 @@ def compute_binaural(spec_path, glb_path, materials_sidecar_path,
         if source_spec.get("mute_audio") or source_spec.get("audio_lookup") == "silent":
             print(f"[rlr-bin] source {tag}: muted, skipping RIR/audio render")
             continue
-        traj_scene = a.trajectory_m
+        traj_scene = acoustic_trajectory(a.trajectory_m, source_spec)
+        schedule_metadata = {}
         dry = _load_dry_source(
             tag,
             sample_rate,
             duration_s,
             source_spec=source_spec,
+            schedule_metadata_out=schedule_metadata,
         )
+        source_schedules[tag] = schedule_metadata
         if verbose:
             print(f"[rlr-bin] source {tag}: dry rms={np.sqrt(np.mean(dry**2)):.4f}")
         per_source_wet = np.zeros_like(wet)
@@ -773,6 +886,8 @@ def compute_binaural(spec_path, glb_path, materials_sidecar_path,
         wet = wet * (0.9 / peak)
     sf.write(str(out_wav_path), wet.T, sample_rate, subtype="PCM_16")
     print(f"[rlr-bin] wrote {out_wav_path} shape={wet.shape} sr={sample_rate}")
+    schedule_path = _write_source_schedule_manifest(out_wav_path, source_schedules)
+    print(f"[rlr-bin] wrote source schedules {schedule_path}")
 
 
 def main():

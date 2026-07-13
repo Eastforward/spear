@@ -248,7 +248,19 @@ def compose_two_dog_scene_apartment(spec_path=DEFAULT_SPEC_PATH):
         else:
             traj = _build_planned_trajectory(src, spec, cats, n_frames)
         offset = _forward_yaw_offset_for_source(src)
-        if "facing_yaw_deg" in src:
+        if "facing_yaw_deg_per_frame" in src:
+            semantic_yaw = np.asarray(
+                src["facing_yaw_deg_per_frame"], dtype=np.float64
+            )
+            assert semantic_yaw.shape == (n_frames,), (
+                f"{tag} facing_yaw_deg_per_frame must be ({n_frames},), "
+                f"got {semantic_yaw.shape}"
+            )
+            assert np.all(np.isfinite(semantic_yaw)), (
+                f"{tag} facing_yaw_deg_per_frame contains non-finite values"
+            )
+            yaw = (semantic_yaw + offset) % 360.0
+        elif "facing_yaw_deg" in src:
             yaw = np.full(
                 n_frames,
                 (float(src["facing_yaw_deg"]) + offset) % 360.0,
@@ -264,6 +276,12 @@ def compose_two_dog_scene_apartment(spec_path=DEFAULT_SPEC_PATH):
             wanted_anim=_wanted_anim_for_source(src),
             actor_scale=src.get("actor_scale"),
             actor_z_lift_cm=src.get("actor_z_lift_cm"),
+            walking_forward_yaw_offset_deg=offset,
+            animation_play_rate=src.get("animation_play_rate"),
+            ground_snap_to_floor=bool(src.get("ground_snap_to_floor", False)),
+            ground_snap_max_abs_correction_cm=float(
+                src.get("ground_snap_max_abs_correction_cm", 15.0)
+            ),
         ))
 
     # For the apartment spec there's no "room_size_m" (non-rectangular shell);

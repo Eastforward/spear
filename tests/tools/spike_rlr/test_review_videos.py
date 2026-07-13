@@ -157,6 +157,21 @@ def test_topdown_tag_style_names_review_animals():
     assert _style_for_tag("cat_british_shorthair_v2")["label"] == "BRITISH SHORTHAIR"
 
 
+def test_topdown_and_ue_marker_styles_name_stable_humans_concisely():
+    from build_review_videos import _marker_style, _overlay_source_label
+    from render_topdown_2d import _style_for_tag
+
+    male = "hy3d_rocketbox_male_adult_01_spike"
+    female = "hy3d_rocketbox_female_adult_01_spike"
+
+    assert _style_for_tag(male)["label"] == "MALE"
+    assert _style_for_tag(female)["label"] == "FEMALE"
+    assert _marker_style(male)["label"] == "MALE"
+    assert _marker_style(female)["label"] == "FEMALE"
+    assert _overlay_source_label(male) == "MALE"
+    assert _overlay_source_label(female) == "FEMALE"
+
+
 def test_project_source_to_frame_uses_camera_image_handedness():
     from build_review_videos import project_source_to_frame
 

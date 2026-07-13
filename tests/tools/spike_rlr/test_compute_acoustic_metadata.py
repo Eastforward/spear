@@ -4,10 +4,40 @@ import sys
 from pathlib import Path
 
 import pytest
+import numpy as np
 
 REPO = Path(__file__).resolve().parents[3]
 META = REPO / "tmp" / "spike_output_apartment" / "apartment_v1_metadata.json"
 EXPECTED_TAGS = {"dog_golden", "dog_beagle_v2"}
+
+
+def test_acoustic_trajectory_offsets_voice_height_without_moving_actor_root():
+    sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
+    from source_trajectory import acoustic_trajectory
+
+    actor_root = np.asarray([
+        [1.0, 2.0, 0.0],
+        [1.5, 2.5, 0.0],
+    ])
+    voice = acoustic_trajectory(
+        actor_root,
+        {"audio_source_height_offset_m": 1.55},
+    )
+
+    assert np.allclose(actor_root[:, 2], 0.0)
+    assert np.allclose(voice[:, :2], actor_root[:, :2])
+    assert np.allclose(voice[:, 2], 1.55)
+    assert not np.shares_memory(voice, actor_root)
+
+
+def test_rlr_and_metadata_paths_use_the_same_acoustic_trajectory_helper():
+    metadata = (REPO / "tools" / "spike_rlr" / "compute_acoustic_metadata.py").read_text()
+    rlr = (REPO / "tools" / "spike_rlr" / "run_audio_pass_rlr.py").read_text()
+
+    assert "from source_trajectory import acoustic_trajectory" in metadata
+    assert "from source_trajectory import acoustic_trajectory" in rlr
+    assert "acoustic_trajectory(pl.trajectory_m, src_spec)" in metadata
+    assert rlr.count("acoustic_trajectory(a.trajectory_m, source_spec)") == 2
 
 
 def _load_metadata_or_skip_current():

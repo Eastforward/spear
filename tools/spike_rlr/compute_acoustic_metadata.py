@@ -37,6 +37,7 @@ from apartment_builtin_obstacles import (  # noqa: E402
 )
 from profiling import StageTimer  # noqa: E402
 from visibility import batch_frame_visibility  # noqa: E402
+from source_trajectory import acoustic_trajectory  # noqa: E402
 
 
 # Mapping from audio_lookup key in the spec -> semantic source category.
@@ -171,6 +172,7 @@ def compute(spec_path: Path, out_dir: Path, csv_path: Path,
         sources_out = []
         for pl in scene.animals:
             src_spec = [s for s in spec["sources"] if s["tag"] == pl.tag][0]
+            source_traj = acoustic_trajectory(pl.trajectory_m, src_spec)
             audio_lookup = src_spec.get("audio_lookup", "unknown")
             bin_candidates = [
                 out_dir / f"binaural_{pl.tag}_binaural.wav",
@@ -183,11 +185,11 @@ def compute(spec_path: Path, out_dir: Path, csv_path: Path,
             effective_audio = effective_audio_frames_from_gains(gains)
 
             azi_ele_dist = [azi_ele_dist_local(xyz, mic_pos, mic_yaw)
-                             for xyz in pl.trajectory_m]
-            drrs = drr_proxy_per_frame(pl.trajectory_m, mic_pos)
+                             for xyz in source_traj]
+            drrs = drr_proxy_per_frame(source_traj, mic_pos)
 
             # Per-frame visibility (Plan 1.5.C)
-            traj_xyz = np.asarray(pl.trajectory_m)
+            traj_xyz = source_traj
             vis = batch_frame_visibility(
                 traj_xyz, mic_pos, mic_yaw,
                 fov_h_deg=fov_h, fov_v_deg=fov_v,
@@ -198,9 +200,12 @@ def compute(spec_path: Path, out_dir: Path, csv_path: Path,
                 "tag": pl.tag,
                 "category": "silent" if muted else _LOOKUP_TO_CATEGORY.get(audio_lookup, "unknown"),
                 "is_synthetic": _source_is_synthetic(src_spec),
+                "audio_source_height_offset_m": float(
+                    src_spec.get("audio_source_height_offset_m", 0.0)
+                ),
                 "drr_db_per_frame": drrs,
                 "source_world_xyz_per_frame": [
-                    [float(x) for x in xyz] for xyz in pl.trajectory_m
+                    [float(x) for x in xyz] for xyz in source_traj
                 ],
                 "source_azi_ele_dist_mic_local_per_frame": [list(t) for t in azi_ele_dist],
                 "source_amp_gain_per_frame": gains,
