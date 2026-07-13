@@ -28,9 +28,11 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import audit_mesh_efficiency
+from tools import audit_quadruped_i23d_geometry
 from tools import controlled_source_asset_schema as contracts
 from tools import register_controlled_animal_source_assets as source_registry
 from tools import rocketbox_native_material_canary as immutable
+from tools.spike_rlr import runtime_proxy_mesh
 
 
 BATCH_SCHEMA = "avengine_controlled_animal_lod_binding_batch_v1"
@@ -283,7 +285,7 @@ def build_commands(
         "--remove-limb-bridges",
         "yes",
         "--delete-limb-bridge-faces",
-        "yes",
+        "no",
         "--export-action-policy",
         "walk-idle",
     ]
@@ -398,13 +400,29 @@ def _rewrite_runtime_metadata(
 ) -> None:
     payload = contracts.load_json(metadata_path)
     physical_runtime = Path(payload.get("runtime_mesh", ""))
+    algorithm = payload.get("algorithm")
     if (
-        payload.get("algorithm") != "blender_decimate_v1"
+        algorithm not in runtime_proxy_mesh.SUPPORTED_RUNTIME_PROXY_ALGORITHMS
         or payload.get("source_mesh_sha256") != source_sha256
         or not physical_runtime.is_file()
         or payload.get("runtime_mesh_sha256") != _sha256_file(physical_runtime)
     ):
         raise contracts.ContractError("runtime LOD metadata contract changed")
+    if algorithm == runtime_proxy_mesh.RUNTIME_PROXY_ALGORITHM:
+        topology = payload.get("topology", {})
+        source_after_weld = topology.get("source_after_position_weld", {})
+        runtime_after_decimate = topology.get("runtime_after_decimate", {})
+        if (
+            not isinstance(topology.get("boundary_cracks_introduced"), int)
+            or topology["boundary_cracks_introduced"] > 0
+            or not topology.get("position_weld", {}).get("vertices_welded", 0) > 0
+            or not isinstance(runtime_after_decimate.get("boundary_edges"), int)
+            or runtime_after_decimate["boundary_edges"]
+            > source_after_weld.get("boundary_edges", -1)
+        ):
+            raise contracts.ContractError(
+                "welded runtime LOD introduced boundary cracks"
+            )
     payload["runtime_mesh"] = str(public_runtime_path.resolve())
     metadata_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
@@ -426,12 +444,28 @@ def _available_artifacts(paths: Mapping[str, Path], root: Path) -> dict[str, Any
     }
 
 
+def _enforce_prebind_geometry_audit(record: Mapping[str, Any]) -> None:
+    decision = record.get("decision", {})
+    status = decision.get("status")
+    if status == "reject_before_lod_and_binding":
+        raise contracts.ContractError(
+            "Pixal source geometry rejected before LOD/binding: "
+            + ", ".join(decision.get("rejection_reasons", []))
+        )
+    if status not in {
+        "passed_automatic_geometry_measurements",
+        "manual_source_geometry_review_required",
+    }:
+        raise contracts.ContractError("prebind geometry audit status is invalid")
+
+
 def _run_job(
     job: Mapping[str, Any], staging: Path, public_root: Path, target_faces: int
 ) -> dict[str, Any]:
     asset_id = str(job["asset_id"])
     job_root = staging / "assets" / asset_id
     paths = {
+        "prebind_geometry_audit": job_root / "prebind_geometry_audit.json",
         "lod_glb": job_root / "runtime_lod/mesh_runtime_100000_double_sided.glb",
         "lod_metadata": job_root
         / "runtime_lod/mesh_runtime_100000_double_sided.json",
@@ -462,6 +496,27 @@ def _run_job(
         "raw_mesh_readback": job["raw_stats"],
     }
     try:
+        paths["prebind_geometry_audit"].parent.mkdir(parents=True, exist_ok=True)
+        geometry_record = audit_quadruped_i23d_geometry.audit(
+            Path(job["raw_path"]), asset_id
+        )
+        paths["prebind_geometry_audit"].write_text(
+            json.dumps(
+                {
+                    "schema": audit_quadruped_i23d_geometry.SCHEMA,
+                    "created_at": _utc_now(),
+                    "purpose": (
+                        "prebind_geometry_measurement_without_direction_inference"
+                    ),
+                    "record": geometry_record,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        base["prebind_geometry_audit"] = copy.deepcopy(geometry_record)
+        _enforce_prebind_geometry_audit(geometry_record)
         lod_timing = _run_timed(lod_command, paths["lod_log"], timeout=900)
         if lod_timing["returncode"] != 0:
             return {
@@ -501,7 +556,12 @@ def _run_job(
             "artifacts": _available_artifacts(paths, staging),
             "next_gate": "walking_idle_visual_and_contact_qa",
         }
-    except (contracts.ContractError, OSError, subprocess.SubprocessError) as error:
+    except (
+        contracts.ContractError,
+        OSError,
+        subprocess.SubprocessError,
+        ValueError,
+    ) as error:
         return {
             **base,
             "status": "failed_validation_or_execution",
@@ -546,6 +606,9 @@ def _pinned_provenance() -> dict[str, Any]:
         },
         "source_rigs": rigs,
         "tools": {
+            "prebind_geometry_audit": _tool_record(
+                SPEAR_ROOT / "tools/audit_quadruped_i23d_geometry.py"
+            ),
             "runtime_lod": _tool_record(LOD_SCRIPT),
             "binding": _tool_record(BIND_SCRIPT),
         },
@@ -620,8 +683,11 @@ def run_batch(
                 "weight_mode": "region",
                 "segmentation_mode": "proximity",
                 "semantic_forward_axis": "positive-x",
+                "prebind_geometry_audit": (
+                    audit_quadruped_i23d_geometry.SCHEMA
+                ),
                 "remove_limb_bridges": True,
-                "delete_limb_bridge_faces": True,
+                "delete_limb_bridge_faces": False,
                 "head_rotation_dampening": 0.0,
                 "tail_rotation_dampening": 0.0,
                 "foot_rotation_dampening": 1.0,
@@ -636,6 +702,7 @@ def run_batch(
                 "all_source_registries_reauthenticated": True,
                 "all_source_asset_v2_records_reauthenticated": True,
                 "all_pixal_raw_glbs_reauthenticated": True,
+                "all_successful_sources_passed_prebind_geometry_gate": passed > 0,
                 "all_source_rigs_and_license_snapshot_pinned": True,
                 "all_successful_lods_glb2_readable_and_double_sided": passed > 0,
                 "all_successful_runtimes_have_one_skin": passed > 0,

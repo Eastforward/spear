@@ -50,3 +50,27 @@ def test_blender_robust_swap_keeps_approved_animal_dampening_defaults():
     assert 'p.add_argument("--dampen-foot-rotations", type=float, default=1.0' in text
     assert 'p.add_argument("--dampen-head-rotations", type=float, default=0.0' in text
     assert 'p.add_argument("--dampen-tail-rotations", type=float, default=0.0' in text
+
+
+def test_blender_robust_swap_welds_target_geometry_before_weight_transfer():
+    text = SCRIPT.read_text()
+
+    assert "import bmesh" in text
+    assert "def weld_target_position_duplicates" in text
+    weld_call = text.index("    weld_target_position_duplicates(tgt_mesh)")
+    transfer_branch = text.index('    if args.weight_mode == "auto":')
+    assert weld_call < transfer_branch
+    assert "bmesh.ops.remove_doubles" in text
+    assert "coordinates remain stored per face corner" in text
+
+
+def test_blender_robust_swap_still_recomputes_normals_before_weld_helper():
+    text = SCRIPT.read_text()
+    start = text.index("def recompute_normals(obj):")
+    end = text.index("def weld_target_position_duplicates(obj):")
+    function_text = text[start:end]
+
+    assert 'bpy.ops.object.mode_set(mode="EDIT")' in function_text
+    assert 'bpy.ops.mesh.select_all(action="SELECT")' in function_text
+    assert "bpy.ops.mesh.normals_make_consistent(inside=False)" in function_text
+    assert function_text.rstrip().endswith('bpy.ops.object.mode_set(mode="OBJECT")')

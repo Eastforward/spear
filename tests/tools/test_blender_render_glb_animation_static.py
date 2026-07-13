@@ -57,6 +57,7 @@ def test_animation_renderer_can_expose_far_limbs_without_camera_yaw():
     assert '"Bone.017": -offset' in text
     assert '"Bone.008": offset' in text
     assert "torso_transform=identity camera_yaw_deg=0 ground_delta=0" in text
+    assert "MAX_QUADRUPED_FAR_LIMB_OFFSET_RATIO = 0.35" in text
 
 
 def test_animation_renderer_can_replace_faceted_source_material_with_smooth_clay():
@@ -67,3 +68,23 @@ def test_animation_renderer_can_replace_faceted_source_material_with_smooth_clay
     assert "body.data.materials.clear()" in text
     assert "polygon.use_smooth = True" in text
     assert "template_material=uniform_clay" in text
+
+
+def test_animation_renderer_has_non_mutating_clay_override_for_animation_qa():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert "--review-clay-color" in text
+    assert "if args.review_clay_color" in text
+    assert "apply_pose_template_clay_material(body, args.review_clay_color)" in text
+    assert "bpy.ops.export_scene" not in text
+
+
+def test_animation_renderer_can_make_manual_cardinal_walk_candidates():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert '"--asset-yaw-deg"' in text
+    assert '"--trajectory-distance-ratio"' in text
+    assert "apply_asset_cardinal_yaw" in text
+    assert "trajectory_base_location" in text
+    assert "world_positive_x" in text
+    assert "asset_yaw_deg must be one of" in text

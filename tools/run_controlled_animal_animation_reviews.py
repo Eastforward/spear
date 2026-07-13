@@ -33,6 +33,7 @@ REVIEW_SCHEMA = "avengine_controlled_animal_animation_review_v1"
 SPEAR_ROOT = Path(__file__).resolve().parents[1]
 BLENDER = Path("/data/jzy/.local/bin/blender")
 RENDERER = SPEAR_ROOT / "tools/blender_render_glb_animation.py"
+DEFORMATION_AUDITOR = SPEAR_ROOT / "tools/blender_audit_skinned_deformation.py"
 FFMPEG = Path("/usr/bin/ffmpeg")
 FFPROBE = Path("/usr/bin/ffprobe")
 REVIEW_SPECS = (
@@ -185,6 +186,22 @@ def build_encode_command(frame_dir: Path, video: Path, fps: int = 12) -> list[st
     ]
 
 
+def build_deformation_command(input_glb: Path, output: Path) -> list[str]:
+    return [
+        str(BLENDER),
+        "-b",
+        "--python",
+        str(DEFORMATION_AUDITOR),
+        "--",
+        "--input",
+        str(input_glb),
+        "--output",
+        str(output),
+        "--samples",
+        "24",
+    ]
+
+
 def _run_logged(command: Sequence[str], log_path: Path, timeout: int) -> float:
     started = time.monotonic()
     with log_path.open("xb") as log:
@@ -295,6 +312,32 @@ def _run_one(attempt: Mapping[str, Any], staging: Path) -> dict[str, Any]:
     videos = {}
     timings = {}
     try:
+        deformation_output = root / "skinned_deformation_audit.json"
+        deformation_log = root / "skinned_deformation_audit.log"
+        timings["skinned_deformation_audit_seconds"] = _run_logged(
+            build_deformation_command(attempt["rigged_path"], deformation_output),
+            deformation_log,
+            timeout=900,
+        )
+        deformation = contracts.load_json(deformation_output)
+        deformation_overall = deformation.get("overall")
+        if deformation_overall not in {
+            "passed",
+            "manual_review_required",
+            "rejected",
+        }:
+            raise contracts.ContractError("skinned deformation result is invalid")
+        deformation_artifact = _relative_artifact(deformation_output, staging)
+        deformation_log_artifact = _relative_artifact(deformation_log, staging)
+        if deformation_overall == "rejected":
+            return {
+                "asset_id": asset_id,
+                "profile_schema_id": attempt["profile_schema_id"],
+                "status": "rejected_deformation_gate",
+                "deformation_audit": deformation_artifact,
+                "deformation_log": deformation_log_artifact,
+                "timings": timings,
+            }
         for stem, action, view in REVIEW_SPECS:
             frame_dir = root / f"{stem}_frames"
             frame_dir.mkdir()
@@ -334,8 +377,12 @@ def _run_one(attempt: Mapping[str, Any], staging: Path) -> dict[str, Any]:
             "videos": videos,
             "contact_sheet": _relative_artifact(contact, staging),
             "timings": timings,
+            "deformation_audit": deformation_artifact,
+            "deformation_log": deformation_log_artifact,
             "automatic_checks": {
                 "rigged_runtime_reauthenticated": True,
+                "skinned_deformation_audit": deformation_overall,
+                "skinned_deformation_not_rejected": True,
                 "walking_side_rendered": True,
                 "walking_front_rendered": True,
                 "idle_side_rendered": True,
@@ -359,6 +406,7 @@ def _run_one(attempt: Mapping[str, Any], staging: Path) -> dict[str, Any]:
             "videos": {
                 name: value["video"] for name, value in videos.items()
             },
+            "deformation_audit": deformation_artifact,
             "timings": timings,
         }
     except (contracts.ContractError, OSError, subprocess.SubprocessError) as error:
@@ -393,7 +441,10 @@ def run_reviews(
 ) -> Path:
     if not 1 <= workers <= 16:
         raise contracts.ContractError("workers must be between 1 and 16")
-    if not all(path.is_file() for path in (BLENDER, RENDERER, FFMPEG, FFPROBE)):
+    if not all(
+        path.is_file()
+        for path in (BLENDER, RENDERER, DEFORMATION_AUDITOR, FFMPEG, FFPROBE)
+    ):
         raise contracts.ContractError("review renderer or video tools are missing")
     batch_path, batch, attempts = load_lod_binding_batch(
         lod_binding_batch_path, asset_ids
@@ -429,6 +480,9 @@ def run_reviews(
             item["status"] == "rendered_pending_visual_qa" for item in results
         )
         failed = len(results) - passed
+        deformation_rejected = sum(
+            item["status"] == "rejected_deformation_gate" for item in results
+        )
         overview = build_overview(results, staging) if passed else None
         manifest: dict[str, Any] = {
             "schema": BATCH_SCHEMA,
@@ -461,11 +515,14 @@ def run_reviews(
             "review_count": len(results),
             "passed_render_count": passed,
             "failed_render_count": failed,
+            "deformation_rejected_count": deformation_rejected,
             "reviews": results,
             "overview": _relative_artifact(overview, staging) if overview else None,
             "automatic_checks": {
                 "lod_binding_batch_reauthenticated": True,
                 "all_selected_runtimes_reauthenticated": True,
+                "skinned_deformation_gate_run_before_media": True,
+                "deformation_rejections_rendered": False,
                 "all_successful_reviews_have_walk_and_idle_videos": passed > 0,
                 "all_successful_videos_read_back": passed > 0,
                 "visual_qa_pending": True,

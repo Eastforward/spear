@@ -27,3 +27,13 @@ def test_runtime_proxy_keeps_texture_import_and_glb_export_path():
     assert "bpy.ops.import_scene.gltf" in text
     assert 'export_format="GLB"' in text
     assert "write_runtime_proxy_record" in text
+
+
+def test_runtime_proxy_welds_gltf_split_vertices_before_decimation():
+    text = SCRIPT.read_text()
+
+    weld_call = text.index("    weld = _weld_position_duplicates(meshes)")
+    decimate_call = text.index("        _apply_decimate(meshes, ratio)")
+    assert "bmesh.ops.remove_doubles" in text
+    assert weld_call < decimate_call
+    assert 'runtime_topology["boundary_edges"] > welded_topology["boundary_edges"]' in text

@@ -18,6 +18,9 @@ import bpy
 import mathutils
 
 
+MAX_QUADRUPED_FAR_LIMB_OFFSET_RATIO = 0.35
+
+
 def parse_argv():
     argv = sys.argv
     if "--" in argv:
@@ -51,11 +54,40 @@ def parse_argv():
             "material patches and low-poly facets cannot leak into FLUX.2."
         ),
     )
+    p.add_argument(
+        "--review-clay-color",
+        default=None,
+        help=(
+            "Optional #RRGGBB material override for animation QA. This is "
+            "render-only evidence for source GLBs whose vertex-color alpha "
+            "material is not visible in headless Eevee; it never edits or "
+            "exports the input asset."
+        ),
+    )
     p.add_argument("--output-dir", required=True)
     p.add_argument("--n-frames", type=int, default=12)
     p.add_argument("--width", type=int, default=640)
     p.add_argument("--height", type=int, default=480)
     p.add_argument("--view", default="side", choices=["side", "front", "quarter"])
+    p.add_argument(
+        "--asset-yaw-deg",
+        type=float,
+        default=0.0,
+        help=(
+            "Manual cardinal rotation of the complete rigged asset around Blender "
+            "+Z. Only -90/0/90/180 are accepted; this is used to build reviewer "
+            "direction candidates and never performs automatic inference."
+        ),
+    )
+    p.add_argument(
+        "--trajectory-distance-ratio",
+        type=float,
+        default=0.0,
+        help=(
+            "Translate the complete asset from left to right along world +X by "
+            "this multiple of its rest-pose diagonal while sampling the action."
+        ),
+    )
     p.add_argument(
         "--orthographic",
         action="store_true",
@@ -194,16 +226,49 @@ def apply_quadruped_far_limb_offset(armature, offset_ratio):
     )
 
 
+def apply_asset_cardinal_yaw(armature, yaw_deg):
+    """Rotate the whole skinned asset without changing any bone animation."""
+    pivot = armature.matrix_world.translation.copy()
+    asset_root = bpy.data.objects.new("ManualCardinalAssetRoot", None)
+    bpy.context.collection.objects.link(asset_root)
+    asset_root.location = pivot
+    original_world = armature.matrix_world.copy()
+    armature.parent = asset_root
+    armature.matrix_world = original_world
+    asset_root.rotation_euler.z = math.radians(float(yaw_deg))
+    bpy.context.view_layer.update()
+    print(
+        f"[direction-candidate] asset_yaw_deg={float(yaw_deg):+.0f} "
+        "axis=blender_positive_z automatic_direction_inference=false",
+        flush=True,
+    )
+    return asset_root
+
+
 def main():
     args = parse_argv()
     if not 0.75 <= args.camera_distance_multiplier <= 4.0:
         raise SystemExit("--camera-distance-multiplier must be in [0.75, 4.0]")
-    if not 0.0 <= args.quadruped_far_limb_offset_ratio <= 0.15:
-        raise SystemExit("--quadruped-far-limb-offset-ratio must be in [0, 0.15]")
+    if not 0.0 <= args.quadruped_far_limb_offset_ratio <= (
+        MAX_QUADRUPED_FAR_LIMB_OFFSET_RATIO
+    ):
+        raise SystemExit(
+            "--quadruped-far-limb-offset-ratio must be in "
+            f"[0, {MAX_QUADRUPED_FAR_LIMB_OFFSET_RATIO}]"
+        )
     if args.quadruped_far_limb_offset_ratio and not args.rest_pose:
         raise SystemExit("--quadruped-far-limb-offset-ratio requires --rest-pose")
     if args.pose_template_clay_color and not args.rest_pose:
         raise SystemExit("--pose-template-clay-color requires --rest-pose")
+    if args.pose_template_clay_color and args.review_clay_color:
+        raise SystemExit("choose only one clay material override")
+    allowed_yaws = (-90.0, 0.0, 90.0, 180.0)
+    if not any(math.isclose(args.asset_yaw_deg, value, abs_tol=1e-9) for value in allowed_yaws):
+        raise SystemExit("asset_yaw_deg must be one of -90, 0, 90, 180")
+    if not 0.0 <= args.trajectory_distance_ratio <= 2.0:
+        raise SystemExit("--trajectory-distance-ratio must be in [0, 2]")
+    if args.rest_pose and args.trajectory_distance_ratio:
+        raise SystemExit("--trajectory-distance-ratio is only valid for animation actions")
     os.makedirs(args.output_dir, exist_ok=True)
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -223,8 +288,11 @@ def main():
             mesh.hide_viewport = True
             mesh.hide_render = True
     armature = armatures[0]
+    asset_root = apply_asset_cardinal_yaw(armature, args.asset_yaw_deg)
     if args.pose_template_clay_color:
         apply_pose_template_clay_material(body, args.pose_template_clay_color)
+    if args.review_clay_color:
+        apply_pose_template_clay_material(body, args.review_clay_color)
     if args.rest_pose:
         armature.animation_data_clear()
         if args.quadruped_far_limb_offset_ratio:
@@ -261,6 +329,7 @@ def main():
     center = [(mn[i] + mx[i]) * 0.5 for i in range(3)]
     diag = math.sqrt(sum((mx[i] - mn[i]) ** 2 for i in range(3)))
     radius = diag * args.camera_distance_multiplier
+    radius += diag * 0.5 * args.trajectory_distance_ratio
     print(f"[anim] bbox_min={mn} bbox_max={mx} center={center} diag={diag:.3f}", flush=True)
     if args.ground_plane:
         add_review_ground(center, mn[2], diag)
@@ -304,10 +373,21 @@ def main():
     if args.engine == "CYCLES":
         scene.cycles.samples = 32
 
+    trajectory_base_location = asset_root.location.copy()
+    trajectory_distance = diag * args.trajectory_distance_ratio
+    if trajectory_distance:
+        print(
+            f"[direction-candidate] trajectory_axis=world_positive_x "
+            f"distance={trajectory_distance:.6f} start_fraction=-0.5 end_fraction=0.5",
+            flush=True,
+        )
     for i in range(args.n_frames):
         t = 0.0 if args.n_frames == 1 else i / (args.n_frames - 1)
         frame = start + (end - start) * t
         scene.frame_set(int(round(frame)))
+        asset_root.location = trajectory_base_location + mathutils.Vector(
+            ((t - 0.5) * trajectory_distance, 0.0, 0.0)
+        )
         bpy.context.view_layer.update()
         scene.render.filepath = os.path.join(args.output_dir, f"frame_{i:04d}.png")
         bpy.ops.render.render(write_still=True)

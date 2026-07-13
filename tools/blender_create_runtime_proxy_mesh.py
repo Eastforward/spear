@@ -12,6 +12,7 @@ import argparse
 from pathlib import Path
 import sys
 
+import bmesh
 import bpy
 
 
@@ -73,6 +74,90 @@ def _delete_loose_vertices(objects):
         bpy.ops.object.mode_set(mode="OBJECT")
 
 
+def _topology_stats(objects):
+    stats = {
+        "vertices": 0,
+        "edges": 0,
+        "faces": 0,
+        "boundary_edges": 0,
+        "wire_edges": 0,
+        "nonmanifold_edges_over_two_faces": 0,
+        "noncontiguous_two_face_edges": 0,
+    }
+    for obj in objects:
+        bm = bmesh.new()
+        try:
+            bm.from_mesh(obj.data)
+            stats["vertices"] += len(bm.verts)
+            stats["edges"] += len(bm.edges)
+            stats["faces"] += len(bm.faces)
+            for edge in bm.edges:
+                linked_faces = len(edge.link_faces)
+                if linked_faces == 0:
+                    stats["wire_edges"] += 1
+                elif linked_faces == 1:
+                    stats["boundary_edges"] += 1
+                elif linked_faces > 2:
+                    stats["nonmanifold_edges_over_two_faces"] += 1
+                elif not edge.is_contiguous:
+                    stats["noncontiguous_two_face_edges"] += 1
+        finally:
+            bm.free()
+    return stats
+
+
+def _weld_position_duplicates(objects):
+    """Join glTF UV/normal split vertices before topology-aware decimation.
+
+    glTF stores a separate vertex for each differing UV/normal tuple.  Blender's
+    collapse modifier otherwise treats those coincident vertices as unrelated
+    local shells and opens tens of thousands of cracks while reducing Pixal
+    meshes.  UV coordinates remain per face corner in Blender, so welding the
+    geometry does not collapse the texture layout.
+    """
+    records = []
+    for obj in objects:
+        before = len(obj.data.vertices)
+        if before == 0:
+            continue
+        coordinates = [vertex.co for vertex in obj.data.vertices]
+        extent = max(
+            max(point[axis] for point in coordinates)
+            - min(point[axis] for point in coordinates)
+            for axis in range(3)
+        )
+        distance = max(float(extent) * 1.0e-7, 1.0e-9)
+        bm = bmesh.new()
+        try:
+            bm.from_mesh(obj.data)
+            bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=distance)
+            bm.to_mesh(obj.data)
+        finally:
+            bm.free()
+        obj.data.update()
+        after = len(obj.data.vertices)
+        records.append(
+            {
+                "object": obj.name,
+                "vertices_before": before,
+                "vertices_after": after,
+                "vertices_welded": before - after,
+                "distance": distance,
+            }
+        )
+        print(
+            f"[runtime_proxy] position weld object={obj.name} "
+            f"vertices={before}->{after} distance={distance:.9g}",
+            flush=True,
+        )
+    return {
+        "objects": records,
+        "vertices_before": sum(record["vertices_before"] for record in records),
+        "vertices_after": sum(record["vertices_after"] for record in records),
+        "vertices_welded": sum(record["vertices_welded"] for record in records),
+    }
+
+
 def _apply_decimate(objects, ratio):
     for obj in objects:
         bpy.ops.object.select_all(action="DESELECT")
@@ -114,6 +199,9 @@ def main():
 
     source_faces = _face_count(meshes)
     source_vertices = _vertex_count(meshes)
+    source_topology = _topology_stats(meshes)
+    weld = _weld_position_duplicates(meshes)
+    welded_topology = _topology_stats(meshes)
     ratio = min(1.0, float(target_faces) / max(float(source_faces), 1.0))
     if ratio < 0.999:
         print(
@@ -128,6 +216,13 @@ def main():
             flush=True,
         )
     _delete_loose_vertices(_mesh_objects())
+    runtime_topology = _topology_stats(_mesh_objects())
+    if runtime_topology["boundary_edges"] > welded_topology["boundary_edges"]:
+        raise SystemExit(
+            "runtime decimation introduced boundary cracks after position weld: "
+            f"{welded_topology['boundary_edges']} -> "
+            f"{runtime_topology['boundary_edges']}"
+        )
     if args.double_sided:
         _make_materials_double_sided(_mesh_objects())
 
@@ -144,6 +239,16 @@ def main():
         source_vertices=source_vertices,
         actual_faces=actual_faces,
         actual_vertices=actual_vertices,
+        topology={
+            "source_import": source_topology,
+            "position_weld": weld,
+            "source_after_position_weld": welded_topology,
+            "runtime_after_decimate": runtime_topology,
+            "boundary_cracks_introduced": (
+                runtime_topology["boundary_edges"]
+                - welded_topology["boundary_edges"]
+            ),
+        },
     )
     print(
         f"RUNTIME_PROXY_DONE output={output} source_faces={source_faces} "

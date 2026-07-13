@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import bmesh
 import json
 import math
 import os
@@ -230,8 +231,10 @@ def parse_argv():
     p.add_argument("--ground-artifact-min-vertices", type=int, default=20)
     p.add_argument("--remove-limb-bridges", default="yes", choices=["yes", "no"],
                    help="Cut low cross-limb faces from the weight-transfer graph.")
-    p.add_argument("--delete-limb-bridge-faces", default="yes", choices=["yes", "no"],
-                   help="Also remove low cross-limb bridge faces from the rendered mesh.")
+    p.add_argument("--delete-limb-bridge-faces", default="no", choices=["yes", "no"],
+                   help="Also remove low cross-limb bridge faces from the rendered mesh. "
+                        "Keep no for generated meshes: the graph cut is useful for weight "
+                        "propagation, but deleting those faces can open the belly and paws.")
     p.add_argument("--limb-bridge-max-center-height-ratio", type=float, default=0.35)
     p.add_argument("--remove-limb-bridge-components", default="yes", choices=["yes", "no"],
                    help="Remove small low mixed-limb components left after bridge-face cuts.")
@@ -358,6 +361,57 @@ def recompute_normals(obj):
     bpy.ops.mesh.select_all(action="SELECT")
     bpy.ops.mesh.normals_make_consistent(inside=False)
     bpy.ops.object.mode_set(mode="OBJECT")
+
+
+def weld_target_position_duplicates(obj):
+    """Share geometry vertices split by glTF UV/normal seams before skinning.
+
+    Blender's glTF importer creates separate vertices at UV and normal seams.
+    If weights are transferred to those copies independently, coincident copies
+    can receive different bone weights and fan apart during animation.  UV
+    coordinates remain stored per face corner in Blender, so welding geometry
+    vertices does not collapse the texture layout.
+    """
+    before_vertices = len(obj.data.vertices)
+    before_faces = len(obj.data.polygons)
+    if before_vertices == 0:
+        raise SystemExit("target mesh has no vertices before position weld")
+    coordinates = [vertex.co.copy() for vertex in obj.data.vertices]
+    extent = max(
+        max(point[axis] for point in coordinates)
+        - min(point[axis] for point in coordinates)
+        for axis in range(3)
+    )
+    distance = max(float(extent) * 1.0e-7, 1.0e-9)
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(obj.data)
+        bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=distance)
+        bm.to_mesh(obj.data)
+    finally:
+        bm.free()
+    obj.data.update(calc_edges=True)
+    after_vertices = len(obj.data.vertices)
+    after_faces = len(obj.data.polygons)
+    if after_faces != before_faces:
+        raise SystemExit(
+            "target position weld changed face count: "
+            f"{before_faces} -> {after_faces}"
+        )
+    print(
+        "[target-weld] shared glTF seam geometry before skin transfer "
+        f"vertices={before_vertices}->{after_vertices} "
+        f"welded={before_vertices - after_vertices} distance={distance:.9g} "
+        f"faces={before_faces}",
+        flush=True,
+    )
+    return {
+        "vertices_before": before_vertices,
+        "vertices_after": after_vertices,
+        "vertices_welded": before_vertices - after_vertices,
+        "distance": distance,
+        "faces": before_faces,
+    }
 
 
 def mesh_vertices_world(obj):
@@ -933,6 +987,7 @@ def main():
         raise SystemExit("new mesh import returned no mesh objects")
     tgt_mesh = max(new_meshes, key=lambda o: len(o.data.vertices))
     print(f"[load] target mesh={tgt_mesh.name} verts={len(tgt_mesh.data.vertices)}", flush=True)
+    weld_target_position_duplicates(tgt_mesh)
 
     if args.flip_x:
         tgt_mesh.scale.x *= -1.0
