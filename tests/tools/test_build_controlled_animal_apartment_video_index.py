@@ -78,8 +78,11 @@ def test_index_requires_registry_and_links_complete_walk_idle_pair(tmp_path):
         },
     )
     document = tmp_path / "docs" / "animals.md"
+    html = tmp_path / "docs" / "animals.html"
 
-    summary = build_video_index([manifest], document)
+    summary = build_video_index(
+        [manifest], document, html_path=html, server_root=tmp_path
+    )
 
     text = document.read_text(encoding="utf-8")
     assert summary == {
@@ -93,3 +96,14 @@ def test_index_requires_registry_and_links_complete_walk_idle_pair(tmp_path):
     assert "[审核]" in text
     assert "[音频]" in text
     assert "[Registry]" in text
+    assert f"[审核]({root.resolve()}" in text
+    assert "../batch/" not in text
+
+    page = html.read_text(encoding="utf-8")
+    assert "受控动物视频审核" in page
+    assert asset_id in page
+    assert str((root / "clips" / tag / "walking").resolve()) in page
+    assert "side_by_side_review_annotated.mp4" in page
+    assert "apartment_v1_view0.mp4" in page
+    assert "topdown_review.mp4" in page
+    assert 'src=""' in page
