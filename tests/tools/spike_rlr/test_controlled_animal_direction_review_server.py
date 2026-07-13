@@ -239,3 +239,11 @@ def test_page_exposes_authenticated_apartment_walk_and_idle_tabs():
     assert "apartment_idle_main" in html
     assert "apartment_idle_topdown" in html
     assert "不会自动注册正式资产" in html
+
+
+def test_page_labels_cardinal_choice_as_current_direction_not_ninety_degrees():
+    html = server.HTML
+
+    assert "姿势合格并保存当前方向" in html
+    assert "$('approve').textContent=`姿势合格并保存当前方向（${yaw}°）`" in html
+    assert "保存当前整90°方向" not in html
