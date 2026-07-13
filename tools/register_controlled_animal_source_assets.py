@@ -172,6 +172,21 @@ def load_source_contract(preflight_path: Path):
     return preflight, requests, profiles
 
 
+def approved_attempt_ids(
+    decisions: Mapping[str, Any], attempts: Mapping[str, Any]
+) -> set[str]:
+    """Require a decision for every Pixal attempt and return the approved subset."""
+    if set(decisions) != set(attempts):
+        raise contracts.ContractError(
+            "static decision/Pixal attempt coverage differs"
+        )
+    return {
+        instance_id
+        for instance_id, value in decisions.items()
+        if value["payload"]["decision"] == "approved_for_lod_and_binding"
+    }
+
+
 def register(
     preflight_path: Path,
     pixal_batch_path: Path,
@@ -209,14 +224,8 @@ def register(
     decision_batch_path, decision_batch, decisions = load_decision_batch(
         decision_batch_path
     )
-    approved_ids = {
-        instance_id
-        for instance_id, value in decisions.items()
-        if value["payload"]["decision"] == "approved_for_lod_and_binding"
-    }
     attempts = {item["instance_id"]: item for item in pixal_batch["attempts"]}
-    if approved_ids != set(attempts):
-        raise contracts.ContractError("approved static decisions/Pixal attempts differ")
+    approved_ids = approved_attempt_ids(decisions, attempts)
     model_licenses = license_records()
 
     output_root = Path(output_root).absolute()
