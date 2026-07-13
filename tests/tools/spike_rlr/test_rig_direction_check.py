@@ -405,6 +405,58 @@ def test_sample_body_basis_matches_quaternius_numeric_dog_bones():
     assert basis["up_alignment_z"] > 0.99
 
 
+def test_sample_body_basis_matches_quaternius_native_named_husky_bones():
+    from rig_direction_check import sample_body_basis_in_frame
+
+    # The stable Ultimate Animal Pack Husky does not use the older numeric
+    # Bone/Bone.002 convention.  Its longitudinal chain is
+    # Back -> Torso* -> neck/head and the rear feet use explicit side names.
+    positions = {
+        "Body": [-20.0, 0.0, 25.0],
+        "Back": [0.0, 0.0, 100.0],
+        "Torso": [25.0, 0.0, 105.0],
+        "Torso2": [60.0, 0.0, 108.0],
+        "Torso3": [100.0, 0.0, 110.0],
+        "BackLowerLeg_L_end": [-10.0, -30.0, 0.0],
+        "BackLowerLeg_R_end": [-10.0, 30.0, 0.0],
+    }
+
+    class Component:
+        bone_names = list(positions)
+
+        def GetNumBones(self):
+            return len(self.bone_names)
+
+        def GetBoneName(self, BoneIndex):
+            return self.bone_names[BoneIndex]
+
+        def GetBoneIndex(self, BoneName):
+            return self.bone_names.index(BoneName)
+
+        def GetBoneTransform(self, InBoneName, TransformSpace, as_dict):
+            x, y, z = positions[InBoneName]
+            return {"translation": {"x": x, "y": y, "z": z}}
+
+    class UnrealService:
+        def get_components_by_class(self, **_kwargs):
+            return [Component()]
+
+    basis = sample_body_basis_in_frame(
+        object(), unreal_service=UnrealService()
+    )
+
+    assert basis["basis_kind"] == "quaternius_native_named_longitudinal_v1"
+    assert basis["bone_names"] == {
+        "rear": "Back",
+        "front": "Torso3",
+        "body": "Back",
+        "left_foot": "BackLowerLeg_L_end",
+        "right_foot": "BackLowerLeg_R_end",
+    }
+    assert basis["forward_yaw_ue_deg"] == pytest.approx(0.0, abs=3.0)
+    assert basis["up_alignment_z"] > 0.99
+
+
 def test_sample_body_basis_matches_quaternius_farm_horse_bones():
     from rig_direction_check import sample_body_basis_in_frame
 

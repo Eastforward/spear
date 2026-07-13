@@ -24,6 +24,10 @@ CONTROLLED_ANIMAL_REGISTRY_SCHEMA = (
     "controlled_animal_apartment_research_candidate_registry_v1"
 )
 CONTROLLED_ANIMAL_GATE_SCHEMA = "controlled_animal_apartment_gate_v1"
+STABLE_ANIMAL_REGISTRY_SCHEMA = (
+    "stable_animal_apartment_research_candidate_registry_v1"
+)
+STABLE_ANIMAL_GATE_SCHEMA = "stable_animal_apartment_gate_v1"
 _SAFE_TAG = re.compile(r"[a-z0-9_]+")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -427,6 +431,183 @@ def publish_controlled_animal_registry_clip(
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
+def publish_stable_animal_registry_clip(
+    *,
+    registry_root: Path,
+    source: dict,
+    action_name: str,
+    clip_id: str,
+    clip_dir: Path,
+) -> Path:
+    """Publish one authenticated native-template animal Apartment clip.
+
+    This registry deliberately preserves the missing human-review state.  A
+    successful automatic render is a research candidate, never an implicit
+    formal-dataset or human-visual approval.
+    """
+    tag = str(source.get("tag") or "")
+    asset_id = str(source.get("asset_id") or "")
+    template_id = str(source.get("template_id") or "")
+    species = str(source.get("species") or "")
+    breed = str(source.get("breed") or "")
+    gate = source.get("stable_animal_gate", {})
+    if _SAFE_TAG.fullmatch(tag) is None:
+        raise ValueError(f"unsafe stable-animal registry tag: {tag!r}")
+    if action_name not in {"Walking", "Idle"}:
+        raise ValueError(f"unsupported stable-animal action: {action_name!r}")
+    if (
+        source.get("asset_class") != "animal"
+        or not asset_id
+        or not template_id
+        or not species
+        or not breed
+        or gate.get("schema") != STABLE_ANIMAL_GATE_SCHEMA
+        or gate.get("status")
+        != "approved_for_automated_research_candidate_apartment"
+        or gate.get("asset_id") != asset_id
+        or gate.get("template_id") != template_id
+        or gate.get("tag") != tag
+        or gate.get("species") != species
+        or gate.get("breed") != breed
+        or gate.get("human_visual_review") != "pending"
+        or gate.get("formal_dataset_registration_authorized") is not False
+    ):
+        raise ValueError("stable-animal source gate identity is invalid")
+
+    template_registry_path, template_registry = _verified_artifact_descriptor(
+        gate.get("template_registry", {}), label="stable template registry"
+    )
+    import_path, imported = _verified_artifact_descriptor(
+        gate.get("ue_import_result", {}), label="stable UE import result"
+    )
+    deformation_path, deformation = _verified_artifact_descriptor(
+        gate.get("deformation_audit", {}), label="stable deformation audit"
+    )
+    entry = {
+        item.get("template_id"): item
+        for item in template_registry.get("entries", [])
+    }.get(template_id)
+    imported_result = {
+        item.get("template_id"): item for item in imported.get("results", [])
+    }.get(template_id)
+    direction = gate.get("direction", {})
+    source_sha256 = str(gate.get("source_sha256") or "")
+    try:
+        source_yaw = float(source.get("walking_forward_yaw_offset_deg"))
+        cardinal_yaw = float(direction.get("cardinal_yaw_deg"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("stable-animal cardinal direction is invalid") from exc
+    if (
+        template_registry.get("schema")
+        != "avengine_quaternius_stable_template_registry_v1"
+        or imported.get("schema") != "stable_animal_ue_import_result_v1"
+        or deformation.get("schema")
+        != "avengine_skinned_deformation_audit_v1"
+        or deformation.get("overall") != "passed"
+        or deformation.get("input_sha256") != source_sha256
+        or deformation.get("formal_dataset_registration_authorized") is not False
+        or not entry
+        or not imported_result
+        or entry.get("runtime_glb", {}).get("sha256") != source_sha256
+        or entry.get("deformation_audit", {}).get("sha256")
+        != gate.get("deformation_audit", {}).get("sha256")
+        or entry.get("direction") != direction
+        or not str(entry.get("qa", {}).get("walking_deformation", "")).startswith(
+            "passed_"
+        )
+        or not str(entry.get("qa", {}).get("idle_deformation", "")).startswith(
+            "passed_"
+        )
+        or direction.get("automatic_fine_yaw_inference") is not False
+        or direction.get("review_status")
+        != "agent_selected_pending_human_review"
+        or source_yaw != cardinal_yaw
+        or imported_result.get("asset_id") != asset_id
+        or imported_result.get("tag") != tag
+        or imported_result.get("source_sha256") != source_sha256
+        or set(imported_result.get("actions", [])) != {"Idle", "Walking"}
+        or imported_result.get("status", "passed") != "passed"
+        or imported_result.get("human_review_status")
+        != "agent_selected_pending_human_review"
+        or imported_result.get("formal_dataset_registration_authorized") is not False
+        or not imported_result.get("blueprint")
+    ):
+        raise ValueError("stable-animal template/import evidence is inconsistent")
+
+    clip_dir = Path(clip_dir).resolve()
+    evidence = {
+        "clip_id": str(clip_id),
+        "spec": file_descriptor(clip_dir / "spec.json"),
+        "runtime_gate": file_descriptor(clip_dir / "runtime_gate.json"),
+        "actor_visual_metadata": file_descriptor(
+            clip_dir / "videos" / "actor_visual_metadata.json"
+        ),
+        "apartment_video": file_descriptor(
+            clip_dir / "videos" / "apartment_v1_view0.mp4"
+        ),
+        "topdown_review_video": file_descriptor(
+            clip_dir / "videos" / "topdown_review.mp4"
+        ),
+        "annotated_review_video": file_descriptor(
+            clip_dir / "videos" / "side_by_side_review_annotated.mp4"
+        ),
+    }
+    audio_path = clip_dir / "binaural.wav"
+    schedule_path = clip_dir / "binaural_source_schedule.json"
+    if audio_path.is_file():
+        evidence["binaural_audio"] = file_descriptor(audio_path)
+    if schedule_path.is_file():
+        evidence["binaural_source_schedule"] = file_descriptor(schedule_path)
+
+    registry_root = Path(registry_root).resolve()
+    registry_root.mkdir(parents=True, exist_ok=True)
+    registry_path = registry_root / f"{tag}.json"
+    lock_path = registry_root / f".{tag}.registry.lock"
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            if registry_path.exists():
+                payload = json.loads(registry_path.read_text(encoding="utf-8"))
+                if payload.get("schema_version") != STABLE_ANIMAL_REGISTRY_SCHEMA:
+                    raise ValueError("existing stable-animal registry schema changed")
+                if (
+                    payload.get("tag") != tag
+                    or payload.get("asset_id") != asset_id
+                    or payload.get("template_id") != template_id
+                    or payload.get("species") != species
+                    or payload.get("breed") != breed
+                    or payload.get("human_visual_review") != "pending"
+                    or payload.get("formal_registry_promotion") is not False
+                ):
+                    raise ValueError("existing stable-animal registry identity changed")
+                clips = dict(payload.get("clips", {}))
+            else:
+                clips = {}
+            clips[action_name] = evidence
+            payload = {
+                "schema_version": STABLE_ANIMAL_REGISTRY_SCHEMA,
+                "usage_scope": RESEARCH_CANDIDATE_USAGE_SCOPE,
+                "formal_registry_promotion": False,
+                "human_visual_review": "pending",
+                "tag": tag,
+                "asset_id": asset_id,
+                "template_id": template_id,
+                "species": species,
+                "breed": breed,
+                "sampled_attributes": source.get("sampled_attributes", {}),
+                "blueprint": imported_result.get("blueprint"),
+                "source_sha256": source_sha256,
+                "direction": direction,
+                "template_registry": file_descriptor(template_registry_path),
+                "deformation_audit": file_descriptor(deformation_path),
+                "ue_import_result": file_descriptor(import_path),
+                "clips": clips,
+            }
+            return atomic_write_json(registry_path, payload)
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
 def finalize_human_apartment_clip(
     *,
     spec_path: Path,
@@ -534,17 +715,26 @@ def finalize_human_apartment_clip(
 
     if publish_registry:
         for source in spec.get("sources", []):
-            if "controlled_animal_gate" not in source:
-                continue
-            registry_paths.append(
-                publish_controlled_animal_registry_clip(
-                    registry_root=out_dir.parent / "registry",
-                    source=source,
-                    action_name=str(source.get("wanted_anim") or "Walking"),
-                    clip_id=str(clip_id),
-                    clip_dir=out_dir,
+            if "controlled_animal_gate" in source:
+                registry_paths.append(
+                    publish_controlled_animal_registry_clip(
+                        registry_root=out_dir.parent / "registry",
+                        source=source,
+                        action_name=str(source.get("wanted_anim") or "Walking"),
+                        clip_id=str(clip_id),
+                        clip_dir=out_dir,
+                    )
                 )
-            )
+            if "stable_animal_gate" in source:
+                registry_paths.append(
+                    publish_stable_animal_registry_clip(
+                        registry_root=out_dir.parent / "registry",
+                        source=source,
+                        action_name=str(source.get("wanted_anim") or "Walking"),
+                        clip_id=str(clip_id),
+                        clip_dir=out_dir,
+                    )
+                )
 
     return {
         **review_outputs,

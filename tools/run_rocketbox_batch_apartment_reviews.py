@@ -114,6 +114,78 @@ def _controlled_animal_source_gate_is_valid(source: dict) -> bool:
     )
 
 
+def _stable_animal_source_gate_is_valid(source: dict) -> bool:
+    gate = source.get("stable_animal_gate", {})
+    if (
+        source.get("asset_class") != "animal"
+        or gate.get("schema") != "stable_animal_apartment_gate_v1"
+        or gate.get("status")
+        != "approved_for_automated_research_candidate_apartment"
+        or gate.get("asset_id") != source.get("asset_id")
+        or gate.get("template_id") != source.get("template_id")
+        or gate.get("tag") != source.get("tag")
+        or gate.get("species") != source.get("species")
+        or gate.get("breed") != source.get("breed")
+        or gate.get("human_visual_review") != "pending"
+        or gate.get("formal_dataset_registration_authorized") is not False
+    ):
+        return False
+    registry_artifact = gate.get("template_registry", {})
+    import_artifact = gate.get("ue_import_result", {})
+    deformation_artifact = gate.get("deformation_audit", {})
+    try:
+        for artifact in (
+            registry_artifact,
+            import_artifact,
+            deformation_artifact,
+        ):
+            path = Path(artifact["path"]).resolve()
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or path.stat().st_size != artifact["size_bytes"]
+                or _sha256_file(path) != artifact["sha256"]
+            ):
+                return False
+        registry = _read_json(Path(registry_artifact["path"]))
+        imported = _read_json(Path(import_artifact["path"]))
+    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
+        return False
+    entry = {
+        item.get("template_id"): item for item in registry.get("entries", [])
+    }.get(source.get("template_id"))
+    result = {
+        item.get("template_id"): item for item in imported.get("results", [])
+    }.get(source.get("template_id"))
+    return bool(
+        registry.get("schema")
+        == "avengine_quaternius_stable_template_registry_v1"
+        and imported.get("schema") == "stable_animal_ue_import_result_v1"
+        and entry
+        and result
+        and entry.get("runtime_glb", {}).get("sha256")
+        == gate.get("source_sha256")
+        and entry.get("deformation_audit", {}).get("sha256")
+        == deformation_artifact.get("sha256")
+        and str(entry.get("qa", {}).get("walking_deformation", "")).startswith(
+            "passed_"
+        )
+        and str(entry.get("qa", {}).get("idle_deformation", "")).startswith(
+            "passed_"
+        )
+        and entry.get("direction", {}).get("automatic_fine_yaw_inference")
+        is False
+        and entry.get("direction", {}).get("review_status")
+        == "agent_selected_pending_human_review"
+        and float(source.get("walking_forward_yaw_offset_deg"))
+        == float(entry.get("direction", {}).get("cardinal_yaw_deg"))
+        and result.get("tag") == source.get("tag")
+        and result.get("source_sha256") == gate.get("source_sha256")
+        and set(result.get("actions", [])) == {"Idle", "Walking"}
+        and result.get("formal_dataset_registration_authorized") is False
+    )
+
+
 def _job_uses_controlled_animal_gate(job: ReviewJob) -> bool:
     try:
         sources = _read_json(job.spec_path).get("sources", [])
@@ -122,11 +194,23 @@ def _job_uses_controlled_animal_gate(job: ReviewJob) -> bool:
     return len(sources) == 1 and _controlled_animal_source_gate_is_valid(sources[0])
 
 
+def _job_uses_stable_animal_gate(job: ReviewJob) -> bool:
+    try:
+        sources = _read_json(job.spec_path).get("sources", [])
+    except (OSError, json.JSONDecodeError):
+        return False
+    return len(sources) == 1 and _stable_animal_source_gate_is_valid(sources[0])
+
+
 def _runtime_gate_accepts_job(job: ReviewJob, runtime_gate: dict) -> bool:
     gate_tags = {
         item.get("tag") for item in runtime_gate.get("human_gate_evidence", [])
     }
-    return job.tag in gate_tags or _job_uses_controlled_animal_gate(job)
+    return (
+        job.tag in gate_tags
+        or _job_uses_controlled_animal_gate(job)
+        or _job_uses_stable_animal_gate(job)
+    )
 
 
 def build_jobs(
@@ -144,6 +228,7 @@ def build_jobs(
     if not isinstance(records, list) or payload.get("avatar_count") != len(records):
         raise RuntimeError("Rocketbox Apartment spec manifest is invalid")
     controlled_animal = False
+    stable_animal = False
     if schema == "rocketbox_batch_apartment_specs_v1":
         expected_action_set = {"Walking", "Standing_Idle"}
         expected_clip_count = len(records) * 2
@@ -160,6 +245,11 @@ def build_jobs(
         expected_clip_count = len(records) * 2
         require_original_tag = False
         controlled_animal = True
+    elif schema == "stable_animal_walk_idle_apartment_specs_v1":
+        expected_action_set = {"Walking", "Idle"}
+        expected_clip_count = len(records) * 2
+        require_original_tag = False
+        stable_animal = True
     else:
         raise RuntimeError("Apartment spec manifest schema is invalid")
     if payload.get("clip_count") != expected_clip_count:
@@ -210,7 +300,7 @@ def build_jobs(
                 isinstance(actor_scale, (int, float))
                 and not isinstance(actor_scale, bool)
                 and 0.0 < float(actor_scale) <= 2.0
-                if controlled_animal
+                if controlled_animal or stable_animal
                 else actor_scale == 1.0
             )
             if (
@@ -225,6 +315,16 @@ def build_jobs(
                         or not sources[0].get("species")
                         or sources[0].get("asset_id") != avatar_id
                         or not _controlled_animal_source_gate_is_valid(sources[0])
+                    )
+                )
+                or (
+                    stable_animal
+                    and (
+                        sources[0].get("asset_class") != "animal"
+                        or not sources[0].get("species")
+                        or sources[0].get("asset_id") != avatar_id
+                        or sources[0].get("template_id") != avatar_id
+                        or not _stable_animal_source_gate_is_valid(sources[0])
                     )
                 )
             ):
@@ -674,7 +774,9 @@ def main() -> int:
                     graphics_adapter=adapter,
                     render_offscreen=args.render_offscreen,
                 )
-                if _job_uses_controlled_animal_gate(job):
+                if _job_uses_controlled_animal_gate(
+                    job
+                ) or _job_uses_stable_animal_gate(job):
                     environment["SPEAR_SKIP_REVIEW_GATE"] = "1"
                 command = build_render_command(job, stage="render")
                 try:
@@ -844,7 +946,11 @@ def main() -> int:
         "schema": (
             "controlled_animal_apartment_render_status_v1"
             if manifest_schema == "controlled_animal_walk_idle_apartment_specs_v1"
-            else "rocketbox_batch_apartment_render_status_v1"
+            else (
+                "stable_animal_apartment_render_status_v1"
+                if manifest_schema == "stable_animal_walk_idle_apartment_specs_v1"
+                else "rocketbox_batch_apartment_render_status_v1"
+            )
         ),
         "started_at": started_at,
         "finished_at": _utc_now(),

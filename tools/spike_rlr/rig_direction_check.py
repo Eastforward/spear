@@ -75,6 +75,28 @@ _QUADRUPED_BASIS_BONE_CANDIDATES = {
     "right_foot": ("Bone.013", "IKBackRight", "BackFoot.R"),
 }
 
+# Ultimate Animal Pack native rigs use a readable torso chain and explicit
+# side-suffixed rear-leg bones.  Keep this as a separate complete scheme:
+# treating the low Body root as the body-height anchor makes a healthy dog
+# appear almost horizontal, while Back is the anatomical rear torso anchor.
+_QUATERNIUS_NATIVE_NAMED_BASIS_BONE_CANDIDATES = {
+    "rear": ("Back",),
+    "front": ("Torso3", "Neck1", "Torso2"),
+    "body": ("Back", "Torso"),
+    "left_foot": (
+        "BackLowerLeg.L_end",
+        "BackLowerLeg.L",
+        "IKBackLeg.L",
+        "FFB.L",
+    ),
+    "right_foot": (
+        "BackLowerLeg.R_end",
+        "BackLowerLeg.R",
+        "IKBackLeg.R",
+        "FFB.R",
+    ),
+}
+
 
 def _integer_return_value(value) -> int:
     """Normalize direct and as-dict Unreal integer return values."""
@@ -217,10 +239,19 @@ def sample_body_basis_in_frame(actor, *, unreal_service=None, diagnostics=None):
 
         human_names = match_roles(_BODY_BASIS_BONE_CANDIDATES)
         quadruped_names = match_roles(_QUADRUPED_BASIS_BONE_CANDIDATES)
+        native_named_names = match_roles(
+            _QUATERNIUS_NATIVE_NAMED_BASIS_BONE_CANDIDATES
+        )
         if len(human_names) == len(_BODY_BASIS_BONE_CANDIDATES):
             matched_names = human_names
             basis_builder = body_basis_from_positions
             basis_kind = "humanoid_semantic_v1"
+        elif len(native_named_names) == len(
+            _QUATERNIUS_NATIVE_NAMED_BASIS_BONE_CANDIDATES
+        ):
+            matched_names = native_named_names
+            basis_builder = quadruped_basis_from_positions
+            basis_kind = "quaternius_native_named_longitudinal_v1"
         elif len(quadruped_names) == len(_QUADRUPED_BASIS_BONE_CANDIDATES):
             matched_names = quadruped_names
             basis_builder = quadruped_basis_from_positions
@@ -238,9 +269,18 @@ def sample_body_basis_in_frame(actor, *, unreal_service=None, diagnostics=None):
                             role: list(candidates)
                             for role, candidates in _QUADRUPED_BASIS_BONE_CANDIDATES.items()
                         },
+                        "quaternius_native_named": {
+                            role: list(candidates)
+                            for role, candidates in (
+                                _QUATERNIUS_NATIVE_NAMED_BASIS_BONE_CANDIDATES.items()
+                            )
+                        },
                     },
                     "matched_humanoid_roles": sorted(human_names),
                     "matched_quadruped_roles": sorted(quadruped_names),
+                    "matched_quaternius_native_named_roles": sorted(
+                        native_named_names
+                    ),
                     "available_bone_names": available_names,
                 })
             return None
@@ -258,7 +298,10 @@ def sample_body_basis_in_frame(actor, *, unreal_service=None, diagnostics=None):
             positions[role] = position
 
         basis = basis_builder(**positions)
-        basis.setdefault("basis_kind", basis_kind)
+        # The shared quadruped math is reused by multiple independently
+        # validated bone-name schemes.  Publish the selected semantic scheme,
+        # not only the generic math helper's default label.
+        basis["basis_kind"] = basis_kind
         basis["bone_names"] = matched_names
         basis["positions_ue_cm"] = {
             role: np.asarray(position, dtype=np.float64).tolist()

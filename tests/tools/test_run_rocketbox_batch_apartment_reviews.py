@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from tools.run_rocketbox_batch_apartment_reviews import (
+    _stable_animal_source_gate_is_valid,
     assign_unique_rpc_ports,
     build_jobs,
     build_render_command,
@@ -194,6 +195,124 @@ def _controlled_animal_manifest(tmp_path: Path) -> Path:
     return manifest
 
 
+def _stable_animal_manifest(tmp_path: Path) -> Path:
+    root = tmp_path / "stable_animals"
+    asset_id = "quaternius_ultimate_husky_v1"
+    tag = "stable_dog_husky_quaternius_ultimate_husky_v1"
+    evidence = root / "evidence"
+    evidence.mkdir(parents=True)
+
+    def artifact(path):
+        return {
+            "path": str(path),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "size_bytes": path.stat().st_size,
+        }
+
+    deformation = evidence / "deformation.json"
+    deformation.write_text(json.dumps({"overall": "passed"}))
+    source_sha = "stable-source-sha"
+    registry = evidence / "registry.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "schema": "avengine_quaternius_stable_template_registry_v1",
+                "entries": [
+                    {
+                        "template_id": asset_id,
+                        "runtime_glb": {"sha256": source_sha},
+                        "deformation_audit": artifact(deformation),
+                        "qa": {
+                            "walking_deformation": "passed_automatic_deformation_measurements",
+                            "idle_deformation": "passed_automatic_deformation_measurements",
+                        },
+                        "direction": {
+                            "cardinal_yaw_deg": 90,
+                            "automatic_fine_yaw_inference": False,
+                            "review_status": "agent_selected_pending_human_review",
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    imported = evidence / "ue_import_result.json"
+    imported.write_text(
+        json.dumps(
+            {
+                "schema": "stable_animal_ue_import_result_v1",
+                "results": [
+                    {
+                        "template_id": asset_id,
+                        "tag": tag,
+                        "source_sha256": source_sha,
+                        "actions": ["Idle", "Walking"],
+                        "formal_dataset_registration_authorized": False,
+                    }
+                ],
+            }
+        )
+    )
+
+    actions = {}
+    for action in ("Walking", "Idle"):
+        motion = action.lower()
+        spec = root / "specs" / tag / f"{motion}.json"
+        spec.parent.mkdir(parents=True, exist_ok=True)
+        source = {
+            "tag": tag,
+            "asset_id": asset_id,
+            "template_id": asset_id,
+            "asset_class": "animal",
+            "species": "dog",
+            "breed": "husky",
+            "wanted_anim": action,
+            "walking_forward_yaw_offset_deg": 90,
+            "actor_scale": 0.15,
+        }
+        source["stable_animal_gate"] = {
+            "schema": "stable_animal_apartment_gate_v1",
+            "status": "approved_for_automated_research_candidate_apartment",
+            "asset_id": asset_id,
+            "template_id": asset_id,
+            "tag": tag,
+            "species": "dog",
+            "breed": "husky",
+            "template_registry": artifact(registry),
+            "ue_import_result": artifact(imported),
+            "source_sha256": source_sha,
+            "deformation_audit": artifact(deformation),
+            "human_visual_review": "pending",
+            "formal_dataset_registration_authorized": False,
+        }
+        spec.write_text(json.dumps({"sources": [source]}))
+        actions[action] = {
+            "spec": str(spec),
+            "clip_id": f"{tag}_{motion}",
+            "output_dir": str(root / "clips" / tag / motion),
+        }
+    manifest = root / "spec_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "stable_animal_walk_idle_apartment_specs_v1",
+                "avatar_count": 1,
+                "clip_count": 2,
+                "records": [
+                    {
+                        "base_avatar_id": asset_id,
+                        "asset_id": asset_id,
+                        "template_id": asset_id,
+                        "tag": tag,
+                        "actions": actions,
+                    }
+                ],
+            }
+        )
+    )
+    return manifest
+
+
 def test_build_jobs_is_action_filtered_and_manifest_locked(tmp_path):
     manifest = _manifest(tmp_path)
 
@@ -232,6 +351,20 @@ def test_build_jobs_accepts_controlled_animal_walk_idle_and_instance_scale(tmp_p
         ("cat_siamese_bindpose_example", "Walking"),
     ]
     assert build_jobs(manifest, actions={"Idle"})[0].action == "Idle"
+
+
+def test_build_jobs_accepts_stable_animal_without_claiming_human_approval(tmp_path):
+    manifest = _stable_animal_manifest(tmp_path)
+
+    jobs = build_jobs(manifest)
+
+    assert [(job.base_avatar_id, job.action) for job in jobs] == [
+        ("quaternius_ultimate_husky_v1", "Idle"),
+        ("quaternius_ultimate_husky_v1", "Walking"),
+    ]
+    source = json.loads(jobs[0].spec_path.read_text())["sources"][0]
+    assert _stable_animal_source_gate_is_valid(source)
+    assert source["stable_animal_gate"]["human_visual_review"] == "pending"
 
 
 def test_stage_commands_use_stable_launcher_and_do_not_mix_gpu_and_cpu_work(tmp_path):

@@ -64,6 +64,7 @@ _ANIMAL_TAG_PREFIXES = (
 _TECHNICAL_TAG_NAMESPACES = (
     "gate_pixal_",
     "pixal_",
+    "stable_",
 )
 
 

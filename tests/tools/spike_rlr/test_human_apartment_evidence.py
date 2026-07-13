@@ -393,6 +393,168 @@ def test_finalize_controlled_animal_clip_publishes_authenticated_registry(
     assert payload["clips"]["Walking"]["clip_id"] == "controlled_dog_walk"
 
 
+def test_finalize_stable_animal_clip_publishes_pending_human_registry(
+    tmp_path, monkeypatch
+):
+    import human_apartment_evidence as evidence
+
+    asset_id = "quaternius_ultimate_husky_v1"
+    template_id = asset_id
+    tag = "stable_dog_husky_quaternius_ultimate_husky_v1"
+    source_sha256 = "stable-source-sha"
+
+    def descriptor(path):
+        return {
+            "path": str(path.resolve()),
+            "sha256": evidence.sha256_file(path),
+            "size_bytes": path.stat().st_size,
+        }
+
+    deformation = _write(
+        tmp_path / "evidence" / "deformation.json",
+        {
+            "schema": "avengine_skinned_deformation_audit_v1",
+            "overall": "passed",
+            "input_sha256": source_sha256,
+            "formal_dataset_registration_authorized": False,
+        },
+    )
+    direction = {
+        "authored_front_axis": "negative_y",
+        "runtime_front_axis": "positive_x",
+        "cardinal_yaw_deg": 90,
+        "automatic_fine_yaw_inference": False,
+        "review_status": "agent_selected_pending_human_review",
+    }
+    template_registry = _write(
+        tmp_path / "evidence" / "template_registry.json",
+        {
+            "schema": "avengine_quaternius_stable_template_registry_v1",
+            "entries": [
+                {
+                    "template_id": template_id,
+                    "runtime_glb": {"sha256": source_sha256},
+                    "deformation_audit": descriptor(deformation),
+                    "direction": direction,
+                    "qa": {
+                        "walking_deformation": (
+                            "passed_automatic_deformation_measurements"
+                        ),
+                        "idle_deformation": (
+                            "passed_automatic_deformation_measurements"
+                        ),
+                    },
+                }
+            ],
+        },
+    )
+    imported = _write(
+        tmp_path / "evidence" / "ue_import_result.json",
+        {
+            "schema": "stable_animal_ue_import_result_v1",
+            "results": [
+                {
+                    "template_id": template_id,
+                    "asset_id": asset_id,
+                    "tag": tag,
+                    "source_sha256": source_sha256,
+                    "actions": ["Idle", "Walking"],
+                    "blueprint": f"/Game/BP_{tag}",
+                    "human_review_status": (
+                        "agent_selected_pending_human_review"
+                    ),
+                    "formal_dataset_registration_authorized": False,
+                }
+            ],
+        },
+    )
+    gate = {
+        "schema": "stable_animal_apartment_gate_v1",
+        "status": "approved_for_automated_research_candidate_apartment",
+        "asset_id": asset_id,
+        "template_id": template_id,
+        "tag": tag,
+        "species": "dog",
+        "breed": "husky",
+        "template_registry": descriptor(template_registry),
+        "ue_import_result": descriptor(imported),
+        "source_sha256": source_sha256,
+        "deformation_audit": descriptor(deformation),
+        "direction": direction,
+        "human_visual_review": "pending",
+        "formal_dataset_registration_authorized": False,
+    }
+    source_spec = _spec()
+    source_spec["usage_scope"] = "research_candidate"
+    source_spec["sources"] = [
+        {
+            "tag": tag,
+            "asset_id": asset_id,
+            "template_id": template_id,
+            "asset_class": "animal",
+            "species": "dog",
+            "breed": "husky",
+            "wanted_anim": "Walking",
+            "walking_forward_yaw_offset_deg": 90,
+            "audio_lookup": "silent",
+            "mute_audio": True,
+            "stable_animal_gate": gate,
+        }
+    ]
+    spec_path = _write(tmp_path / "source_spec.json", source_spec)
+    clip_dir = tmp_path / "stable_animals" / "walk"
+    _write(clip_dir / "runtime_gate.json", {"human_gate_evidence": []})
+    _write(
+        clip_dir / "videos" / "actor_visual_metadata.json",
+        {"automatic_checks": {"overall": "passed"}},
+    )
+    _write(clip_dir / "videos" / "apartment_v1_view0.mp4")
+    _write(clip_dir / "videos" / "topdown_review.mp4")
+
+    scene = SimpleNamespace(
+        animals=[
+            SimpleNamespace(
+                tag=tag,
+                trajectory_m=np.asarray([[2.0, 0.0, 0.0]] * 4),
+            )
+        ]
+    )
+    monkeypatch.setattr(evidence, "_compose_scene", lambda _path: scene)
+    monkeypatch.setattr(evidence, "_apartment_obstacles", lambda _spec: ([], []))
+    monkeypatch.setattr(
+        evidence,
+        "_compute_metadata",
+        lambda _spec, out_dir, clip_id: _write(
+            out_dir / "apartment_v1_metadata.json", {"clip_id": clip_id}
+        ),
+    )
+    monkeypatch.setattr(
+        evidence,
+        "_build_reviews",
+        lambda out_dir: {
+            "annotated": _write(
+                out_dir / "videos" / "side_by_side_review_annotated.mp4"
+            )
+        },
+    )
+
+    result = evidence.finalize_human_apartment_clip(
+        spec_path=spec_path,
+        out_dir=clip_dir,
+        clip_id="stable_husky_walk",
+    )
+
+    assert len(result["registries"]) == 1
+    payload = json.loads(result["registries"][0].read_text(encoding="utf-8"))
+    assert payload["schema_version"] == (
+        "stable_animal_apartment_research_candidate_registry_v1"
+    )
+    assert payload["usage_scope"] == "research_candidate"
+    assert payload["formal_registry_promotion"] is False
+    assert payload["human_visual_review"] == "pending"
+    assert payload["clips"]["Walking"]["clip_id"] == "stable_husky_walk"
+
+
 def test_finalize_example_can_preserve_frozen_baseline_registry(tmp_path, monkeypatch):
     import human_apartment_evidence as evidence
 

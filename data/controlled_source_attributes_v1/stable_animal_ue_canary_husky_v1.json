@@ -1,0 +1,18 @@
+{
+  "schema": "avengine_stable_animal_ue_selection_v1",
+  "selection_id": "stable_animal_ue_canary_husky_v1_20260714",
+  "usage_scope": "research_candidate",
+  "human_visual_review": "pending",
+  "formal_dataset_registration_authorized": false,
+  "selections": [
+    {
+      "template_id": "quaternius_ultimate_husky_v1",
+      "species": "dog",
+      "breed": "husky",
+      "actor_scale": 0.15,
+      "audio_lookup": "dog_bark",
+      "audio_source_height_offset_m": 0.45,
+      "scale_rationale": "The audited GLB is 3.1911 template units high; actor_scale=0.15 gives an initial approximately 0.48 m visual-height canary. Packaged UE bounds and ground/shoulder measurements remain authoritative."
+    }
+  ]
+}

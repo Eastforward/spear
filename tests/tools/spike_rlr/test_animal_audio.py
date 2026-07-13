@@ -33,6 +33,14 @@ def test_pixal_namespace_preserves_animal_species_detection():
     assert is_animal_tag("pixal_dog_golden_retriever_example")
 
 
+def test_stable_namespace_preserves_animal_species_detection():
+    from animal_audio import is_animal_tag, species_for_tag
+
+    tag = "stable_dog_husky_quaternius_ultimate_husky_v1"
+    assert species_for_tag(tag) == "dog"
+    assert is_animal_tag(tag)
+
+
 def test_explicit_audio_path_wins():
     from animal_audio import resolve_animal_audio_path
 
