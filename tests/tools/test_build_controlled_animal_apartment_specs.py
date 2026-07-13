@@ -55,7 +55,9 @@ def test_cat_scale_uses_sampled_physical_ratio_and_idle_is_stationary():
     assert walking["species"] == "cat"
     assert walking["audio_lookup"] == "cat_meow"
     assert walking["sampled_attributes"]["size"] == "small"
+    assert walking["ground_snap_max_abs_correction_cm"] == 25.0
     assert idle["wanted_anim"] == "Idle"
+    assert idle["ground_snap_max_abs_correction_cm"] == 25.0
     assert idle["trajectory_m"] == [[2.0, 0.0, 0.0]] * 6
     assert "rig_direction_check_windows" not in pair["Idle"]
 
