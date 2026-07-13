@@ -32,6 +32,17 @@ def parse_argv():
     p.add_argument("--width", type=int, default=640)
     p.add_argument("--height", type=int, default=480)
     p.add_argument("--view", default="side", choices=["side", "front", "quarter"])
+    p.add_argument(
+        "--camera-distance-multiplier",
+        type=float,
+        default=2.0,
+        help="Camera distance as a multiple of the rest-pose mesh diagonal.",
+    )
+    p.add_argument(
+        "--ground-plane",
+        action="store_true",
+        help="Render a neutral floor at the rest-pose mesh minimum Z for foot-contact review.",
+    )
     p.add_argument("--engine", default="BLENDER_EEVEE_NEXT",
                    choices=["BLENDER_EEVEE_NEXT", "CYCLES"])
     return p.parse_args(argv)
@@ -66,8 +77,28 @@ def mesh_bbox(meshes):
     return mn, mx
 
 
+def add_review_ground(center, ground_z, diag):
+    bpy.ops.mesh.primitive_plane_add(
+        size=max(2.0, diag * 4.0),
+        location=(center[0], center[1], ground_z - diag * 0.002),
+    )
+    ground = bpy.context.object
+    ground.name = "FootContactReviewGround"
+    material = bpy.data.materials.new(name="FootContactReviewGroundMaterial")
+    material.diffuse_color = (0.18, 0.20, 0.22, 1.0)
+    material.use_nodes = True
+    principled = material.node_tree.nodes.get("Principled BSDF")
+    principled.inputs["Base Color"].default_value = (0.18, 0.20, 0.22, 1.0)
+    principled.inputs["Roughness"].default_value = 0.85
+    ground.data.materials.append(material)
+    print(f"[ground] z={ground.location.z:.6f} size={max(2.0, diag * 4.0):.3f}", flush=True)
+    return ground
+
+
 def main():
     args = parse_argv()
+    if not 0.75 <= args.camera_distance_multiplier <= 4.0:
+        raise SystemExit("--camera-distance-multiplier must be in [0.75, 4.0]")
     os.makedirs(args.output_dir, exist_ok=True)
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -100,8 +131,10 @@ def main():
     mn, mx = mesh_bbox([body])
     center = [(mn[i] + mx[i]) * 0.5 for i in range(3)]
     diag = math.sqrt(sum((mx[i] - mn[i]) ** 2 for i in range(3)))
-    radius = diag * 2.0
+    radius = diag * args.camera_distance_multiplier
     print(f"[anim] bbox_min={mn} bbox_max={mx} center={center} diag={diag:.3f}", flush=True)
+    if args.ground_plane:
+        add_review_ground(center, mn[2], diag)
 
     light_data = bpy.data.lights.new(name="Sun", type="SUN")
     light_data.energy = 3.0
