@@ -1,0 +1,443 @@
+{
+  "schema": "avengine_controlled_animal_animation_decisions_v1",
+  "animation_review_batch_sha256": "27440332681bf058a1e74dd84bde357663b08ba20d4ebdd9359bc6fb10c6ecca",
+  "reviewer": "codex_visual_review_dogs_20260713_v1",
+  "decisions": [
+    {
+      "asset_id": "dog_beagle_0a76614d1794",
+      "review_sha256": "2f6917db1a28d3092d70c5b40cc5cb5fd1cc88b4484a18e11de23b5f3e40a113",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_beagle_6ec85e21cb1a",
+      "review_sha256": "37023145425dc31be9cea5d7c31e0046425cbe58f61fa2de0d2b20aee4c4a396",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_beagle_832f8beb7390",
+      "review_sha256": "63d513ad00e4a40dd9367fab73dcf845004dad90351d9d506d47b48c55883392",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_beagle_89025fb62895",
+      "review_sha256": "152ca2e937ffa16baaa0d19a3ca34c5ef5515e8f10f2a1ed36f30c0d49de76d2",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_beagle_d66c6da023a6",
+      "review_sha256": "ede1bd9fc73a9650d50b07da88d565c708be7a15601af74ddb09dc652d17dfe6",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_beagle_d7f41615d79a",
+      "review_sha256": "afc61796136620d7fe83025889cf5f9264fab5267d2b16406d36619c10a6c3dc",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_beagle_e115e64f642d",
+      "review_sha256": "98c358a486494e977f4ee876bc4bac21fa97261fe66b079d13cd1502f20b6b89",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_beagle_ea05ea06451c",
+      "review_sha256": "895919e855f4a39288259c5c038bf361d8838ea4393b8b21bcf2a1445637bdce",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_golden_retriever_16a0565ce2c2",
+      "review_sha256": "84635f3f0704e5a32d65edf0bb4b29823b91909b70a72eece49c4eefbac516c6",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_golden_retriever_1b9f983d088f",
+      "review_sha256": "c184ef92d223ebf8129a91bbb2491fa1fcb8a82ba66f2797eb735c9278ee2594",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_golden_retriever_1be26dd2187a",
+      "review_sha256": "24da478cdb6cb04cbb1a3c3f2347eaed6666b0b13929715624e6ea5177c67c5b",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_golden_retriever_3676250e8701",
+      "review_sha256": "276554d6e5caabc17c232939419990f64500995ad247b0439175fb530b28f4c5",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_golden_retriever_75d932515a16",
+      "review_sha256": "81e2cb3ee148da5fc228322c96aa0a501135b4edeec9175270aab37c8968e9f6",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_golden_retriever_9c4b2a916669",
+      "review_sha256": "296c6ea6a018619c551abfa0b2799d814f05d5e65c481508e262719888077bbf",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_golden_retriever_e0d4e598839c",
+      "review_sha256": "3fe3055d40f35b8a8cb389738c725ae89a1947e9a703db863a0ab3bbccbcfbf3",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_golden_retriever_fb2b8b434096",
+      "review_sha256": "bf2d9185f63e70e1d9654ccca9669325e838420988efa446ba39974ffecb6b33",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_golden_retriever_fde797385c48",
+      "review_sha256": "bbaacafbe7198ad9379b18bf46b7dc975ccfbf6aa18452c62938da12f92f953d",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_pug_470318272ad1",
+      "review_sha256": "c076027a5fc70beaed1bb80f8458fe9e71ef8446e019bb5f9040c8b6c0bc71f4",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_pug_6fc8433b8259",
+      "review_sha256": "81b8e824431b41ba87753b7d6dcec517dff62722d6e4dcebb099e65b6bc570e4",
+      "decision": "rejected",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": false
+      },
+      "caveats": [],
+      "notes": "Rejected before UE: multiple detached textured shell fragments remain beside the feet during Walking."
+    },
+    {
+      "asset_id": "dog_pug_76e7f639b73c",
+      "review_sha256": "89689ab8c57d92f632f8210fb0aac23e102cc904de1a540452e76d7b9a70e256",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_pug_8206c63c6dd3",
+      "review_sha256": "b5ff1e8568b176d70b80788dc69a58076156d952ec06346a2f25fbf71b0a6af9",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_pug_b546e1ce75f9",
+      "review_sha256": "c6d0482a1c49c36f3fea6214b03e051267ec5468f5f5a3a3560815aad7a69d2f",
+      "decision": "rejected",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": false
+      },
+      "caveats": [],
+      "notes": "Rejected before UE: a large detached textured shell fragment is clearly visible beside the feet during Walking."
+    },
+    {
+      "asset_id": "dog_pug_b633907db4fb",
+      "review_sha256": "bd8dce3452243334a1f0f4b348ec9399148e42eacc28bdd18063e488319aff3b",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_pug_d7c94280cbf2",
+      "review_sha256": "2d598b15ca4ffa57f1dd287dde0b53dcb6532e99ff220c16e40612768163de5d",
+      "decision": "rejected",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": false
+      },
+      "caveats": [],
+      "notes": "Rejected before UE: a detached textured shell fragment is repeatedly visible beside the rear feet during Walking."
+    },
+    {
+      "asset_id": "dog_pug_e40ada53c463",
+      "review_sha256": "2db330cb3f6620681ef4cb0f8294e05737d1adb296882d1db34c0ce0d9bfcb9d",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    },
+    {
+      "asset_id": "dog_pug_ebc5b721a61e",
+      "review_sha256": "c7a19beba01ce1b4b9bad165a31043034566cc297ee1abf256fcc2be1b562af6",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy"
+      ],
+      "notes": "Walk and Idle preserve forward motion, usable limb articulation, grounded feet and stable body shape; no visually material detached geometry is present."
+    }
+  ]
+}
