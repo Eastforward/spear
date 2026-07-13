@@ -1,7 +1,7 @@
 {
   "schema": "avengine_attribute_profile_v1",
   "profile_schema_id": "cat_tabby_bindpose_v2",
-  "profile_revision": "2026_07_13_v2",
+  "profile_revision": "2026_07_13_v2_1",
   "asset_class": "animal",
   "lineage_group_id": "quaternius_cat_bindpose_10cb33f4",
   "state_classification": "research_candidate",
@@ -39,7 +39,7 @@
     "prompt_template_id": "quadruped_bindpose_i2i_v2",
     "positive_template": "Transform this low-poly template into one photorealistic {size} {life_stage} {breed} {species} with a {body_build} anatomically normal body, a {coat_length} coat in {coat_color} coloration with a {coat_pattern} pattern, {ear_shape} ears, and a {tail_shape} tail.",
     "pose_guard_prompt": "Preserve exactly the neutral quadruped bind pose, level spine, upright separated tail, anatomical joint locations, three-quarter side viewpoint, framing, and plain gray background. All four legs and all four paws must remain visible, separated by background gaps, straight under the body, and planted at the same ground height. This is a static rigging reference, not an action pose.",
-    "negative_prompt": "walking, lifted paw, bent walking hock, crouching, sitting, lying down, merged legs, overlapping paws, hidden paw, extra limb, missing limb, fused tail, colorpoint pattern, cropped body, accessory, background geometry, text",
+    "negative_prompt": "walking, lifted paw, bent walking hock, crouching, sitting, lying down, merged legs, overlapping paws, hidden paw, extra limb, missing limb, second tail, double tail, forked tail, fused tail, colorpoint pattern, cropped body, accessory, background geometry, text",
     "value_labels": {
       "species": {"cat": "cat"},
       "breed": {"domestic_tabby": "domestic tabby"},
