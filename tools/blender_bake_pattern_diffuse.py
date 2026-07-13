@@ -68,6 +68,17 @@ PATTERNS = {
         "band_low":      0.30,
         "band_high":     0.65,
     },
+    # Deterministic beagle-like palette on the stable Quaternius dog
+    # topology.  This is intentionally a coarse semantic paint operation:
+    # the central upper torso is the dark saddle, the head/rear are tan,
+    # and the legs/chest/belly/tail tip stay white.  No geometry, rig, or
+    # skin weights are changed.
+    "beagle_tricolor": {
+        "mode": "beagle_tricolor",
+        "dark_color":  (0.025, 0.020, 0.018),
+        "tan_color":   (0.48, 0.18, 0.045),
+        "white_color": (0.90, 0.87, 0.78),
+    },
 }
 
 
@@ -119,12 +130,34 @@ def bake_diffuse_from_polygons(mesh_obj, size, pattern_spec, output_path):
     # the glb import parented it under a rotation.
     world = mesh_obj.matrix_world
     verts_world = np.array([world @ v.co for v in mesh.vertices], dtype=np.float32)
+    x_vals = verts_world[:, 0]
     z_vals = verts_world[:, 2]
+    x_min, x_max = float(x_vals.min()), float(x_vals.max())
+    x_range = x_max - x_min if x_max > x_min else 1e-6
     z_min, z_max = float(z_vals.min()), float(z_vals.max())
     z_range = z_max - z_min if z_max > z_min else 1e-6
 
     # Precompute per-polygon color
-    def color_for_zfrac(zf):
+    def color_for_point(xf, zf):
+        if pattern_spec.get("mode") == "beagle_tricolor":
+            dark = np.array(pattern_spec["dark_color"])
+            tan = np.array(pattern_spec["tan_color"])
+            white = np.array(pattern_spec["white_color"])
+            # Quaternius Dog faces +X.  Keep the lower silhouette white so
+            # all four legs remain visually separated.  Apply a dark saddle
+            # only to the upper central torso; tan identifies the head and
+            # rump while white preserves chest/neck/tail-tip markings.
+            if zf < 0.31:
+                return white
+            if 0.22 <= xf <= 0.68 and 0.40 <= zf <= 0.78:
+                return dark
+            if xf > 0.68 and zf < 0.52:
+                return white
+            if xf < 0.10 and zf > 0.62:
+                return white
+            if xf > 0.68 or xf < 0.25:
+                return tan
+            return white
         band_low = pattern_spec["band_low"]
         band_high = pattern_spec["band_high"]
         top = np.array(pattern_spec["top_color"])
@@ -155,9 +188,12 @@ def bake_diffuse_from_polygons(mesh_obj, size, pattern_spec, output_path):
     face_colors = []
     for poly in mesh.polygons:
         zs = [verts_world[vi, 2] for vi in poly.vertices]
+        xs = [verts_world[vi, 0] for vi in poly.vertices]
+        x_mean = float(np.mean(xs))
         z_mean = float(np.mean(zs))
+        xf = (x_mean - x_min) / x_range
         zf = (z_mean - z_min) / z_range
-        face_colors.append(color_for_zfrac(zf))
+        face_colors.append(color_for_point(xf, zf))
 
     # Rasterize each triangle into the UV image using barycentric fill.
     img = np.zeros((size, size, 4), dtype=np.float32)
