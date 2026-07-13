@@ -1,0 +1,254 @@
+{
+  "animation_review_batch_sha256": "58fe7b9004aa12907a1d10db7726c379ec4ee96b3c3a43a6503c964f63768466",
+  "decisions": [
+    {
+      "asset_id": "cat_siamese_bindpose_06763a77c463",
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy",
+        "small_facial_or_whisker_fragments_require_apartment_visibility_review"
+      ],
+      "checks": {
+        "body_stability": true,
+        "detached_geometry_absent": true,
+        "idle_ground_contact": true,
+        "walking_direction": true,
+        "walking_ground_contact": true,
+        "walking_limb_deformation": true
+      },
+      "decision": "approved_for_ue_apartment",
+      "notes": "Walk and Idle preserve forward-facing feline motion, usable limb articulation, practical ground contact and stable body shape. Minor sliding and small facial fragments remain research-candidate caveats.",
+      "review_sha256": "061769f45dc7bf7684d5ba6cb9a8800440c8b117ea14edfc64c6d1ad656aff11"
+    },
+    {
+      "asset_id": "cat_siamese_bindpose_0e10b787fc9e",
+      "caveats": [
+        "elongated_blade_like_hind_feet_during_walk"
+      ],
+      "checks": {
+        "body_stability": true,
+        "detached_geometry_absent": true,
+        "idle_ground_contact": true,
+        "walking_direction": true,
+        "walking_ground_contact": false,
+        "walking_limb_deformation": false
+      },
+      "decision": "rejected",
+      "notes": "Rejected before UE Apartment rendering: Walk frames show visually material lower-limb stretching/fusion or fragments, so feet cannot maintain believable contact even though body direction and Idle remain stable.",
+      "review_sha256": "1cf3d2b0d523cc9c3c44fead4f541bd7cf12eb4eea380934c2f56bbcf7152a06"
+    },
+    {
+      "asset_id": "cat_siamese_bindpose_0e9b1ebde772",
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy",
+        "small_facial_or_whisker_fragments_require_apartment_visibility_review"
+      ],
+      "checks": {
+        "body_stability": true,
+        "detached_geometry_absent": true,
+        "idle_ground_contact": true,
+        "walking_direction": true,
+        "walking_ground_contact": true,
+        "walking_limb_deformation": true
+      },
+      "decision": "approved_for_ue_apartment",
+      "notes": "Walk and Idle preserve forward-facing feline motion, usable limb articulation, practical ground contact and stable body shape. Minor sliding and small facial fragments remain research-candidate caveats.",
+      "review_sha256": "406972f78c908b6fd0d63d6b7b8a532143f4005ab16b46c7f85d822700079b1a"
+    },
+    {
+      "asset_id": "cat_siamese_bindpose_3a6ef0949afd",
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy",
+        "small_facial_or_whisker_fragments_require_apartment_visibility_review"
+      ],
+      "checks": {
+        "body_stability": true,
+        "detached_geometry_absent": true,
+        "idle_ground_contact": true,
+        "walking_direction": true,
+        "walking_ground_contact": true,
+        "walking_limb_deformation": true
+      },
+      "decision": "approved_for_ue_apartment",
+      "notes": "Walk and Idle preserve forward-facing feline motion, usable limb articulation, practical ground contact and stable body shape. Minor sliding and small facial fragments remain research-candidate caveats.",
+      "review_sha256": "7837c62002899e24a193ee8565bb46be767212ae1bca30d7b1079baaf081e429"
+    },
+    {
+      "asset_id": "cat_siamese_bindpose_474e662a3660",
+      "caveats": [
+        "severe_hind_limb_sheet_deformation_during_walk"
+      ],
+      "checks": {
+        "body_stability": true,
+        "detached_geometry_absent": true,
+        "idle_ground_contact": true,
+        "walking_direction": true,
+        "walking_ground_contact": false,
+        "walking_limb_deformation": false
+      },
+      "decision": "rejected",
+      "notes": "Rejected before UE Apartment rendering: Walk frames show visually material lower-limb stretching/fusion or fragments, so feet cannot maintain believable contact even though body direction and Idle remain stable.",
+      "review_sha256": "3b98c2dbae2b0701303890a4569153683cbb550b3e568355fff73ca622ae754e"
+    },
+    {
+      "asset_id": "cat_siamese_bindpose_565ca04a74cf",
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy",
+        "small_facial_or_whisker_fragments_require_apartment_visibility_review"
+      ],
+      "checks": {
+        "body_stability": true,
+        "detached_geometry_absent": true,
+        "idle_ground_contact": true,
+        "walking_direction": true,
+        "walking_ground_contact": true,
+        "walking_limb_deformation": true
+      },
+      "decision": "approved_for_ue_apartment",
+      "notes": "Walk and Idle preserve forward-facing feline motion, usable limb articulation, practical ground contact and stable body shape. Minor sliding and small facial fragments remain research-candidate caveats.",
+      "review_sha256": "1663dbaeead511ab889ac971aa23262c55a1d0df5407d4719c577cc2747cf541"
+    },
+    {
+      "asset_id": "cat_siamese_bindpose_647467e01b24",
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy",
+        "small_facial_or_whisker_fragments_require_apartment_visibility_review"
+      ],
+      "checks": {
+        "body_stability": true,
+        "detached_geometry_absent": true,
+        "idle_ground_contact": true,
+        "walking_direction": true,
+        "walking_ground_contact": true,
+        "walking_limb_deformation": true
+      },
+      "decision": "approved_for_ue_apartment",
+      "notes": "Walk and Idle preserve forward-facing feline motion, usable limb articulation, practical ground contact and stable body shape. Minor sliding and small facial fragments remain research-candidate caveats.",
+      "review_sha256": "5d63b2e1fc7e1b67cd6cffb6dd27ada92b9b2c8e4656d1ec3d45928e6a9e4a93"
+    },
+    {
+      "asset_id": "cat_tabby_bindpose_1176167cb722",
+      "caveats": [
+        "front_limb_collapse_and_detached_underbody_fragments"
+      ],
+      "checks": {
+        "body_stability": true,
+        "detached_geometry_absent": false,
+        "idle_ground_contact": true,
+        "walking_direction": true,
+        "walking_ground_contact": false,
+        "walking_limb_deformation": false
+      },
+      "decision": "rejected",
+      "notes": "Rejected before UE Apartment rendering: Walk frames show visually material lower-limb stretching/fusion or fragments, so feet cannot maintain believable contact even though body direction and Idle remain stable.",
+      "review_sha256": "b5a17a98e5c85abe63bd52f147f52949e0114eac1f8208609c99115f54a85a1a"
+    },
+    {
+      "asset_id": "cat_tabby_bindpose_1a888b9782a1",
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy",
+        "small_facial_or_whisker_fragments_require_apartment_visibility_review"
+      ],
+      "checks": {
+        "body_stability": true,
+        "detached_geometry_absent": true,
+        "idle_ground_contact": true,
+        "walking_direction": true,
+        "walking_ground_contact": true,
+        "walking_limb_deformation": true
+      },
+      "decision": "approved_for_ue_apartment",
+      "notes": "Walk and Idle preserve forward-facing feline motion, usable limb articulation, practical ground contact and stable body shape. Minor sliding and small facial fragments remain research-candidate caveats.",
+      "review_sha256": "454af7402bbeb090f11caa1491cfc4899b3c01d05c3d45ab33a72842821c96eb"
+    },
+    {
+      "asset_id": "cat_tabby_bindpose_20b55b68eee5",
+      "caveats": [
+        "blade_like_limb_stretching_and_unusable_foot_contact"
+      ],
+      "checks": {
+        "body_stability": true,
+        "detached_geometry_absent": true,
+        "idle_ground_contact": true,
+        "walking_direction": true,
+        "walking_ground_contact": false,
+        "walking_limb_deformation": false
+      },
+      "decision": "rejected",
+      "notes": "Rejected before UE Apartment rendering: Walk frames show visually material lower-limb stretching/fusion or fragments, so feet cannot maintain believable contact even though body direction and Idle remain stable.",
+      "review_sha256": "c501c701a972a221a70b1542bfb31ba46ef99838a057a5e11b0787d8b2e2b82e"
+    },
+    {
+      "asset_id": "cat_tabby_bindpose_368b83378705",
+      "caveats": [
+        "severe_forelimb_sheet_deformation_and_detached_fragments"
+      ],
+      "checks": {
+        "body_stability": true,
+        "detached_geometry_absent": false,
+        "idle_ground_contact": true,
+        "walking_direction": true,
+        "walking_ground_contact": false,
+        "walking_limb_deformation": false
+      },
+      "decision": "rejected",
+      "notes": "Rejected before UE Apartment rendering: Walk frames show visually material lower-limb stretching/fusion or fragments, so feet cannot maintain believable contact even though body direction and Idle remain stable.",
+      "review_sha256": "eb34a957e00b92271c6cc7722cab8e8d181fde67a2ff64bf2c46db2d13cd3231"
+    },
+    {
+      "asset_id": "cat_tabby_bindpose_49976f5ff481",
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy",
+        "small_facial_or_whisker_fragments_require_apartment_visibility_review"
+      ],
+      "checks": {
+        "body_stability": true,
+        "detached_geometry_absent": true,
+        "idle_ground_contact": true,
+        "walking_direction": true,
+        "walking_ground_contact": true,
+        "walking_limb_deformation": true
+      },
+      "decision": "approved_for_ue_apartment",
+      "notes": "Walk and Idle preserve forward-facing feline motion, usable limb articulation, practical ground contact and stable body shape. Minor sliding and small facial fragments remain research-candidate caveats.",
+      "review_sha256": "802718e113eb1157bea2b8c4b65d6572d5713af1abd49cfdf0d97a376b9edbd1"
+    },
+    {
+      "asset_id": "cat_tabby_bindpose_52573fcf5c40",
+      "caveats": [
+        "minor_foot_sliding_is_accepted_by_current_dataset_policy",
+        "small_facial_or_whisker_fragments_require_apartment_visibility_review"
+      ],
+      "checks": {
+        "body_stability": true,
+        "detached_geometry_absent": true,
+        "idle_ground_contact": true,
+        "walking_direction": true,
+        "walking_ground_contact": true,
+        "walking_limb_deformation": true
+      },
+      "decision": "approved_for_ue_apartment",
+      "notes": "Walk and Idle preserve forward-facing feline motion, usable limb articulation, practical ground contact and stable body shape. Minor sliding and small facial fragments remain research-candidate caveats.",
+      "review_sha256": "3f4f138a5cb8c1bbe9b7b3d25142afc5e244748ceaf211a192ef7290b33d18bd"
+    },
+    {
+      "asset_id": "cat_tabby_bindpose_e33db8279cb8",
+      "caveats": [
+        "persistent_blade_like_leg_membranes_during_walk"
+      ],
+      "checks": {
+        "body_stability": true,
+        "detached_geometry_absent": true,
+        "idle_ground_contact": true,
+        "walking_direction": true,
+        "walking_ground_contact": false,
+        "walking_limb_deformation": false
+      },
+      "decision": "rejected",
+      "notes": "Rejected before UE Apartment rendering: Walk frames show visually material lower-limb stretching/fusion or fragments, so feet cannot maintain believable contact even though body direction and Idle remain stable.",
+      "review_sha256": "6542a6f5674110fff7f85910d5010d006f560f88a9ea34b2de99688b77e05776"
+    }
+  ],
+  "reviewer": "codex_visual_review_cat_bindpose_v2_20260713_r2",
+  "schema": "avengine_controlled_animal_animation_decisions_v1"
+}
+
