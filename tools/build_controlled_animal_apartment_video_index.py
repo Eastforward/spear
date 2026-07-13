@@ -44,6 +44,7 @@ def _atomic_text(path: Path, payload: str) -> None:
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, path)
+    os.chmod(path, 0o644)
 
 
 def _link(target: Path, label: str) -> str:
@@ -97,7 +98,7 @@ def _action_cell(
     links = [_link(path, label) for label, path in paths.items()]
     links.append(_link(registry_path, "Registry"))
     paths["Registry"] = registry_path
-    return "✅ " + " · ".join(links), True, paths
+    return "📼 " + " · ".join(links), True, paths
 
 
 def _build_review_html(entries: list[dict], output_path: Path) -> None:
@@ -120,6 +121,7 @@ def _build_review_html(entries: list[dict], output_path: Path) -> None:
     header { padding: 18px; border-bottom: 1px solid #273043; }
     h1 { font-size: 18px; margin: 0 0 6px; }
     .summary { color: #99a4b7; font-size: 13px; }
+    .links { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 10px; }
     .filters { display: grid; gap: 8px; padding: 12px; border-bottom: 1px solid #273043; }
     input, select { width: 100%; color: #e7eaf0; background: #171e2b; border: 1px solid #303b50; border-radius: 8px; padding: 9px 10px; }
     .filter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -131,6 +133,7 @@ def _build_review_html(entries: list[dict], output_path: Path) -> None:
     .clip-meta { margin-top: 4px; color: #99a4b7; font-size: 12px; }
     main { min-width: 0; overflow: auto; padding: 24px; }
     .stage { max-width: 1380px; margin: 0 auto; }
+    .warning { color: #ffdce2; background: #421922; border: 1px solid #a33a4e; border-radius: 10px; padding: 12px; margin-bottom: 14px; line-height: 1.5; }
     .title-row { display: flex; gap: 12px; justify-content: space-between; align-items: start; }
     h2 { margin: 0; font-size: 21px; overflow-wrap: anywhere; }
     .subhead { color: #99a4b7; margin-top: 5px; }
@@ -163,6 +166,7 @@ def _build_review_html(entries: list[dict], output_path: Path) -> None:
       <header>
         <h1>受控动物视频审核</h1>
         <div class="summary" id="summary"></div>
+        <div class="links"><a class="button" href="/">先做猫狗方向纠正</a><a class="button" href="/docs/rocketbox_human_video_review.html">人类视频</a></div>
       </header>
       <div class="filters">
         <input id="search" type="search" placeholder="搜索 asset / 品种 / 属性">
@@ -180,6 +184,7 @@ def _build_review_html(entries: list[dict], output_path: Path) -> None:
     </aside>
     <main>
       <div class="stage" id="stage">
+        <div class="warning"><b>这些是旧的诊断成片，不是方向通过结果。</b>用户已判定猫 Walking 斜跑、狗 Walking 后退/斜跑；原来的骨骼自动方向检查已失效。请先在“猫狗方向纠正”页保存可见朝向，重新绑定并通过直线 + 转弯动态 canary 后，才能恢复动作通过状态。</div>
         <div class="title-row">
           <div><h2 id="asset-title"></h2><div class="subhead" id="asset-subhead"></div></div>
           <div class="nav"><button class="button" id="previous">← 上一个</button><button class="button" id="next">下一个 →</button></div>
@@ -359,6 +364,11 @@ def build_video_index(
         "该文档由 `external/SPEAR/tools/build_controlled_animal_apartment_video_index.py` "
         "从认证 spec/registry 自动生成。稳定入口包括带标注审核、UE 主视图、同步 "
         "Top-down、双耳音频和叫声事件 schedule。",
+        "",
+        "> **方向状态（2026-07-13）：旧 Walking 已被用户视觉审核拒绝。** "
+        "猫存在斜跑、狗存在后退/斜跑；下表的 `📼` 只表示媒体与 Registry 文件完整，"
+        "不表示方向或动画重新通过。必须先通过 `http://127.0.0.1:8102/` 的可见朝向审核，"
+        "再重新绑定并验证直线 + 转弯动态 canary。旧资产和视频保持不覆盖，作为失败诊断证据。",
         "",
         f"- 更新时间：`{datetime.now(timezone.utc).isoformat()}`",
         f"- 动物实例：**{len(records)}**",
