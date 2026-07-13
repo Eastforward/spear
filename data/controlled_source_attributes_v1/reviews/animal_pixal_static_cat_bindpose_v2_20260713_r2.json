@@ -1,0 +1,315 @@
+{
+  "decisions": [
+    {
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding",
+        "minor_paw_height_variation_requires_animation_grounding_review"
+      ],
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "no_large_holes": true,
+        "pose_riggable": true,
+        "texture_coherent": true
+      },
+      "decision": "approved_for_lod_and_binding",
+      "instance_id": "cat_siamese_bindpose_06763a77c463",
+      "notes": "Neutral single-tail Siamese quadruped has a complete silhouette, four visually separable limbs, and coherent controlled appearance. Minor facial fragments and paw-height variation are deferred to cleanup plus animation grounding QA; metric size remains unproven.",
+      "review_sha256": "e0038892c31d568868aaa5049293369ff74188e911fb89cf659623d93a9bf8ac"
+    },
+    {
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding",
+        "minor_paw_height_variation_requires_animation_grounding_review"
+      ],
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "no_large_holes": true,
+        "pose_riggable": true,
+        "texture_coherent": true
+      },
+      "decision": "approved_for_lod_and_binding",
+      "instance_id": "cat_siamese_bindpose_0e10b787fc9e",
+      "notes": "Neutral single-tail Siamese quadruped has a complete silhouette, four visually separable limbs, and coherent controlled appearance. Minor facial fragments and paw-height variation are deferred to cleanup plus animation grounding QA; metric size remains unproven.",
+      "review_sha256": "54279000f975d623db9a5f1ddb30001fc3cc140bae222f63410b2de450e29e00"
+    },
+    {
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding",
+        "minor_paw_height_variation_requires_animation_grounding_review"
+      ],
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "no_large_holes": true,
+        "pose_riggable": true,
+        "texture_coherent": true
+      },
+      "decision": "approved_for_lod_and_binding",
+      "instance_id": "cat_siamese_bindpose_0e9b1ebde772",
+      "notes": "Neutral single-tail Siamese quadruped has a complete silhouette, four visually separable limbs, and coherent controlled appearance. Minor facial fragments and paw-height variation are deferred to cleanup plus animation grounding QA; metric size remains unproven.",
+      "review_sha256": "897fbe69aea746a74c65522ad03b2d8ee847661e5ede0e0e8ff9ca66d863ca09"
+    },
+    {
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding",
+        "minor_paw_height_variation_requires_animation_grounding_review"
+      ],
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "no_large_holes": true,
+        "pose_riggable": true,
+        "texture_coherent": true
+      },
+      "decision": "approved_for_lod_and_binding",
+      "instance_id": "cat_siamese_bindpose_3a6ef0949afd",
+      "notes": "Neutral single-tail Siamese quadruped has a complete silhouette, four visually separable limbs, and coherent controlled appearance. Minor facial fragments and paw-height variation are deferred to cleanup plus animation grounding QA; metric size remains unproven.",
+      "review_sha256": "7c21e6449e2d192b05f22e60e3e5e9b75588700a73b151000a7f43fa2d0adf64"
+    },
+    {
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding",
+        "minor_paw_height_variation_requires_animation_grounding_review"
+      ],
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "no_large_holes": true,
+        "pose_riggable": true,
+        "texture_coherent": true
+      },
+      "decision": "approved_for_lod_and_binding",
+      "instance_id": "cat_siamese_bindpose_474e662a3660",
+      "notes": "Neutral single-tail Siamese quadruped has a complete silhouette, four visually separable limbs, and coherent controlled appearance. Minor facial fragments and paw-height variation are deferred to cleanup plus animation grounding QA; metric size remains unproven.",
+      "review_sha256": "4925c573fbc5810ab00b0eef39f840b6acc865954944ca5a5852a8eb905829ac"
+    },
+    {
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding",
+        "minor_paw_height_variation_requires_animation_grounding_review"
+      ],
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "no_large_holes": true,
+        "pose_riggable": true,
+        "texture_coherent": true
+      },
+      "decision": "approved_for_lod_and_binding",
+      "instance_id": "cat_siamese_bindpose_565ca04a74cf",
+      "notes": "Neutral single-tail Siamese quadruped has a complete silhouette, four visually separable limbs, and coherent controlled appearance. Minor facial fragments and paw-height variation are deferred to cleanup plus animation grounding QA; metric size remains unproven.",
+      "review_sha256": "d5dd0dba1011df627f882bf48b117ca6b0cda86f07b9269fb0b22a53292bbb1d"
+    },
+    {
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding",
+        "minor_paw_height_variation_requires_animation_grounding_review"
+      ],
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "no_large_holes": true,
+        "pose_riggable": true,
+        "texture_coherent": true
+      },
+      "decision": "approved_for_lod_and_binding",
+      "instance_id": "cat_siamese_bindpose_647467e01b24",
+      "notes": "Neutral single-tail Siamese quadruped has a complete silhouette, four visually separable limbs, and coherent controlled appearance. Minor facial fragments and paw-height variation are deferred to cleanup plus animation grounding QA; metric size remains unproven.",
+      "review_sha256": "cef606fec541bf294dbf37c4568f6eff8f08b98cbc3143c1cc93253ef7394a57"
+    },
+    {
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding",
+        "minor_paw_height_variation_requires_animation_grounding_review"
+      ],
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "no_large_holes": true,
+        "pose_riggable": true,
+        "texture_coherent": true
+      },
+      "decision": "approved_for_lod_and_binding",
+      "instance_id": "cat_tabby_bindpose_1176167cb722",
+      "notes": "Neutral single-tail tabby quadruped has a complete silhouette, four visually separable limbs, and coherent controlled appearance. Minor facial fragments and paw-height variation are deferred to cleanup plus animation grounding QA; metric size remains unproven.",
+      "review_sha256": "8cb3159d54d529cf1d75072395a3fc1709b07c5999fad41e3a210d8cbf083526"
+    },
+    {
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding",
+        "minor_paw_height_variation_requires_animation_grounding_review"
+      ],
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "no_large_holes": true,
+        "pose_riggable": true,
+        "texture_coherent": true
+      },
+      "decision": "approved_for_lod_and_binding",
+      "instance_id": "cat_tabby_bindpose_1a888b9782a1",
+      "notes": "Neutral single-tail tabby quadruped has a complete silhouette, four visually separable limbs, and coherent controlled appearance. Minor facial fragments and paw-height variation are deferred to cleanup plus animation grounding QA; metric size remains unproven.",
+      "review_sha256": "5e0fe6221ed25b76beac34687c6354b947ad20c2992f34070aa73575174916a8"
+    },
+    {
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding",
+        "minor_paw_height_variation_requires_animation_grounding_review"
+      ],
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "no_large_holes": true,
+        "pose_riggable": true,
+        "texture_coherent": true
+      },
+      "decision": "approved_for_lod_and_binding",
+      "instance_id": "cat_tabby_bindpose_20b55b68eee5",
+      "notes": "Neutral single-tail tabby quadruped has a complete silhouette, four visually separable limbs, and coherent controlled appearance. Minor facial fragments and paw-height variation are deferred to cleanup plus animation grounding QA; metric size remains unproven.",
+      "review_sha256": "0448c7b1e2cac70c3ce173623bdb31922d70f55418dac0d7a68bc340d505c215"
+    },
+    {
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding",
+        "minor_paw_height_variation_requires_animation_grounding_review"
+      ],
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "no_large_holes": true,
+        "pose_riggable": true,
+        "texture_coherent": true
+      },
+      "decision": "approved_for_lod_and_binding",
+      "instance_id": "cat_tabby_bindpose_368b83378705",
+      "notes": "Neutral single-tail tabby quadruped has a complete silhouette, four visually separable limbs, and coherent controlled appearance. Minor facial fragments and paw-height variation are deferred to cleanup plus animation grounding QA; metric size remains unproven.",
+      "review_sha256": "26a693584e16d12c5482f697e01f3b3e01b7e49d3b558bb161bdf26ebc5693f5"
+    },
+    {
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding",
+        "minor_paw_height_variation_requires_animation_grounding_review"
+      ],
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "no_large_holes": true,
+        "pose_riggable": true,
+        "texture_coherent": true
+      },
+      "decision": "approved_for_lod_and_binding",
+      "instance_id": "cat_tabby_bindpose_49976f5ff481",
+      "notes": "Neutral single-tail tabby quadruped has a complete silhouette, four visually separable limbs, and coherent controlled appearance. Minor facial fragments and paw-height variation are deferred to cleanup plus animation grounding QA; metric size remains unproven.",
+      "review_sha256": "3eb26bbe86587f8b62fcab5e9793b98fb2bef64d019ed6f600bb37791fa082db"
+    },
+    {
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding",
+        "minor_paw_height_variation_requires_animation_grounding_review"
+      ],
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "no_large_holes": true,
+        "pose_riggable": true,
+        "texture_coherent": true
+      },
+      "decision": "approved_for_lod_and_binding",
+      "instance_id": "cat_tabby_bindpose_52573fcf5c40",
+      "notes": "Neutral single-tail tabby quadruped has a complete silhouette, four visually separable limbs, and coherent controlled appearance. Minor facial fragments and paw-height variation are deferred to cleanup plus animation grounding QA; metric size remains unproven.",
+      "review_sha256": "b51ed188a8abfd8ead8297f001e13687595aa60d99048c322bf2b298dfde3aff"
+    },
+    {
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding",
+        "minor_paw_height_variation_requires_animation_grounding_review"
+      ],
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "no_large_holes": true,
+        "pose_riggable": true,
+        "texture_coherent": true
+      },
+      "decision": "approved_for_lod_and_binding",
+      "instance_id": "cat_tabby_bindpose_e33db8279cb8",
+      "notes": "Neutral single-tail tabby quadruped has a complete silhouette, four visually separable limbs, and coherent controlled appearance. Minor facial fragments and paw-height variation are deferred to cleanup plus animation grounding QA; metric size remains unproven.",
+      "review_sha256": "b9b522651a7cb0b2237361d8b3e7f6af37c0570960f53e374a15bb0b37ff4608"
+    }
+  ],
+  "schema": "avengine_controlled_animal_static_decisions_v1",
+  "static_review_batch_sha256": "ab49e6b49536274d9facded90091c22b4dfcca38f0605a0091526e01c9ca21d0"
+}
+
