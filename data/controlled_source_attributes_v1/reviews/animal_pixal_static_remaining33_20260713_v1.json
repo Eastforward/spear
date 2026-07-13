@@ -1,0 +1,676 @@
+{
+  "schema": "avengine_controlled_animal_static_decisions_v1",
+  "static_review_batch_sha256": "48a08de55f87e135c4b66bb715be671b1a8299fab494d864ae74e01b504be758",
+  "decisions": [
+    {
+      "instance_id": "cat_siamese_1de0658f6971",
+      "review_sha256": "87010e02b5f2c4f77afdc44d3b8929bcf7363c0876538ec4aef71fa1e3316e40",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding"
+      ],
+      "notes": "Complete Siamese quadruped with separated limbs and coherent seal_point; small facial fragments require cleanup before binding and metric size remains unproven."
+    },
+    {
+      "instance_id": "cat_siamese_3b7c6f79dabb",
+      "review_sha256": "9b23edeb372f46e0ca50bd5cca4a4efe3ed9fc105fd7c2aebe420f1e4ccc48bf",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding"
+      ],
+      "notes": "Complete Siamese quadruped with separated limbs and coherent blue_point; small facial fragments require cleanup before binding and metric size remains unproven."
+    },
+    {
+      "instance_id": "cat_siamese_40c6cd290615",
+      "review_sha256": "82fd597302fe7d4f8ba50f90664471b7cee3f8853cfb68655fd7259da8e558bd",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding"
+      ],
+      "notes": "Complete Siamese quadruped with separated limbs and coherent chocolate_point; small facial fragments require cleanup before binding and metric size remains unproven."
+    },
+    {
+      "instance_id": "cat_siamese_713e118a0040",
+      "review_sha256": "14400f602cdc9706c512bcb232e1c78832c75560c70c3a954bbb0b43f0229d01",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding"
+      ],
+      "notes": "Complete Siamese quadruped with separated limbs and coherent seal_point; small facial fragments require cleanup before binding and metric size remains unproven."
+    },
+    {
+      "instance_id": "cat_siamese_96e2f65e76e1",
+      "review_sha256": "6da349be7c64d731519f60380bcbcbefae0aa459edf8c77a021d66841ad15f9a",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding"
+      ],
+      "notes": "Complete Siamese quadruped with separated limbs and coherent chocolate_point; small facial fragments require cleanup before binding and metric size remains unproven."
+    },
+    {
+      "instance_id": "cat_siamese_c1e6bc51e288",
+      "review_sha256": "3aa3d2c1de8855b30158e4c2b991c681c7c178e01625e3d8b2ee0d1c831cc183",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding"
+      ],
+      "notes": "Complete Siamese quadruped with separated limbs and coherent chocolate_point; small facial fragments require cleanup before binding and metric size remains unproven."
+    },
+    {
+      "instance_id": "cat_siamese_ed51d4597757",
+      "review_sha256": "51577e687753794be097b0263f621cc4747ad8a62605a056c785a4db9859220d",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding"
+      ],
+      "notes": "Complete Siamese quadruped with separated limbs and coherent seal_point; small facial fragments require cleanup before binding and metric size remains unproven."
+    },
+    {
+      "instance_id": "cat_tabby_5b99f1a8fee1",
+      "review_sha256": "f29bb8f021237fe41276d96e592aabd7e8de99137af30867518d800c3be89e5c",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding"
+      ],
+      "notes": "Complete brown_tabby tabby with separated limbs and a usable stocky silhouette; metric size remains unproven."
+    },
+    {
+      "instance_id": "cat_tabby_9d57436e349c",
+      "review_sha256": "4352d8a0b8e1ec2fa0ecae46e29bbb3309ce1d836e724741543deed78f4dd85f",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding"
+      ],
+      "notes": "Complete silver_tabby tabby with separated limbs and a usable standard silhouette; metric size remains unproven."
+    },
+    {
+      "instance_id": "cat_tabby_b0bacc6c3a0d",
+      "review_sha256": "3d77df31719bbc81d5f43e1d9b6c802fc1c0df3dcde7d50878f73c46cd9eab47",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding"
+      ],
+      "notes": "Complete silver_tabby tabby with separated limbs and a usable stocky silhouette; metric size remains unproven."
+    },
+    {
+      "instance_id": "cat_tabby_dad42cb8d3b3",
+      "review_sha256": "1dbf240223041b52f752cadf9cdb2cf00efc2f542999e8d9a13a7dd3c07b6b01",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding"
+      ],
+      "notes": "Complete orange_tabby tabby with separated limbs and a usable standard silhouette; metric size remains unproven."
+    },
+    {
+      "instance_id": "cat_tabby_f788e92d1360",
+      "review_sha256": "7bb0aff6514ce5fba5cd5b1b4b40256f8335d3e674ba54569e5a95c8940e9f9c",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_whisker_fragments_must_be_removed_or_excluded_before_binding"
+      ],
+      "notes": "Complete orange_tabby tabby with separated limbs and a usable slim silhouette; metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_beagle_0a76614d1794",
+      "review_sha256": "0609f44922085069abb1bb08aa5edada41b56ca4565b4b79f632fbdda27798f5",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_tone": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [],
+      "notes": "Complete beagle with separated limbs, continuous primary tail, and coherent dark_tricolor texture; metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_beagle_832f8beb7390",
+      "review_sha256": "d1f7f281c32054f95ecf1bd35c7d050a1a81e08c8619a13b4da923e26bd5547d",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_tone": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [],
+      "notes": "Complete beagle with separated limbs, continuous primary tail, and coherent standard_tricolor texture; metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_beagle_d66c6da023a6",
+      "review_sha256": "96c8e0d25a176661de747826851ac8432890c8d055bd5e7d3cb1270f418edb7e",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_tone": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "small_detached_tail_tip_fragment_must_be_removed_before_binding"
+      ],
+      "notes": "Complete beagle body and continuous primary tail; one small detached tail-tip fragment must be deleted before binding, while metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_beagle_d7f41615d79a",
+      "review_sha256": "a8460d8d1f878113e0f44dbd77d4fae87e407f85edd8400e819fa27d1a5b0886",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_tone": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [],
+      "notes": "Complete beagle with separated limbs, continuous primary tail, and coherent dark_tricolor texture; metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_beagle_e115e64f642d",
+      "review_sha256": "0b87edea37a94609cc0894b90c0641b250f5c13ad25c74c5655905b041e3e9fb",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_tone": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [],
+      "notes": "Complete beagle with separated limbs, continuous primary tail, and coherent dark_tricolor texture; metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_beagle_ea05ea06451c",
+      "review_sha256": "2499bb929c534433f34bc41e1b77eb3cb1df833e455550b241e903f244992795",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_tone": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [],
+      "notes": "Complete beagle with separated limbs, continuous primary tail, and coherent light_tricolor texture; metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_beagle_fcea77a333db",
+      "review_sha256": "28c69d79c32c5504fa2b49761edd3afec07864a24b68f7baeccc32e8c8930816",
+      "decision": "rejected",
+      "checks": {
+        "complete_silhouette": false,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": false,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "failed_static_visual",
+        "coat_tone": "failed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "large_detached_tail_section",
+        "must_not_enter_lod_or_binding"
+      ],
+      "notes": "Rejected: the body keeps a short attached tail while a second large white tail section floats beside it; this is not a bindable complete silhouette."
+    },
+    {
+      "instance_id": "dog_golden_retriever_16a0565ce2c2",
+      "review_sha256": "96dc848f5ab99e5c174bd6d4c62ece13d0ee1c89ed407610ccf0f376b375dcbe",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "layered_fur_fins_require_post_lod_and_deformation_recheck"
+      ],
+      "notes": "Complete golden golden retriever with separated limbs; layered fur geometry is accepted only for the next research gate and metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_golden_retriever_1be26dd2187a",
+      "review_sha256": "38cbccf378caf7c2378b824ca48ff60b020586bcda6c44c2b4b174b660051e70",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "layered_fur_fins_require_post_lod_and_deformation_recheck"
+      ],
+      "notes": "Complete golden golden retriever with separated limbs; layered fur geometry is accepted only for the next research gate and metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_golden_retriever_3676250e8701",
+      "review_sha256": "b2ae6b3996827f45ead4680203870434edb04a0825dc70f6e7e977d86b5b4812",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "layered_fur_fins_require_post_lod_and_deformation_recheck"
+      ],
+      "notes": "Complete light_golden golden retriever with separated limbs; layered fur geometry is accepted only for the next research gate and metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_golden_retriever_75d932515a16",
+      "review_sha256": "8c4556fcef1e00c2fe5a1c02f1f224da3fc9efda8c1becaa70c5e9a93cecf51e",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "layered_fur_fins_require_post_lod_and_deformation_recheck"
+      ],
+      "notes": "Complete light_golden golden retriever with separated limbs; layered fur geometry is accepted only for the next research gate and metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_golden_retriever_e0d4e598839c",
+      "review_sha256": "0c2728f301bcaffbc265bcba0ad5c7b69fed203e8b03e72985cc0c97bb4fd5d7",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "layered_fur_fins_require_post_lod_and_deformation_recheck"
+      ],
+      "notes": "Complete dark_golden golden retriever with separated limbs; layered fur geometry is accepted only for the next research gate and metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_golden_retriever_fb2b8b434096",
+      "review_sha256": "a6c297df335e5c49c3e35d9ce2378f10e7a1bf256b32aad1f9076b5bc3733ea0",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "layered_fur_fins_require_post_lod_and_deformation_recheck"
+      ],
+      "notes": "Complete golden golden retriever with separated limbs; layered fur geometry is accepted only for the next research gate and metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_golden_retriever_fde797385c48",
+      "review_sha256": "16a384645879dfa627a3dd2c76b01dd5285c613e9e103750f5f61a24bad6f59f",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "layered_fur_fins_require_post_lod_and_deformation_recheck"
+      ],
+      "notes": "Complete light_golden golden retriever with separated limbs; layered fur geometry is accepted only for the next research gate and metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_pug_470318272ad1",
+      "review_sha256": "03972f809a505471281055e6d3066c3d7b3bfd1917c00eea71a7f838cae088c1",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [],
+      "notes": "Complete apricot pug with separated limbs and a usable standard silhouette; metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_pug_6fc8433b8259",
+      "review_sha256": "10e5bd11582d56962d9af3ed224e22af9f41ef659548887bab330b329f3e3e29",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [],
+      "notes": "Complete light_fawn pug with separated limbs and a usable standard silhouette; metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_pug_76e7f639b73c",
+      "review_sha256": "6be7c7f1071f21341da00e5daecc1bd93ef86a65652a199a625cbbabfbbdda89",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [],
+      "notes": "Complete apricot pug with separated limbs and a usable slim silhouette; metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_pug_8206c63c6dd3",
+      "review_sha256": "5cf563b158dba0c798ce82a23216453d1436a410c463b08378323712ca2760cd",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [],
+      "notes": "Complete fawn pug with separated limbs and a usable standard silhouette; metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_pug_d7c94280cbf2",
+      "review_sha256": "7bf8b98ab825982aa6590de53f395be54223fc185a3cd06f0c5ec57beea85670",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [],
+      "notes": "Complete light_fawn pug with separated limbs and a usable slim silhouette; metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_pug_e40ada53c463",
+      "review_sha256": "c706e0292b1146b75545604e1805a7d3b14504313add89c6e666e0dbba6ee847",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [],
+      "notes": "Complete fawn pug with separated limbs and a usable stocky silhouette; metric size remains unproven."
+    },
+    {
+      "instance_id": "dog_pug_ebc5b721a61e",
+      "review_sha256": "9d61027b5fbafd1087fd5d5d36dbf018e4f1c55c837958109b88380ac8c808fd",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [],
+      "notes": "Complete light_fawn pug with separated limbs and a usable slim silhouette; metric size remains unproven."
+    }
+  ]
+}
