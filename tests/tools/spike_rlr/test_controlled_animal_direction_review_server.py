@@ -83,9 +83,14 @@ def test_review_state_is_transform_only_and_decision_is_immutable(
         "_validate_manifest",
         lambda _path: (manifest, {entry["asset_id"]: entry}),
     )
-    monkeypatch.setattr(
-        server, "_load_preview_mesh", lambda _path: trimesh.creation.box()
-    )
+    load_count = 0
+
+    def fake_load(_path):
+        nonlocal load_count
+        load_count += 1
+        return trimesh.creation.box()
+
+    monkeypatch.setattr(server, "_load_preview_mesh", fake_load)
 
     def fake_render(_mesh, destination, *, yaw_deg, max_points=45_000):
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -111,6 +116,7 @@ def test_review_state_is_transform_only_and_decision_is_immutable(
     )
     assert rotated.status_code == 200
     assert rotated.get_json()["yaw_deg"] == 180
+    assert load_count == 1
 
     decided = client.post(
         "/api/decision/dog_fixture",
@@ -173,7 +179,7 @@ def test_rejection_requires_a_note(tmp_path, monkeypatch):
     assert "note" in response.get_json()["error"]
 
 
-def test_approval_requires_all_manual_pose_checks(tmp_path, monkeypatch):
+def test_approval_records_optional_pose_hints_without_blocking(tmp_path, monkeypatch):
     entry = _entry()
     manifest = {
         "schema": server.MANIFEST_SCHEMA,
@@ -203,8 +209,17 @@ def test_approval_requires_all_manual_pose_checks(tmp_path, monkeypatch):
             },
         },
     )
-    assert response.status_code == 409
-    assert "manual pose checks" in response.get_json()["error"]
+    assert response.status_code == 200
+    decision = json.loads(
+        (tmp_path / "state/decisions/dog_fixture.json").read_text(encoding="utf-8")
+    )
+    assert decision["manual_pose_checks_are_advisory"] is True
+    assert decision["manual_pose_checks"] == {
+        "all_paws_share_one_ground_plane": True,
+        "front_and_hind_legs_share_consistent_planes": False,
+        "head_is_aligned_with_torso": True,
+        "spine_is_straight": True,
+    }
 
 
 def test_new_canary_entry_can_omit_apartment_media_from_video_tabs():
@@ -247,3 +262,12 @@ def test_page_labels_cardinal_choice_as_current_direction_not_ninety_degrees():
     assert "姿势合格并保存当前方向" in html
     assert "$('approve').textContent=`姿势合格并保存当前方向（${yaw}°）`" in html
     assert "保存当前整90°方向" not in html
+
+
+def test_page_marks_pose_checks_optional_and_prefetches_neighbor_previews():
+    html = server.HTML
+
+    assert "可选检查提示（不勾选也能保存）" in html
+    assert "四项源姿势检查必须全部人工确认" not in html
+    assert "prefetchNeighbors" in html
+    assert "历史失败动画，仅供定位" in html
