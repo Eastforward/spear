@@ -171,6 +171,47 @@ def load_profiles(inputs: Sequence[Path]) -> list[dict[str, Any]]:
         if isinstance(payload, dict) and payload.get("schema") == contracts.PROFILE_SCHEMA:
             profiles.append(contracts.validate_attribute_profile(payload))
             continue
+        if isinstance(payload, dict) and payload.get("schema") == PROFILE_SNAPSHOT_SCHEMA:
+            entries = payload.get("profiles")
+            if (
+                not isinstance(entries, list)
+                or not entries
+                or payload.get("snapshot_sha256")
+                != hashlib.sha256(
+                    contracts.canonical_json(
+                        {
+                            key: value
+                            for key, value in payload.items()
+                            if key != "snapshot_sha256"
+                        }
+                    ).encode("utf-8")
+                ).hexdigest()
+            ):
+                raise contracts.ContractError(
+                    f"profile snapshot hash/records are invalid: {path}"
+                )
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise contracts.ContractError(
+                        f"profile snapshot entry is invalid: {path}"
+                    )
+                profile = contracts.validate_attribute_profile(entry.get("profile"))
+                if (
+                    entry.get("profile_schema_id") != profile["profile_schema_id"]
+                    or entry.get("profile_sha256")
+                    != contracts.profile_sha256(profile)
+                    or not isinstance(entry.get("artifact_authentication"), list)
+                    or any(
+                        not isinstance(record, dict)
+                        or record.get("status") != "passed"
+                        for record in entry["artifact_authentication"]
+                    )
+                ):
+                    raise contracts.ContractError(
+                        f"profile snapshot entry hash/authentication is invalid: {path}"
+                    )
+                profiles.append(profile)
+            continue
         # Directories may contain README support JSON or unrelated manifests;
         # fail closed instead of silently ignoring an unexpected contract.
         raise contracts.ContractError(

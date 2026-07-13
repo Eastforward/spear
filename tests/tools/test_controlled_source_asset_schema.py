@@ -10,6 +10,7 @@ import pytest
 
 from tools import controlled_source_asset_schema as schema
 from tools import build_controlled_source_dataset as dataset_builder
+from tools import build_controlled_source_asset_inputs as input_builder
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -715,6 +716,35 @@ def test_realized_size_pair_is_removed_when_metric_order_contradicts_label():
     pairs = schema.build_instance_qa_pairs(assets, {profile["profile_schema_id"]: profile})
 
     assert pairs == []
+
+
+def test_profile_loader_accepts_frozen_snapshot_and_rejects_changed_payload(tmp_path):
+    profile = animal_profile()
+    snapshot = input_builder.build_profile_snapshot(
+        [profile],
+        {
+            profile["profile_schema_id"]: [
+                {
+                    "role": "base_template",
+                    "root_id": "fixture_root",
+                    "path": "reference.png",
+                    "sha256": "a" * 64,
+                    "size_bytes": 1,
+                    "status": "passed",
+                }
+            ]
+        },
+    )
+    path = tmp_path / "profile_snapshot.json"
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    loaded = input_builder.load_profiles([path])
+
+    assert loaded == [schema.validate_attribute_profile(profile)]
+    snapshot["profiles"][0]["profile"]["profile_revision"] = "changed"
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    with pytest.raises(schema.ContractError, match="snapshot"):
+        input_builder.load_profiles([path])
 
 
 def test_cli_publishes_normalized_requests_jobs_and_qa_without_overwrite(tmp_path):
