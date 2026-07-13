@@ -1,0 +1,110 @@
+{
+  "schema": "avengine_stable_animal_ue_selection_v1",
+  "selection_id": "stable_animal_ue_batch_remaining11_v1_20260714",
+  "usage_scope": "research_candidate",
+  "human_visual_review": "pending",
+  "formal_dataset_registration_authorized": false,
+  "scale_policy": "actor_scale = target visible height in metres / audited GLB Z extent; packaged UE bounds remain authoritative",
+  "audio_policy": "Use a species-matched licensed dataset recording when present; use explicit silence instead of a wrong-species substitute",
+  "selections": [
+    {
+      "template_id": "quaternius_ultimate_alpaca_v1",
+      "species": "alpaca",
+      "breed": "alpaca",
+      "actor_scale": 0.306,
+      "audio_lookup": "silent",
+      "audio_source_height_offset_m": 1.35,
+      "scale_rationale": "5.3976 m template extent at 0.306 targets about 1.65 m visible height; no authenticated alpaca call is currently available, so audio remains explicitly silent."
+    },
+    {
+      "template_id": "quaternius_ultimate_bull_v1",
+      "species": "cattle_bovinae",
+      "breed": "bull",
+      "actor_scale": 0.316,
+      "audio_lookup": "cattle_moo",
+      "audio_source_height_offset_m": 1.2,
+      "scale_rationale": "4.5867 m template extent at 0.316 targets about 1.45 m visible height."
+    },
+    {
+      "template_id": "quaternius_ultimate_cow_v1",
+      "species": "cattle_bovinae",
+      "breed": "cow",
+      "actor_scale": 0.294,
+      "audio_lookup": "cattle_moo",
+      "audio_source_height_offset_m": 1.1,
+      "scale_rationale": "4.5867 m template extent at 0.294 targets about 1.35 m visible height."
+    },
+    {
+      "template_id": "quaternius_ultimate_deer_v1",
+      "species": "deer",
+      "breed": "deer",
+      "actor_scale": 0.304,
+      "audio_lookup": "deer_call",
+      "audio_source_height_offset_m": 1.05,
+      "scale_rationale": "4.2741 m template extent at 0.304 targets about 1.30 m visible height."
+    },
+    {
+      "template_id": "quaternius_ultimate_donkey_v1",
+      "species": "donkey_ass",
+      "breed": "donkey",
+      "actor_scale": 0.291,
+      "audio_lookup": "silent",
+      "audio_source_height_offset_m": 0.9,
+      "scale_rationale": "3.9538 m template extent at 0.291 targets about 1.15 m visible height; no authenticated donkey call is currently available, so audio remains explicitly silent."
+    },
+    {
+      "template_id": "quaternius_ultimate_fox_v1",
+      "species": "fox",
+      "breed": "red_fox",
+      "actor_scale": 0.168,
+      "audio_lookup": "fox_call",
+      "audio_source_height_offset_m": 0.35,
+      "scale_rationale": "2.6767 m template extent at 0.168 targets about 0.45 m visible height."
+    },
+    {
+      "template_id": "quaternius_ultimate_horse_white_v1",
+      "species": "horse",
+      "breed": "white_horse",
+      "actor_scale": 0.332,
+      "audio_lookup": "horse_neigh",
+      "audio_source_height_offset_m": 1.3,
+      "scale_rationale": "4.8239 m template extent at 0.332 targets about 1.60 m visible height."
+    },
+    {
+      "template_id": "quaternius_ultimate_horse_v1",
+      "species": "horse",
+      "breed": "bay_horse",
+      "actor_scale": 0.332,
+      "audio_lookup": "horse_neigh",
+      "audio_source_height_offset_m": 1.3,
+      "scale_rationale": "4.8239 m template extent at 0.332 targets about 1.60 m visible height."
+    },
+    {
+      "template_id": "quaternius_ultimate_shibainu_v1",
+      "species": "dog",
+      "breed": "shiba_inu",
+      "actor_scale": 0.136,
+      "audio_lookup": "dog_sharp_bark",
+      "audio_source_height_offset_m": 0.35,
+      "scale_rationale": "3.0956 m template extent at 0.136 targets about 0.42 m visible height."
+    },
+    {
+      "template_id": "quaternius_ultimate_stag_v1",
+      "species": "deer",
+      "breed": "stag",
+      "actor_scale": 0.347,
+      "audio_lookup": "deer_call",
+      "audio_source_height_offset_m": 1.2,
+      "scale_rationale": "4.1825 m template extent at 0.347 targets about 1.45 m visible height including antlers."
+    },
+    {
+      "template_id": "quaternius_ultimate_wolf_v1",
+      "species": "wolf",
+      "breed": "gray_wolf",
+      "actor_scale": 0.28,
+      "audio_lookup": "wolf_howl",
+      "audio_source_height_offset_m": 0.62,
+      "scale_rationale": "2.6810 m template extent at 0.280 targets about 0.75 m visible height."
+    }
+  ]
+}

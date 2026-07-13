@@ -1,7 +1,11 @@
 import hashlib
 import json
+from pathlib import Path
 
 from tools.prepare_stable_animal_ue_jobs import build_jobs, prepare
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _artifact(path):
@@ -93,3 +97,35 @@ def test_prepare_publishes_non_overwriting_authenticated_jobs(tmp_path):
         registry_path.read_bytes()
     ).hexdigest()
     assert (output / "ue_import_preparation_manifest.json").is_file()
+
+
+def test_remaining_native_batch_selection_is_bounded_and_explicit():
+    selection = json.loads(
+        (
+            REPO_ROOT
+            / "data/controlled_source_attributes_v1/"
+            "stable_animal_ue_batch_remaining11_v1.json"
+        ).read_text(encoding="utf-8")
+    )
+    records = selection["selections"]
+
+    assert selection["usage_scope"] == "research_candidate"
+    assert selection["human_visual_review"] == "pending"
+    assert selection["formal_dataset_registration_authorized"] is False
+    assert len(records) == 11
+    assert len({item["template_id"] for item in records}) == 11
+    assert "quaternius_ultimate_husky_v1" not in {
+        item["template_id"] for item in records
+    }
+    assert {item["audio_lookup"] for item in records} >= {
+        "cattle_moo",
+        "deer_call",
+        "fox_call",
+        "horse_neigh",
+        "wolf_howl",
+        "silent",
+    }
+    for item in records:
+        assert 0.01 <= item["actor_scale"] <= 1.0
+        assert 0.05 <= item["audio_source_height_offset_m"] <= 3.0
+        assert item["scale_rationale"]

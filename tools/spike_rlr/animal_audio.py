@@ -40,12 +40,52 @@ _AUDIO_BY_LOOKUP = {
         "species": "cat",
         "path": Path("/data/datasets/cy/omniloc/train/audio/cat purring/-A1eKkZVSRw_000070.mp3"),
     },
+    "cattle_moo": {
+        "species": "cattle_bovinae",
+        "path": Path(
+            "/data/datasets/omniaudio/train-data-az-360-large/"
+            "Herd Of Cows Mooing_315.wav"
+        ),
+    },
+    "deer_call": {
+        "species": "deer",
+        "path": Path(
+            "/data/datasets/omniaudio/train-data-az-360-large/"
+            "rutting deer 1_72.wav"
+        ),
+    },
+    "fox_call": {
+        "species": "fox",
+        "path": Path(
+            "/data/datasets/omniaudio/train-data-az-360-large/"
+            "Foxes, West Ham Cemetary 2.3.09 (high pass)_206.wav"
+        ),
+    },
+    "horse_neigh": {
+        "species": "horse",
+        "path": Path(
+            "/data/datasets/omniaudio/train-data-az-360-large/"
+            "20090501.horse.neigh_168.wav"
+        ),
+    },
+    "wolf_howl": {
+        "species": "wolf",
+        "path": Path(
+            "/data/datasets/cy/omniloc/train/audio/dog howling/"
+            "6WIPUATvzL4_000001.mp3"
+        ),
+    },
 }
 
 
 _FALLBACK_LOOKUP_BY_SPECIES = {
     "dog": "dog_bark",
     "cat": "cat_meow",
+    "cattle_bovinae": "cattle_moo",
+    "deer": "deer_call",
+    "fox": "fox_call",
+    "horse": "horse_neigh",
+    "wolf": "wolf_howl",
 }
 
 _ANIMAL_TAG_PREFIXES = (
@@ -59,6 +99,10 @@ _ANIMAL_TAG_PREFIXES = (
     "cattle_bovinae",
     "yak",
     "donkey_ass",
+    "alpaca",
+    "deer",
+    "fox",
+    "wolf",
 )
 
 _TECHNICAL_TAG_NAMESPACES = (

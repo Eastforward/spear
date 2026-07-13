@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
 
@@ -39,6 +41,28 @@ def test_stable_namespace_preserves_animal_species_detection():
     tag = "stable_dog_husky_quaternius_ultimate_husky_v1"
     assert species_for_tag(tag) == "dog"
     assert is_animal_tag(tag)
+
+
+@pytest.mark.parametrize(
+    ("tag", "lookup", "expected_species"),
+    [
+        ("stable_cattle_bovinae_cow_native", "cattle_moo", "cattle_bovinae"),
+        ("stable_deer_stag_native", "deer_call", "deer"),
+        ("stable_fox_red_fox_native", "fox_call", "fox"),
+        ("stable_horse_bay_native", "horse_neigh", "horse"),
+        ("stable_wolf_gray_wolf_native", "wolf_howl", "wolf"),
+    ],
+)
+def test_stable_native_species_resolve_to_species_matched_real_audio(
+    tag, lookup, expected_species
+):
+    from animal_audio import resolve_animal_audio_path, species_for_tag
+
+    path = Path(resolve_animal_audio_path(tag, lookup))
+
+    assert species_for_tag(tag) == expected_species
+    assert path.is_file()
+    assert not path.name.startswith("__")
 
 
 def test_explicit_audio_path_wins():
