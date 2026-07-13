@@ -1,0 +1,277 @@
+{
+  "schema": "avengine_controlled_animal_2d_review_decisions_v1",
+  "flux2_batch_sha256": "0eb9430d9032d4971588ec4209262ec6876669ba24fd2fb654de1140c9b0c210",
+  "reviewer": "codex_visual_review_bindpose_v2_20260713_r2",
+  "decisions": [
+    {
+      "instance_id": "cat_siamese_bindpose_06763a77c463",
+      "candidate_sha256": "1f19ec78e70bf70c7908e8b43bb0aa4847acf07082aae7f96d5a3e43a73435c4",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "point_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Complete recognizable Siamese cat with one tail, four visible separated paws planted on one ground plane, coherent blue_point coat, and a clean background; semantic size awaits metric 3D scaling."
+    },
+    {
+      "instance_id": "cat_siamese_bindpose_0e10b787fc9e",
+      "candidate_sha256": "03b0a54af86c767a190f708e218b79f3fc95bcb3d92acf348ec24e0343eb47ea",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "point_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Complete recognizable Siamese cat with one tail, four visible separated paws planted on one ground plane, coherent chocolate_point coat, and a clean background; semantic size awaits metric 3D scaling."
+    },
+    {
+      "instance_id": "cat_siamese_bindpose_0e9b1ebde772",
+      "candidate_sha256": "127502d05c13193d249c4fdd56a606cde2d28c29b51a49e8b06a10ebd82c6e60",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "point_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Complete recognizable Siamese cat with one tail, four visible separated paws planted on one ground plane, coherent chocolate_point coat, and a clean background; semantic size awaits metric 3D scaling."
+    },
+    {
+      "instance_id": "cat_siamese_bindpose_3a6ef0949afd",
+      "candidate_sha256": "97812705132ea625731b6768b21bd33c64e672827b4ec0ced8ede64dafd3da4b",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "point_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Complete recognizable Siamese cat with one tail, four visible separated paws planted on one ground plane, coherent blue_point coat, and a clean background; semantic size awaits metric 3D scaling."
+    },
+    {
+      "instance_id": "cat_siamese_bindpose_474e662a3660",
+      "candidate_sha256": "e8e36198caba5c6af58d6241fb3b42110e960388d0341bd0f05ea66a67ac3082",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "point_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Complete recognizable Siamese cat with one tail, four visible separated paws planted on one ground plane, coherent seal_point coat, and a clean background; semantic size awaits metric 3D scaling."
+    },
+    {
+      "instance_id": "cat_siamese_bindpose_565ca04a74cf",
+      "candidate_sha256": "d53b7c8692ab100d319066e8b8d4ed527b247179166318958e083725c7d2721b",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "point_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Complete recognizable Siamese cat with one tail, four visible separated paws planted on one ground plane, coherent seal_point coat, and a clean background; semantic size awaits metric 3D scaling."
+    },
+    {
+      "instance_id": "cat_siamese_bindpose_5f8eb46faa84",
+      "candidate_sha256": "2fdf9813852f1a419f91e62a851e827bb2912c7b6cea2799f4e902c665407302",
+      "decision": "rejected",
+      "species_breed": "passed",
+      "anatomy": "rejected",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "point_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Rejected before Pixal3D: the candidate has one upright tail plus a second complete horizontal tail."
+    },
+    {
+      "instance_id": "cat_siamese_bindpose_647467e01b24",
+      "candidate_sha256": "7c6ed023b93722d6dc80fd114191961ef18fca95b4019190aa170df771eb80da",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "point_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Complete recognizable Siamese cat with one tail, four visible separated paws planted on one ground plane, coherent blue_point coat, and a clean background; semantic size awaits metric 3D scaling."
+    },
+    {
+      "instance_id": "cat_siamese_bindpose_913fadeeb913",
+      "candidate_sha256": "8b087b836dd7b3180b5dec45733d7e2c0a0ccd765e1042f29a9b54860d6a9197",
+      "decision": "rejected",
+      "species_breed": "passed",
+      "anatomy": "rejected",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "point_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Rejected before Pixal3D: the candidate has one upright tail plus a second complete horizontal tail."
+    },
+    {
+      "instance_id": "cat_tabby_bindpose_1176167cb722",
+      "candidate_sha256": "bbd3ed4d03b101a096a06e2019fd8847bf8193ab607c7d9e6c08e8b55be3b89c",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Complete recognizable tabby cat with one tail, four visible separated paws planted on one ground plane, coherent orange_tabby coat, and a clean background; semantic size awaits metric 3D scaling."
+    },
+    {
+      "instance_id": "cat_tabby_bindpose_1a888b9782a1",
+      "candidate_sha256": "82654ffb99a8b650b96663fe76c39848f1f6e9565fefdc9d8856d3c79d0f8ab4",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Complete recognizable tabby cat with one tail, four visible separated paws planted on one ground plane, coherent silver_tabby coat, and a clean background; semantic size awaits metric 3D scaling."
+    },
+    {
+      "instance_id": "cat_tabby_bindpose_20b55b68eee5",
+      "candidate_sha256": "64f8fd53ec38eb99b31ef1c3cdac3f36cbf84fcec2e05c6b44c70dbdbe1584ad",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Complete recognizable tabby cat with one tail, four visible separated paws planted on one ground plane, coherent brown_tabby coat, and a clean background; semantic size awaits metric 3D scaling."
+    },
+    {
+      "instance_id": "cat_tabby_bindpose_368b83378705",
+      "candidate_sha256": "c5729e45e32d71b1e5cb45625f29fae2e3afd4de548c8631db22067a1e135b0f",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Complete recognizable tabby cat with one tail, four visible separated paws planted on one ground plane, coherent brown_tabby coat, and a clean background; semantic size awaits metric 3D scaling."
+    },
+    {
+      "instance_id": "cat_tabby_bindpose_49976f5ff481",
+      "candidate_sha256": "3c79d5f7b27595db4fa2151bc026e936c02f1aed016a1be55254b9f84eb5c23d",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Complete recognizable tabby cat with one tail, four visible separated paws planted on one ground plane, coherent orange_tabby coat, and a clean background; semantic size awaits metric 3D scaling."
+    },
+    {
+      "instance_id": "cat_tabby_bindpose_52573fcf5c40",
+      "candidate_sha256": "386b2fa90d3d0e997255fd5c8b6a54d4f633bb9eb40ca8ff742a4c96ee400272",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Complete recognizable tabby cat with one tail, four visible separated paws planted on one ground plane, coherent orange_tabby coat, and a clean background; semantic size awaits metric 3D scaling."
+    },
+    {
+      "instance_id": "cat_tabby_bindpose_55b487f9fe5c",
+      "candidate_sha256": "d66d04f9e75625a739d630492156dcdad748a162b12ec3abd0832087a7bafddc",
+      "decision": "rejected",
+      "species_breed": "passed",
+      "anatomy": "rejected",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Rejected before Pixal3D: the candidate has one upright tail plus a second complete horizontal tail."
+    },
+    {
+      "instance_id": "cat_tabby_bindpose_c4c27256a50a",
+      "candidate_sha256": "f525367fafbf699052e0cbf29587d2e3578d3f8a180a4b96edac22f381c82074",
+      "decision": "rejected",
+      "species_breed": "passed",
+      "anatomy": "rejected",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Rejected before Pixal3D: the candidate has one upright tail plus a second complete horizontal tail."
+    },
+    {
+      "instance_id": "cat_tabby_bindpose_e33db8279cb8",
+      "candidate_sha256": "77d6bd63aa9c4cd06ff2dd32e092f79dbe10caee09872ddd916856eb4b999337",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Complete recognizable tabby cat with one tail, four visible separated paws planted on one ground plane, coherent silver_tabby coat, and a clean background; semantic size awaits metric 3D scaling."
+    }
+  ]
+}
