@@ -1,0 +1,156 @@
+{
+  "schema": "avengine_attribute_profile_v1",
+  "profile_schema_id": "rocketbox_adults_male_adult_01_material_v1",
+  "profile_revision": "2026_07_13_v1",
+  "asset_class": "human",
+  "lineage_group_id": "rocketbox_adults_male_adult_01",
+  "state_classification": "research_candidate",
+  "taxonomy": {
+    "species": "human"
+  },
+  "base_template": {
+    "template_id": "rocketbox_adults_male_adult_01",
+    "kind": "rocketbox_avatar",
+    "artifact": {
+      "root_id": "rocketbox_0943055",
+      "path": "Assets/Avatars/Adults/Male_Adult_01/Export/Male_Adult_01.fbx",
+      "sha256": "8d1edb51b4dc3427ae2456f4407fc105532c145dd019e53cd42bab31cc948a29",
+      "size_bytes": 521472
+    },
+    "provenance_status": "verified",
+    "usage_scope": "research_candidate"
+  },
+  "fixed_attributes": {
+    "gender": "male",
+    "life_stage": "adult",
+    "top_geometry": "plaid_short_sleeve_shirt",
+    "bottom_geometry": "shorts",
+    "footwear_geometry": "shoes",
+    "headwear": "absent",
+    "eyewear": "absent",
+    "accessories": "base_locked"
+  },
+  "sampled_attribute_domains": {
+    "top_color": [
+      "blue",
+      "green",
+      "burgundy"
+    ]
+  },
+  "forbidden_combinations": [],
+  "generation_contract": {
+    "route": "rocketbox_material_v1",
+    "material_plan_schema": "rocketbox_material_edit_plan_v1",
+    "material_bindings": {
+      "top_color": {
+        "semantic_mask": "shirt_main_color",
+        "mask_registry": {
+          "root_id": "spear_repo",
+          "path": "tmp/rocketbox_native_material_canary_v1/rocketbox_male_adult_01/shirt_blue_v1/mask_registry.json",
+          "sha256": "eca8683e744d0f23bd61cce5f3fb8000d93e6eb892499df7e3fa22078fe83ec4",
+          "size_bytes": 1620
+        },
+        "source_texture_role": "body_base_color",
+        "operation": "replace_base_color_preserve_pbr_detail_v1",
+        "palette": {
+          "blue": {
+            "srgb_u8": [
+              36,
+              88,
+              207
+            ]
+          },
+          "green": {
+            "srgb_u8": [
+              47,
+              107,
+              69
+            ]
+          },
+          "burgundy": {
+            "srgb_u8": [
+              122,
+              48,
+              69
+            ]
+          }
+        }
+      }
+    },
+    "flux_texture_detail": {
+      "enabled": false,
+      "policy": "approved_mask_optional_only"
+    }
+  },
+  "target_physical_profiles": {
+    "profile_id": "rocketbox_authored_height_v1",
+    "control_attribute": null,
+    "measurement": "authored_height_cm",
+    "mode": "authored",
+    "reference_value_cm": 182.36783742904663,
+    "reference_provenance": {
+      "status": "verified",
+      "source_id": "rocketbox_route1_inventory_v1",
+      "artifact": {
+        "root_id": "spear_repo",
+        "path": "tmp/rocketbox_route1_inventory_v1/inventory.json",
+        "sha256": "56153273ddc13c856cd21bf85c6cb63cc3940121d25a4486004f8c02be9037e8",
+        "size_bytes": 1091562
+      },
+      "notes": "Authored bind-pose height measured by the verified 115-avatar Rocketbox inventory."
+    },
+    "values": {
+      "fixed": {
+        "actor_scale": 1.0,
+        "target_value_cm": 182.36783742904663,
+        "tolerance_cm": 3.0
+      }
+    }
+  },
+  "rig_profile": {
+    "profile_id": "rocketbox_bip01_v1",
+    "skeleton_family": "Bip01",
+    "actions": [
+      "Walking",
+      "Standing_Idle"
+    ],
+    "front_axis": "negative_y"
+  },
+  "acoustic_profile": {
+    "profile_id": "licensed_human_speech_v1",
+    "default_event_class": "speech",
+    "allowed_event_classes": [
+      "speech",
+      "silent"
+    ],
+    "selection_attributes": [
+      "gender",
+      "life_stage"
+    ]
+  },
+  "locked_attributes": [
+    "identity",
+    "body_geometry",
+    "skin",
+    "eyes",
+    "garment_geometry",
+    "headwear",
+    "eyewear",
+    "accessories"
+  ],
+  "qa_contract": {
+    "subject_label": "male adult",
+    "attributes": {
+      "top_color": {
+        "kind": "categorical",
+        "label": "shirt color",
+        "value_labels": {
+          "blue": "blue",
+          "green": "green",
+          "burgundy": "burgundy"
+        },
+        "identification_question": "What is the shirt color of {instance_label}?"
+      }
+    }
+  }
+}
