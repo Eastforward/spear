@@ -194,6 +194,7 @@ def build_pair(
     actor_scale = round(float(profile["base_actor_scale"]) * scale_ratio, 5)
     if not 0.01 <= actor_scale <= 1.0:
         raise contracts.ContractError(f"unsafe controlled animal scale: {actor_scale}")
+    ground_snap_limit_cm = round(max(25.0, actor_scale * 200.0), 3)
 
     walking = copy.deepcopy(template)
     walking["description"] = (
@@ -219,12 +220,11 @@ def build_pair(
             "walking_forward_yaw_offset_deg": 0.0,
             "animation_play_rate": 1.0,
             "ground_snap_to_floor": True,
-            # Pixal animal assets can retain a mesh-origin offset slightly above
-            # 20 cm after breed/instance scaling.  Keep the measured correction
-            # in runtime evidence, but allow a small margin over the old 20 cm
-            # sanity gate so sub-millimetre threshold crossings do not reject an
-            # otherwise grounded clip.
-            "ground_snap_max_abs_correction_cm": 25.0,
+            # Pixal animal assets retain a mesh-origin offset that scales with
+            # the actor. Keep every correction in runtime evidence, but use a
+            # scale-aware sanity limit so a valid large pug is not rejected by
+            # a fixed threshold intended for a smaller cat.
+            "ground_snap_max_abs_correction_cm": ground_snap_limit_cm,
             "audio_lookup": profile["audio_lookup"],
             "audio_source_height_offset_m": profile["audio_height_m"] * scale_ratio,
             "adaptive_repeat_short_calls": True,

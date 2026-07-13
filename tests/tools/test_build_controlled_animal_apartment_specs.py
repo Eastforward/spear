@@ -76,6 +76,7 @@ def test_large_golden_scale_is_breed_base_times_ratio():
         "animal_scale_rationale"
     ]
     assert source["actor_scale"] == 0.143
+    assert source["ground_snap_max_abs_correction_cm"] == 28.6
     assert source["breed"] == "golden_retriever"
     assert source["audio_lookup"] == "dog_bark"
     assert rationale["base_actor_scale"] == PROFILE["dog_golden_retriever_v1"][
