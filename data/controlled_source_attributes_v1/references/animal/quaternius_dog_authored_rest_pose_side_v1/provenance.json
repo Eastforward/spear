@@ -1,0 +1,47 @@
+{
+  "schema": "avengine_controlled_reference_provenance_v1",
+  "reference_id": "quaternius_dog_authored_rest_pose_side_v1",
+  "state_classification": "research_candidate",
+  "reference": {
+    "path": "data/controlled_source_attributes_v1/references/animal/quaternius_dog_authored_rest_pose_side_v1/frame_0000.png",
+    "sha256": "ef8e640b9f4d8d08cd58cf6513eddc04a9857e3a6ead75f4a98275728c244ef4",
+    "size_bytes": 1035204,
+    "canvas": [1024, 1024]
+  },
+  "source_rig": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/quaternius_animalpack/Dog.glb",
+    "sha256": "bf9d2fdaf74a36be453edf4516a0b13b042cfce2d2614e0bf3ee24d40d553032",
+    "size_bytes": 143692,
+    "pose": "authored_armature_rest_pose"
+  },
+  "license_snapshot": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/README.md",
+    "sha256": "5887c71ec9a300997bee4445def8f4fb9014ea4e09b36522c1efb9b8eb3a5aef",
+    "size_bytes": 1347,
+    "declared_license": "CC0-1.0",
+    "upstream_url": "https://quaternius.com/packs/animatedanimals.html"
+  },
+  "render": {
+    "spear_base_revision": "ffc52c340d8a6c3fda3c750da989be3a7f229813",
+    "renderer_path": "tools/blender_render_glb_animation.py",
+    "renderer_sha256": "32eea4cc1ff3de0923664b168507564e4d0b3c99430ecc64e7047a059e592626",
+    "blender_version": "4.2.1 LTS",
+    "parameters": {
+      "rest_pose": true,
+      "orthographic": true,
+      "view": "side",
+      "width": 1024,
+      "height": 1024,
+      "n_frames": 1,
+      "camera_distance_multiplier": 1.5,
+      "ground_plane": true
+    }
+  },
+  "usage": {
+    "purpose": "license-authenticated canonical pose template for FLUX.2 dog appearance generation",
+    "pose_contract": "orthographic side view of the authored rest pose; head-neck-spine axis and planted paws are visible before image generation",
+    "formal_dataset_registration_authorized": false
+  }
+}

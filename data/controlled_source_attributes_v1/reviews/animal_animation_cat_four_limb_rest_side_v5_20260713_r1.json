@@ -1,0 +1,24 @@
+{
+  "schema": "avengine_controlled_animal_animation_decisions_v1",
+  "animation_review_batch_sha256": "23c73ab8241ce8ba17fc052bcc71d80b1d9727785acf0ba356a155cb22e24010",
+  "reviewer": "codex_visual_review_2026_07_13",
+  "decisions": [
+    {
+      "asset_id": "cat_tabby_four_limb_rest_side_3a1ecde08179",
+      "review_sha256": "1332b2acb8c5b179ac05b3dd77061fcf6425e7f6d877388654e3a0ffc9b41039",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "Approval covers the isolated Cat-rig Walking/Idle review; Unreal trajectory, collision, audio, and apartment occlusion remain separate downstream gates."
+      ],
+      "notes": "Walking side/front and Idle side media show forward-consistent orientation, stable torso/head alignment, alternating quadruped motion, grounded paws, no backward or sideways gait, no detached geometry, and no visible collapse."
+    }
+  ]
+}

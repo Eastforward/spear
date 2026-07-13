@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Interactive, non-destructive controlled-animal direction review server.
+"""Manual source-pose and cardinal-direction review for controlled animals.
 
-This is the Hunyuan-style manual correction gate for the controlled Pixal
-animals.  It renders a disposable 100k pre-bind preview after the pipeline's
-existing X mirror, lets a reviewer adjust only the remaining yaw, and writes a
-small transform decision.  It never rewrites a GLB, registry, historical
-decision, or historical video.
+The gate deliberately performs no automatic orientation inference and applies
+no hidden mirror.  A reviewer first rejects malformed source poses (twisted
+torso, turned head, inconsistent leg planes, or floating paws), then chooses
+only a cardinal whole-mesh yaw for a source pose that is visually valid.  It
+never rewrites a GLB, registry, historical decision, or historical video.
 """
 
 from __future__ import annotations
@@ -41,17 +41,23 @@ AVENGINE_ROOT = SPEAR_ROOT.parents[1]
 DEFAULT_MANIFEST = (
     SPEAR_ROOT
     / "tmp/controlled_source_asset_execution_v1/"
-    "controlled_animal_direction_revalidation_v1_20260713/review_manifest.json"
+    "controlled_animal_pose_direction_manual_review_v2_20260713/review_manifest.json"
 )
 DEFAULT_STATE_ROOT = (
     SPEAR_ROOT
     / "tmp/controlled_source_asset_execution_v1/"
-    "controlled_animal_direction_review_state_v1_20260713"
+    "controlled_animal_pose_direction_review_state_v2_20260713"
 )
-MANIFEST_SCHEMA = "controlled_animal_direction_revalidation_manifest_v1"
-STATE_SCHEMA = "controlled_animal_direction_review_state_v1"
-DECISION_SCHEMA = "controlled_animal_geometry_orientation_decision_v1"
-ALLOWED_DELTAS = {-90.0, -15.0, -5.0, 5.0, 15.0, 90.0, 180.0}
+MANIFEST_SCHEMA = "controlled_animal_pose_direction_manual_review_manifest_v2"
+STATE_SCHEMA = "controlled_animal_pose_direction_manual_review_state_v2"
+DECISION_SCHEMA = "controlled_animal_pose_direction_manual_decision_v2"
+ALLOWED_DELTAS = {-90.0, 90.0, 180.0}
+REQUIRED_POSE_CHECKS = (
+    "spine_is_straight",
+    "head_is_aligned_with_torso",
+    "front_and_hind_legs_share_consistent_planes",
+    "all_paws_share_one_ground_plane",
+)
 
 
 class ReviewServerError(RuntimeError):
@@ -130,9 +136,9 @@ def _yaw_matrix_y_up(yaw_deg: float) -> np.ndarray:
     )
 
 
-def _combined_preview_matrix(yaw_deg: float) -> np.ndarray:
-    mirror_x = np.diag([-1.0, 1.0, 1.0])
-    return _yaw_matrix_y_up(yaw_deg) @ mirror_x
+def _manual_preview_matrix(yaw_deg: float) -> np.ndarray:
+    """Return a rotation-only manual preview transform (never a reflection)."""
+    return _yaw_matrix_y_up(yaw_deg)
 
 
 def _load_preview_mesh(path: Path) -> trimesh.Trimesh:
@@ -172,7 +178,7 @@ def _render_orientation_preview(
     import matplotlib.pyplot as plt
 
     vertices = np.asarray(mesh.vertices, dtype=np.float64)
-    vertices = vertices @ _combined_preview_matrix(yaw_deg).T
+    vertices = vertices @ _manual_preview_matrix(yaw_deg).T
     if len(vertices) > max_points:
         indices = np.linspace(0, len(vertices) - 1, max_points, dtype=np.int64)
         vertices = vertices[indices]
@@ -195,7 +201,7 @@ def _render_orientation_preview(
 
     for axis, vertical_index, title, ylabel in (
         (side, 1, "SIDE: animal must stand upright", "+Y UP"),
-        (top, 2, "TOP-DOWN: head must point right", "+Z SIDE"),
+        (top, 2, "TOP-DOWN: torso/spine axis must point right", "+Z SIDE"),
     ):
         horizontal_margin = extent[0] * 0.12
         vertical_margin = extent[vertical_index] * 0.12
@@ -211,7 +217,7 @@ def _render_orientation_preview(
         axis.set_ylabel(ylabel)
         arrow_y = center[vertical_index]
         axis.annotate(
-            "HEAD / +X",
+            "TORSO FORWARD / +X",
             xy=(bounds[1, 0] + horizontal_margin * 0.78, arrow_y),
             xytext=(center[0] + extent[0] * 0.12, arrow_y),
             color="#08752d",
@@ -223,7 +229,7 @@ def _render_orientation_preview(
         axis.text(
             bounds[0, 0] + horizontal_margin * 0.15,
             arrow_y,
-            "TAIL / BACK",
+            "TORSO BACK",
             color="#a12424",
             fontweight="bold",
             ha="left",
@@ -232,8 +238,8 @@ def _render_orientation_preview(
 
     side.axhline(bounds[0, 1], color="#6b7280", linestyle=":", linewidth=1.2)
     fig.suptitle(
-        f"existing mirror-X + reviewer yaw {yaw_deg:+.1f} deg\n"
-        "Adjust yaw until the visible head points to the green +X arrow",
+        f"raw mesh + manual cardinal yaw {yaw_deg:+.0f} deg\n"
+        "Align the TORSO/SPINE axis; never compensate a turned head with fine yaw",
         fontsize=13,
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -262,17 +268,41 @@ def _validate_manifest(path: Path) -> tuple[dict[str, Any], dict[str, dict[str, 
             or asset_id in entries
             or entry.get("species") not in {"cat", "dog"}
             or entry.get("current_evidence_status", {}).get("walking_direction")
-            != "rejected_by_user_visual_review"
+            not in {
+                "rejected_by_user_visual_review",
+                "new_canary_pending_manual_review",
+                "new_canary_animation_rejected",
+                "new_canary_animation_agent_approved_pending_human_review",
+            }
         ):
             raise ReviewServerError("direction review entry identity/status is invalid")
-        for name in (
+        required_artifacts = (
+            "pixal_input_rgba",
             "prebind_lod_glb",
             "static_contact_sheet",
+            "static_top_view",
+        )
+        optional_artifacts = (
             "walking_side",
             "walking_front",
             "idle_side",
             "apartment_walking_review",
-        ):
+            "apartment_walking_main",
+            "apartment_walking_topdown",
+            "apartment_idle_review",
+            "apartment_idle_main",
+            "apartment_idle_topdown",
+            "apartment_spec_manifest",
+            "apartment_batch_status",
+            "pixal_raw_glb",
+            "current_bound_glb",
+        )
+        artifacts = entry.get("artifacts", {})
+        if any(name not in artifacts for name in required_artifacts):
+            raise ReviewServerError("direction review core evidence is incomplete")
+        for name in (*required_artifacts, *optional_artifacts):
+            if name not in artifacts:
+                continue
             record = entry.get("artifacts", {}).get(name, {})
             artifact_path = Path(str(record.get("absolute_path", ""))).resolve()
             try:
@@ -293,8 +323,10 @@ def _validate_manifest(path: Path) -> tuple[dict[str, Any], dict[str, dict[str, 
 def _public_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
     artifact_names = (
         "pixal_raw_glb",
+        "pixal_input_rgba",
         "prebind_lod_glb",
         "static_contact_sheet",
+        "static_top_view",
         "current_bound_glb",
         "walking_side",
         "walking_front",
@@ -302,6 +334,9 @@ def _public_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
         "apartment_walking_review",
         "apartment_walking_main",
         "apartment_walking_topdown",
+        "apartment_idle_review",
+        "apartment_idle_main",
+        "apartment_idle_topdown",
     )
     return {
         "asset_id": entry["asset_id"],
@@ -315,6 +350,7 @@ def _public_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
                 "absolute_path": entry["artifacts"][name]["absolute_path"],
             }
             for name in artifact_names
+            if name in entry["artifacts"]
         },
         "current_evidence_status": entry["current_evidence_status"],
     }
@@ -323,7 +359,7 @@ def _public_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
 HTML = r"""<!doctype html>
 <html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>猫狗方向人工纠正</title>
+<title>猫狗源姿势与整90°方向人工审核</title>
 <style>
 :root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,sans-serif}*{box-sizing:border-box}
 body{margin:0;background:#0b0e14;color:#e7eaf0;height:100vh;overflow:hidden}button,input,select,textarea{font:inherit}
@@ -333,20 +369,20 @@ header{padding:16px;border-bottom:1px solid #273043}h1{font-size:19px;margin:0 0
 .filters{display:grid;gap:8px;padding:10px;border-bottom:1px solid #273043}input,select,textarea{width:100%;color:#e7eaf0;background:#171e2b;border:1px solid #303b50;border-radius:8px;padding:8px}
 #list{overflow:auto;padding:7px}.item{width:100%;text-align:left;color:inherit;background:transparent;border:1px solid transparent;border-radius:9px;padding:9px;cursor:pointer}.item:hover{background:#171e2b}.item.active{background:#1b2940;border-color:#3c6ea8}.item-title{font-size:12px;font-weight:650;overflow-wrap:anywhere}.item-meta{font-size:11px;color:#9aa7ba;margin-top:3px}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;background:#f59e0b}.dot.ok{background:#22c55e}.dot.bad{background:#ef4444}
 main{overflow:auto;padding:20px}.stage{max-width:1450px;margin:auto}.danger{background:#441b22;border:1px solid #9f3446;border-radius:10px;padding:12px;margin-bottom:14px;color:#ffd8df}.title-row{display:flex;justify-content:space-between;gap:12px}h2{font-size:20px;margin:0;overflow-wrap:anywhere}.pills{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}.pill{font-size:12px;border:1px solid #334155;background:#172131;border-radius:999px;padding:4px 8px}
-.grid{display:grid;grid-template-columns:minmax(400px,1.2fr) minmax(330px,1fr);gap:14px}.card{background:#111620;border:1px solid #273043;border-radius:12px;padding:14px}h3{font-size:15px;margin:0 0 8px}.instructions{font-size:13px;color:#ccd6e5;line-height:1.55;margin-bottom:10px}.preview-wrap{background:#fff;border-radius:8px;min-height:380px;display:flex;align-items:center;justify-content:center;overflow:hidden}.preview-wrap img{width:100%;max-height:590px;object-fit:contain}.static img{width:100%;border-radius:8px;background:#05070a}
-.controls{display:grid;grid-template-columns:repeat(7,minmax(44px,1fr));gap:6px;margin-top:9px}.controls button{padding:8px 3px}.yaw{font-family:ui-monospace,monospace;color:#7dd3fc;text-align:center;margin:8px 0}.decision{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.approve{background:#126137;border-color:#1f9d57}.reject{background:#7d2631;border-color:#bd4353}
+.grid{display:grid;grid-template-columns:minmax(430px,1.15fr) minmax(400px,1fr);gap:14px}.card{background:#111620;border:1px solid #273043;border-radius:12px;padding:14px}h3{font-size:15px;margin:0 0 8px}.instructions{font-size:13px;color:#ccd6e5;line-height:1.55;margin-bottom:10px}.preview-wrap{background:#fff;border-radius:8px;min-height:380px;display:flex;align-items:center;justify-content:center;overflow:hidden}.preview-wrap img{width:100%;max-height:590px;object-fit:contain}.static img{width:100%;border-radius:8px;background:#05070a}.evidence-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}.evidence figure{margin:0}.evidence figcaption{font-size:11px;color:#b8c6dc;margin:4px 0 10px}.contact{margin-top:8px}
+.controls{display:grid;grid-template-columns:repeat(4,minmax(70px,1fr));gap:6px;margin-top:9px}.controls button{padding:8px 3px}.yaw{font-family:ui-monospace,monospace;color:#7dd3fc;text-align:center;margin:8px 0}.checks{display:grid;gap:5px;margin-top:10px;padding:9px;border:1px solid #334155;border-radius:8px;background:#0d141f}.checks label{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#d5deeb}.checks input{width:auto;margin-top:2px}.decision{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.approve{background:#126137;border-color:#1f9d57}.reject{background:#7d2631;border-color:#bd4353}
 .video-card{margin-top:14px}.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.tabs button.active{background:#24466e;border-color:#4e83bd}video{width:100%;max-height:560px;background:#000;border-radius:9px}.path{font-size:11px;color:#b8c6dc;white-space:nowrap;overflow:auto;margin-top:7px;padding:7px;background:#0c111a;border-radius:6px}
 .note{margin-top:8px}.nav{display:flex;gap:6px}.status-line{font-size:12px;color:#fbbf24;margin-top:5px}
 @media(max-width:950px){body{height:auto;overflow:auto}.app{display:block;height:auto}aside{height:42vh}.grid{grid-template-columns:1fr}main{padding:12px}.controls{grid-template-columns:repeat(4,1fr)}}
 </style></head><body>
 <script id="assets" type="application/json">{{assets_json|safe}}</script>
-<div class="app"><aside><header><h1>猫狗方向人工纠正</h1><div class="summary">{{asset_count}} 个资产 · 当前 Walking 全部已撤销方向通过状态</div><div class="links"><a class="link" href="/docs/controlled_animal_video_review.html">动物成片</a><a class="link" href="/docs/rocketbox_human_video_review.html">人类视频</a></div></header>
+<div class="app"><aside><header><h1>源姿势 + 整90°方向人工审核</h1><div class="summary">{{asset_count}} 个资产 · 不使用自动方向或细角度补偿</div><div class="links"><a class="link" href="/docs/controlled_animal_video_review.html">动物成片</a><a class="link" href="/docs/rocketbox_human_video_review.html">人类视频</a></div></header>
 <div class="filters"><input id="search" type="search" placeholder="搜索 asset / breed / 属性"><select id="species"><option value="">猫 + 狗</option><option value="cat">猫</option><option value="dog">狗</option></select></div><div id="list"></div></aside>
-<main><div class="stage"><div class="danger"><b>旧结果已拒绝：</b>现有 Walking 的“自动方向通过”仅来自数字骨骼，不能证明可见头尾及移动方向正确。这里的操作只保存下一次绑定要用的方向参数；不会覆盖旧 GLB 或视频。</div>
+<main><div class="stage"><div class="danger"><b>先审源姿势，再审坐标方向：</b>猫的歪头/斜身、比格犬前后脚错轨不能靠 yaw 修复。若躯干、头颈、腿平面或落地任一项不合格，请直接拒绝并回到 2D/Pixal 重生。页面不自动判断方向、不预置 mirror，也不覆盖旧 GLB 或视频。</div>
 <div class="title-row"><div><h2 id="title"></h2><div id="sub" class="muted"></div><div id="status" class="status-line"></div></div><div class="nav"><button class="btn" id="prev">←</button><button class="btn" id="next">→</button></div></div><div id="pills" class="pills"></div>
-<div class="grid"><section class="card"><h3>第一道门：绑定前可见方向（实时调整）</h3><div class="instructions">系统先重放现有 <code>mirror X</code>，再应用下面的 yaw。请让动物<strong style="color:#4ade80">头朝绿色 +X 箭头</strong>、背部朝上。这里只调整绕 UP 的角度，不动源 PBR 模型。</div><div class="preview-wrap"><img id="preview" alt="方向预览"></div><div id="yaw" class="yaw"></div><div class="controls"><button class="btn rot" data-d="-90">↺90</button><button class="btn rot" data-d="-15">−15</button><button class="btn rot" data-d="-5">−5</button><button class="btn" id="reset">重置</button><button class="btn rot" data-d="5">+5</button><button class="btn rot" data-d="15">+15</button><button class="btn rot" data-d="90">↻90</button></div><div class="controls" style="grid-template-columns:1fr"><button class="btn rot" data-d="180">⇄ 头尾翻转 180°</button></div><textarea id="notes" class="note" rows="2" placeholder="可选备注，例如：头仍偏左约 10°"></textarea><div class="decision"><button class="btn approve" id="approve">保存方向（仅批准静态朝向）</button><button class="btn reject" id="reject">拒绝该绑定方向</button></div></section>
-<section class="card static"><h3>原始 PBR / 多视图证据</h3><div class="instructions">这张图不随按钮变化，用来确认当前审核的是同一只动物及其原始外观。右侧实时预览来自认证的 100k 绑定前 LOD。</div><img id="contact" alt="static contact sheet"><div id="rawpath" class="path"></div></section></div>
-<section class="card video-card"><h3>第二道门：绑定后动作与真实移动方向</h3><div class="instructions">以下都是已被你判定方向有问题的旧证据，仅用于定位问题；静态方向保存后仍必须重新绑定并生成直线 + 转弯 canary，不能直接恢复通过状态。</div><div class="tabs" id="tabs"></div><video id="video" controls preload="metadata"></video><div id="videopath" class="path"></div></section>
+<div class="grid"><section class="card"><h3>人工门：源姿势合格后，仅选整90°方向</h3><div class="instructions">预览从<strong>原始 100k mesh、identity 变换</strong>开始。只允许绕 glTF UP 轴旋转 ±90°/180°。请让<strong style="color:#4ade80">躯干/脊柱纵轴朝绿色 +X</strong>；不要追着歪向一边的头调角度，头歪就拒绝源姿势。</div><div class="preview-wrap"><img id="preview" alt="方向预览"></div><div id="yaw" class="yaw"></div><div class="controls"><button class="btn rot" data-d="-90">↺ −90°</button><button class="btn" id="reset">重置 0°</button><button class="btn rot" data-d="90">↻ +90°</button><button class="btn rot" data-d="180">⇄ 180°</button></div><div class="checks"><label><input class="pose-check" id="check-spine" type="checkbox">躯干/脊柱纵轴笔直，没有整体斜扭</label><label><input class="pose-check" id="check-head" type="checkbox">头颈沿躯干方向，没有朝镜头或侧面歪转</label><label><input class="pose-check" id="check-legs" type="checkbox">前后腿轨迹/平面一致，没有像比格当前结果那样错轨</label><label><input class="pose-check" id="check-ground" type="checkbox">四只脚处于同一合理地面，没有悬空</label></div><textarea id="notes" class="note" rows="2" placeholder="拒绝时请写明：歪头 / 躯干斜扭 / 前后脚错轨 / 脚未落地"></textarea><div class="decision"><button class="btn approve" id="approve">姿势合格并保存整90°方向</button><button class="btn reject" id="reject">拒绝源姿势，退回重生</button></div></section>
+<section class="card static evidence"><h3>绑定前原始证据（不随按钮变化）</h3><div class="instructions">左图是进入 Pixal3D 的 2D RGBA，右图是 Pixal 原始 mesh 顶视图。两者用于区分“生成时已经歪”与“后续坐标方向错误”。</div><div class="evidence-pair"><figure><img id="inputref" alt="Pixal input RGBA"><figcaption>Pixal 输入 2D</figcaption></figure><figure><img id="topview" alt="Pixal static top view"><figcaption>Pixal 原始 mesh 顶视图</figcaption></figure></div><img id="contact" class="contact" alt="static contact sheet"><div id="rawpath" class="path"></div></section></div>
+<section class="card video-card"><h3>第二道门：绑定后动作与真实移动方向</h3><div class="instructions">页面同时保留隔离动画证据和已通过批状态认证的 UE Apartment Walk/Idle。请以当前资产的状态标签为准：被拒绝结果只用于定位问题；带 Apartment 标签的结果仍需人工确认方向，不能据此自动注册为正式资产。</div><div class="tabs" id="tabs"></div><video id="video" controls preload="metadata"></video><div id="videopath" class="path"></div></section>
 </div></main></div>
 <script>
 const all=JSON.parse(document.getElementById('assets').textContent);let filtered=[...all],idx=0,state={};const $=x=>document.getElementById(x);
@@ -355,11 +391,12 @@ function current(){return filtered[idx]}
 function apply(){const q=$('search').value.toLowerCase(),s=$('species').value;filtered=all.filter(a=>(!s||a.species===s)&&(!q||(`${a.asset_id} ${a.breed} ${JSON.stringify(a.sampled_attributes)}`).toLowerCase().includes(q)));idx=0;render()}
 function itemStatus(id){return state[id]?.decision?.status||'pending'}
 function renderList(){const list=$('list');list.replaceChildren();filtered.forEach((a,i)=>{const b=document.createElement('button'),st=itemStatus(a.asset_id);b.className='item'+(i===idx?' active':'');b.innerHTML=`<div class="item-title"><span class="dot ${st.includes('approved')?'ok':st.includes('rejected')?'bad':''}"></span></div><div class="item-meta"></div>`;b.querySelector('.item-title').append(a.asset_id);b.querySelector('.item-meta').textContent=`${a.species} · ${a.breed} · ${st}`;b.onclick=()=>{idx=i;render()};list.append(b)})}
-let view='apartment_walking_review';const labels={walking_side:'绑定后 Walk 侧面',walking_front:'绑定后 Walk 正面',idle_side:'绑定后 Idle 侧面',apartment_walking_review:'UE + Top-down 成片',apartment_walking_main:'UE 主视图',apartment_walking_topdown:'Top-down'};
-function render(){renderList();const a=current();if(!a)return;const st=state[a.asset_id]||{yaw_deg:0,revision:0};$('title').textContent=a.asset_id;$('sub').textContent=`${a.species} · ${a.breed} · ${a.profile_schema_id}`;$('status').textContent=`当前 Walking：已拒绝；静态方向：${st.decision?.status||'待审核'}`;$('pills').replaceChildren(...Object.entries(a.sampled_attributes).map(([k,v])=>{const x=document.createElement('span');x.className='pill';x.textContent=`${k}=${v}`;return x}));$('yaw').textContent=`post-mirror yaw = ${st.yaw_deg||0}°`;$('preview').src=`/preview/${encodeURIComponent(a.asset_id)}.png?r=${st.revision||0}`;$('contact').src=a.artifacts.static_contact_sheet.url;$('rawpath').textContent=a.artifacts.pixal_raw_glb.absolute_path;renderVideo();const locked=Boolean(st.decision);document.querySelectorAll('.rot,#reset,#approve,#reject').forEach(x=>x.disabled=locked)}
-function renderVideo(){const a=current();const tabs=$('tabs');tabs.replaceChildren(...Object.keys(labels).map(k=>{const b=document.createElement('button');b.className='btn'+(view===k?' active':'');b.textContent=labels[k];b.onclick=()=>{view=k;renderVideo()};return b}));const m=a.artifacts[view];$('video').src=m.url;$('videopath').textContent=m.absolute_path}
+let view='apartment_walking_review';const labels={walking_side:'绑定后 Walk 侧面',walking_front:'绑定后 Walk 正面',idle_side:'绑定后 Idle 侧面',apartment_walking_review:'UE Walk + Top-down',apartment_walking_main:'UE Walk 主视图',apartment_walking_topdown:'Walk Top-down',apartment_idle_review:'UE Idle + Top-down',apartment_idle_main:'UE Idle 主视图',apartment_idle_topdown:'Idle Top-down'};
+function poseChecks(){return{spine_is_straight:$('check-spine').checked,head_is_aligned_with_torso:$('check-head').checked,front_and_hind_legs_share_consistent_planes:$('check-legs').checked,all_paws_share_one_ground_plane:$('check-ground').checked}}
+function render(){renderList();const a=current();if(!a)return;const st=state[a.asset_id]||{yaw_deg:0,revision:0};$('title').textContent=a.asset_id;$('sub').textContent=`${a.species} · ${a.breed} · ${a.profile_schema_id}`;$('status').textContent=`Walking 证据：${a.current_evidence_status.walking_direction}；源姿势/整90°方向：${st.decision?.status||'待人工审核'}`;$('pills').replaceChildren(...Object.entries(a.sampled_attributes).map(([k,v])=>{const x=document.createElement('span');x.className='pill';x.textContent=`${k}=${v}`;return x}));$('yaw').textContent=`raw mesh + manual cardinal yaw = ${st.yaw_deg||0}°`;$('preview').src=`/preview/${encodeURIComponent(a.asset_id)}.png?r=${st.revision||0}`;$('inputref').src=a.artifacts.pixal_input_rgba.url;$('topview').src=a.artifacts.static_top_view.url;$('contact').src=a.artifacts.static_contact_sheet.url;$('rawpath').textContent=(a.artifacts.pixal_raw_glb||a.artifacts.prebind_lod_glb).absolute_path;document.querySelectorAll('.pose-check').forEach(x=>x.checked=false);renderVideo();const locked=Boolean(st.decision);document.querySelectorAll('.rot,#reset,#approve,#reject,.pose-check').forEach(x=>x.disabled=locked)}
+function renderVideo(){const a=current();const keys=Object.keys(labels).filter(k=>a.artifacts[k]);const tabs=$('tabs');if(!keys.length){tabs.replaceChildren();$('video').removeAttribute('src');$('videopath').textContent='该阶段尚无动画媒体';return}if(!a.artifacts[view])view=keys[0];tabs.replaceChildren(...keys.map(k=>{const b=document.createElement('button');b.className='btn'+(view===k?' active':'');b.textContent=labels[k];b.onclick=()=>{view=k;renderVideo()};return b}));const m=a.artifacts[view];$('video').src=m.url;$('videopath').textContent=m.absolute_path}
 async function post(url,payload={}){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const j=await r.json();if(!r.ok){alert(j.error||'操作失败');throw Error(j.error)}state[j.asset_id]=j;render()}
-document.querySelectorAll('.rot').forEach(b=>b.onclick=()=>post(`/api/rotate/${encodeURIComponent(current().asset_id)}`,{delta_deg:Number(b.dataset.d)}));$('reset').onclick=()=>post(`/api/reset/${encodeURIComponent(current().asset_id)}`);$('approve').onclick=()=>{if(confirm('只保存绑定前朝向参数；旧 Walking 仍保持 rejected。确认？'))post(`/api/decision/${encodeURIComponent(current().asset_id)}`,{status:'geometry_orientation_approved',notes:$('notes').value})};$('reject').onclick=()=>{if(confirm('确认拒绝该绑定前方向？'))post(`/api/decision/${encodeURIComponent(current().asset_id)}`,{status:'geometry_orientation_rejected',notes:$('notes').value||'visible orientation rejected'})};
+document.querySelectorAll('.rot').forEach(b=>b.onclick=()=>post(`/api/rotate/${encodeURIComponent(current().asset_id)}`,{delta_deg:Number(b.dataset.d)}));$('reset').onclick=()=>post(`/api/reset/${encodeURIComponent(current().asset_id)}`);$('approve').onclick=()=>{const checks=poseChecks();if(!Object.values(checks).every(Boolean)){alert('四项源姿势检查必须全部人工确认，才能批准方向。否则请拒绝并重生。');return}if(confirm('确认源姿势合格，并保存当前整90°方向？这只保存人工方向，不会自动注册正式资产。'))post(`/api/decision/${encodeURIComponent(current().asset_id)}`,{status:'source_pose_and_cardinal_orientation_approved',notes:$('notes').value,pose_checks:checks})};$('reject').onclick=()=>{const notes=$('notes').value.trim()||'源姿势失败：头颈、躯干、腿平面或落地至少一项不合格';if(confirm('确认拒绝源姿势并退回 2D/Pixal 重生？'))post(`/api/decision/${encodeURIComponent(current().asset_id)}`,{status:'source_pose_rejected',notes,pose_checks:poseChecks()})};
 $('prev').onclick=()=>{if(filtered.length){idx=(idx-1+filtered.length)%filtered.length;render()}};$('next').onclick=()=>{if(filtered.length){idx=(idx+1)%filtered.length;render()}};$('search').oninput=apply;$('species').oninput=apply;window.onkeydown=e=>{if(e.key==='ArrowLeft')$('prev').click();if(e.key==='ArrowRight')$('next').click()};loadState();
 </script></body></html>"""
 
@@ -413,6 +450,7 @@ def create_app(
                 or base.get("asset_id") != asset_id
                 or base.get("manifest_sha256") != manifest["manifest_sha256"]
                 or not isinstance(base.get("history"), list)
+                or float(base.get("yaw_deg", 1.0)) not in {-90.0, 0.0, 90.0, 180.0}
             ):
                 raise ReviewServerError(f"invalid review state: {asset_id}")
         decision_file = decision_path(asset_id)
@@ -493,7 +531,9 @@ def create_app(
         except (TypeError, ValueError) as error:
             raise ReviewServerError("delta_deg must be numeric") from error
         if delta not in ALLOWED_DELTAS:
-            raise ReviewServerError(f"unsupported yaw delta: {delta}")
+            raise ReviewServerError(
+                f"unsupported yaw delta: {delta}; manual cardinal rotations only"
+            )
         with locks[asset_id]:
             if decision_path(asset_id).exists():
                 raise ReviewServerError("direction decision is already immutable")
@@ -532,17 +572,32 @@ def create_app(
         payload = request.get_json(silent=True) or {}
         status = payload.get("status")
         if status not in {
-            "geometry_orientation_approved",
-            "geometry_orientation_rejected",
+            "source_pose_and_cardinal_orientation_approved",
+            "source_pose_rejected",
         }:
-            raise ReviewServerError("invalid geometry orientation decision")
+            raise ReviewServerError("invalid source-pose/cardinal-direction decision")
         notes = str(payload.get("notes", "")).strip()
-        if status.endswith("rejected") and not notes:
+        pose_checks = payload.get("pose_checks", {})
+        if not isinstance(pose_checks, dict):
+            raise ReviewServerError("pose_checks must be an object")
+        normalized_checks = {
+            name: pose_checks.get(name) is True for name in REQUIRED_POSE_CHECKS
+        }
+        if status == "source_pose_rejected" and not notes:
             raise ReviewServerError("a rejection note is required")
+        if (
+            status == "source_pose_and_cardinal_orientation_approved"
+            and not all(normalized_checks.values())
+        ):
+            raise ReviewServerError(
+                "all manual pose checks must pass before cardinal orientation approval"
+            )
         with locks[asset_id]:
             state = read_state(asset_id)
             yaw_deg = float(state["yaw_deg"])
-            matrix = _combined_preview_matrix(yaw_deg)
+            if yaw_deg not in {-90.0, 0.0, 90.0, 180.0}:
+                raise ReviewServerError("saved yaw is not cardinal")
+            matrix = _manual_preview_matrix(yaw_deg)
             decision: dict[str, Any] = {
                 "schema": DECISION_SCHEMA,
                 "manifest_sha256": manifest["manifest_sha256"],
@@ -555,20 +610,32 @@ def create_app(
                 "source_prebind_lod": copy.deepcopy(
                     entry["artifacts"]["prebind_lod_glb"]
                 ),
-                "existing_binding_pretransform": "mirror_x",
-                "post_mirror_yaw_about_gltf_positive_y_deg": yaw_deg,
-                "combined_preview_matrix_3x3": matrix.tolist(),
+                "source_reference_rgba": copy.deepcopy(
+                    entry["artifacts"]["pixal_input_rgba"]
+                ),
+                "source_static_top_view": copy.deepcopy(
+                    entry["artifacts"]["static_top_view"]
+                ),
+                "automatic_orientation_inference_used": False,
+                "initial_preview_pretransform": "identity",
+                "manual_cardinal_yaw_about_gltf_positive_y_deg": yaw_deg,
+                "manual_rotation_matrix_3x3": matrix.tolist(),
                 "determinant": float(np.linalg.det(matrix)),
+                "manual_pose_checks": normalized_checks,
                 "downstream_candidate": {
-                    "flip_x": True,
-                    "target_rotate_z_deg_after_flip_x": yaw_deg,
-                    "coordinate_mapping_status": "requires_straight_line_ue_canary",
+                    "manual_cardinal_yaw_deg": yaw_deg,
+                    "binding_pretransform": "not_authorized_by_this_visual_gate",
+                    "coordinate_mapping_status": (
+                        "requires_binding_basis_and_straight_line_ue_canary"
+                    ),
                 },
-                "current_walking_media_status": "rejected_by_user_visual_review",
+                "current_walking_media_status": entry["current_evidence_status"][
+                    "walking_direction"
+                ],
                 "next_gate": (
-                    "regenerate_binding_then_straight_line_and_curve_dynamic_direction_canary"
-                    if status.endswith("approved")
-                    else "stop_or_rework_orientation"
+                    "derive_binding_basis_then_straight_line_and_curve_dynamic_canary"
+                    if status == "source_pose_and_cardinal_orientation_approved"
+                    else "regenerate_strict_side_profile_reference_then_pixal_static_review"
                 ),
                 "formal_dataset_registration_authorized": False,
                 "source_assets_modified": False,

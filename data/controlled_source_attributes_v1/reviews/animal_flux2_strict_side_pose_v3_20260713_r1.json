@@ -1,0 +1,37 @@
+{
+  "schema": "avengine_controlled_animal_2d_review_decisions_v1",
+  "flux2_batch_sha256": "42019197c701bc23fc86a0266eec220a27cc88f4d6e6a56403dec0d1619524ac",
+  "reviewer": "codex_visual_review_2026_07_13",
+  "decisions": [
+    {
+      "instance_id": "cat_tabby_side_bindpose_f38f4ed324b8",
+      "candidate_sha256": "a70381a0179d89e88fc8ecd0a8b1c46417752ae5b315157be392a14cec1be35e",
+      "decision": "rejected",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "rejected",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Rejected before Pixal3D: the legacy appearance reference forced a walking-stride cat pose even though the prompt requested a strict side bind pose."
+    },
+    {
+      "instance_id": "dog_beagle_side_bindpose_2bc936e17359",
+      "candidate_sha256": "5ceafef486884f53c11864473b01702cf95d26407a7e47c87a6349886ee64c34",
+      "decision": "rejected",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "rejected",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_tone": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Rejected before Pixal3D: the legacy beagle reference retained a show-dog stacked stance instead of the required neutral four-paw rigging pose."
+    }
+  ]
+}

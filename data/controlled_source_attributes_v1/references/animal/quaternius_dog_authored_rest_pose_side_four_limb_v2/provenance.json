@@ -1,0 +1,51 @@
+{
+  "schema": "avengine_controlled_reference_provenance_v1",
+  "reference_id": "quaternius_dog_authored_rest_pose_side_four_limb_v2",
+  "state_classification": "research_candidate",
+  "reference": {
+    "path": "data/controlled_source_attributes_v1/references/animal/quaternius_dog_authored_rest_pose_side_four_limb_v2/frame_0000.png",
+    "sha256": "f4292dc0bfcadfe001afe41d39a39ef909268d9ea628b16dc2ccc7801c25c97d",
+    "size_bytes": 1038231,
+    "canvas": [1024, 1024]
+  },
+  "source_rig": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/quaternius_animalpack/Dog.glb",
+    "sha256": "bf9d2fdaf74a36be453edf4516a0b13b042cfce2d2614e0bf3ee24d40d553032",
+    "size_bytes": 143692,
+    "pose": "authored_armature_rest_pose_with_deterministic_far_limb_offset"
+  },
+  "license_snapshot": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/README.md",
+    "sha256": "5887c71ec9a300997bee4445def8f4fb9014ea4e09b36522c1efb9b8eb3a5aef",
+    "size_bytes": 1347,
+    "declared_license": "CC0-1.0",
+    "upstream_url": "https://quaternius.com/packs/animatedanimals.html"
+  },
+  "render": {
+    "spear_base_revision": "ffc52c340d8a6c3fda3c750da989be3a7f229813",
+    "renderer_path": "tools/blender_render_glb_animation.py",
+    "renderer_sha256": "51d9df9ac59f65436cc428e11eb3c11a200e210b133ef2fa768d659cfee87f95",
+    "blender_version": "4.2.1 LTS",
+    "parameters": {
+      "rest_pose": true,
+      "orthographic": true,
+      "view": "side",
+      "quadruped_far_limb_offset_ratio": 0.15,
+      "torso_transform": "identity",
+      "camera_yaw_deg": 0,
+      "ground_delta": 0,
+      "width": 1024,
+      "height": 1024,
+      "n_frames": 1,
+      "camera_distance_multiplier": 1.5,
+      "ground_plane": true
+    }
+  },
+  "usage": {
+    "purpose": "license-authenticated four-limb pose template for FLUX.2 dog appearance generation",
+    "pose_contract": "orthographic side torso/head with deterministic fore-aft offsets only on far-side limb chains; all four paws remain grounded",
+    "formal_dataset_registration_authorized": false
+  }
+}

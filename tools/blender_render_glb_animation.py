@@ -27,11 +27,40 @@ def parse_argv():
     p = argparse.ArgumentParser()
     p.add_argument("--input", required=True)
     p.add_argument("--action", default="Walking")
+    p.add_argument(
+        "--rest-pose",
+        action="store_true",
+        help="Render the authored armature rest pose instead of an animation action.",
+    )
+    p.add_argument(
+        "--quadruped-far-limb-offset-ratio",
+        type=float,
+        default=0.0,
+        help=(
+            "For the Quaternius Cat/Dog authored rest pose, translate only the "
+            "far-side front/hind limb chains by this fraction of the hip span "
+            "so four grounded limbs remain visible from an exact side camera."
+        ),
+    )
+    p.add_argument(
+        "--pose-template-clay-color",
+        default=None,
+        help=(
+            "Optional #RRGGBB uniform clay material for a rest-pose image "
+            "template. This also enables smooth polygon shading so source "
+            "material patches and low-poly facets cannot leak into FLUX.2."
+        ),
+    )
     p.add_argument("--output-dir", required=True)
     p.add_argument("--n-frames", type=int, default=12)
     p.add_argument("--width", type=int, default=640)
     p.add_argument("--height", type=int, default=480)
     p.add_argument("--view", default="side", choices=["side", "front", "quarter"])
+    p.add_argument(
+        "--orthographic",
+        action="store_true",
+        help="Use an orthographic camera for canonical pose-template evidence.",
+    )
     p.add_argument(
         "--camera-distance-multiplier",
         type=float,
@@ -95,10 +124,86 @@ def add_review_ground(center, ground_z, diag):
     return ground
 
 
+def parse_hex_color(value):
+    if (
+        not isinstance(value, str)
+        or len(value) != 7
+        or not value.startswith("#")
+    ):
+        raise SystemExit("--pose-template-clay-color must use #RRGGBB")
+    try:
+        channels = tuple(int(value[index:index + 2], 16) / 255.0 for index in (1, 3, 5))
+    except ValueError as error:
+        raise SystemExit("--pose-template-clay-color must use #RRGGBB") from error
+    return (*channels, 1.0)
+
+
+def apply_pose_template_clay_material(body, color):
+    rgba = parse_hex_color(color)
+    material = bpy.data.materials.new(name="PoseTemplateUniformClay")
+    material.diffuse_color = rgba
+    material.use_nodes = True
+    principled = material.node_tree.nodes.get("Principled BSDF")
+    principled.inputs["Base Color"].default_value = rgba
+    principled.inputs["Roughness"].default_value = 0.78
+    body.data.materials.clear()
+    body.data.materials.append(material)
+    for polygon in body.data.polygons:
+        polygon.use_smooth = True
+    print(
+        f"[pose-template] template_material=uniform_clay color={color.lower()} "
+        "smooth_shading=true",
+        flush=True,
+    )
+
+
+def apply_quadruped_far_limb_offset(armature, offset_ratio):
+    """Expose far-side limbs without yawing the torso or the camera.
+
+    Quaternius Cat.glb and Dog.glb share these authored bone names.  The
+    positive-Y limbs are far from the renderer's side camera (located on -Y).
+    Moving the far front chain slightly backward and the far hind chain
+    slightly forward creates a compact neutral rigging stance rather than a
+    walking stride.  The translations contain no Y/Z component: torso/head
+    orientation and every paw's ground height remain unchanged.
+    """
+    names = ("Bone.017", "Bone.008")
+    missing = sorted(set(names) - set(armature.pose.bones.keys()))
+    if missing:
+        raise SystemExit(f"quadruped far-limb bones are missing: {missing}")
+    hip_span = abs(
+        armature.pose.bones["Bone.017"].head.x
+        - armature.pose.bones["Bone.008"].head.x
+    )
+    offset = hip_span * offset_ratio
+    translations = {
+        "Bone.017": -offset,
+        "Bone.008": offset,
+    }
+    for name, delta_x in translations.items():
+        pose_bone = armature.pose.bones[name]
+        pose_bone.matrix = (
+            mathutils.Matrix.Translation((delta_x, 0.0, 0.0)) @ pose_bone.matrix
+        )
+        bpy.context.view_layer.update()
+    print(
+        f"[pose-template] far_limb_offset_ratio={offset_ratio:.4f} "
+        f"hip_span={hip_span:.6f} offset={offset:.6f} "
+        "torso_transform=identity camera_yaw_deg=0 ground_delta=0",
+        flush=True,
+    )
+
+
 def main():
     args = parse_argv()
     if not 0.75 <= args.camera_distance_multiplier <= 4.0:
         raise SystemExit("--camera-distance-multiplier must be in [0.75, 4.0]")
+    if not 0.0 <= args.quadruped_far_limb_offset_ratio <= 0.15:
+        raise SystemExit("--quadruped-far-limb-offset-ratio must be in [0, 0.15]")
+    if args.quadruped_far_limb_offset_ratio and not args.rest_pose:
+        raise SystemExit("--quadruped-far-limb-offset-ratio requires --rest-pose")
+    if args.pose_template_clay_color and not args.rest_pose:
+        raise SystemExit("--pose-template-clay-color requires --rest-pose")
     os.makedirs(args.output_dir, exist_ok=True)
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -118,15 +223,39 @@ def main():
             mesh.hide_viewport = True
             mesh.hide_render = True
     armature = armatures[0]
-    action = choose_action(args.action)
-    armature.animation_data_create()
-    armature.animation_data.action = action
-    start, end = action.frame_range
-    if end <= start:
-        end = start + max(1, args.n_frames - 1)
+    if args.pose_template_clay_color:
+        apply_pose_template_clay_material(body, args.pose_template_clay_color)
+    if args.rest_pose:
+        armature.animation_data_clear()
+        if args.quadruped_far_limb_offset_ratio:
+            armature.data.pose_position = "POSE"
+            for pose_bone in armature.pose.bones:
+                pose_bone.matrix_basis.identity()
+            bpy.context.view_layer.update()
+            apply_quadruped_far_limb_offset(
+                armature, args.quadruped_far_limb_offset_ratio
+            )
+        else:
+            armature.data.pose_position = "REST"
+        action = None
+        action_label = (
+            "authored_rest_pose_with_far_limb_offset"
+            if args.quadruped_far_limb_offset_ratio
+            else "authored_rest_pose"
+        )
+        start = end = 1.0
+    else:
+        action = choose_action(args.action)
+        armature.animation_data_create()
+        armature.animation_data.action = action
+        action_label = action.name
+        start, end = action.frame_range
+        if end <= start:
+            end = start + max(1, args.n_frames - 1)
+    bpy.context.view_layer.update()
     print(f"[anim] body={body.name} hidden_meshes={[m.name for m in meshes if m != body]} "
           f"armature={armature.name} "
-          f"action={action.name} frame_range=({start:.2f}, {end:.2f})", flush=True)
+          f"action={action_label} frame_range=({start:.2f}, {end:.2f})", flush=True)
 
     mn, mx = mesh_bbox([body])
     center = [(mn[i] + mx[i]) * 0.5 for i in range(3)]
@@ -150,7 +279,11 @@ def main():
     bg.inputs[1].default_value = 0.7
 
     cam_data = bpy.data.cameras.new(name="Cam")
-    cam_data.lens = 55
+    if args.orthographic:
+        cam_data.type = "ORTHO"
+        cam_data.ortho_scale = diag * 1.05
+    else:
+        cam_data.lens = 55
     cam = bpy.data.objects.new("Cam", cam_data)
     bpy.context.collection.objects.link(cam)
     bpy.context.scene.camera = cam

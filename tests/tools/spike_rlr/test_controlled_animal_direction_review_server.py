@@ -24,8 +24,10 @@ def _entry() -> dict:
         }
         for name in (
             "pixal_raw_glb",
+            "pixal_input_rgba",
             "prebind_lod_glb",
             "static_contact_sheet",
+            "static_top_view",
             "current_bound_glb",
             "walking_side",
             "walking_front",
@@ -33,6 +35,9 @@ def _entry() -> dict:
             "apartment_walking_review",
             "apartment_walking_main",
             "apartment_walking_topdown",
+            "apartment_idle_review",
+            "apartment_idle_main",
+            "apartment_idle_topdown",
         )
     }
     return {
@@ -48,15 +53,16 @@ def _entry() -> dict:
     }
 
 
-def test_yaw_normalization_and_preview_matrix_contract():
+def test_cardinal_yaw_normalization_and_preview_matrix_contract():
     assert server._normalize_yaw(0) == 0
     assert server._normalize_yaw(180) == 180
     assert server._normalize_yaw(-180) == 180
     assert server._normalize_yaw(185) == -175
-    assert np.isclose(np.linalg.det(server._combined_preview_matrix(47)), -1.0)
+    assert server.ALLOWED_DELTAS == {-90.0, 90.0, 180.0}
+    assert np.isclose(np.linalg.det(server._manual_preview_matrix(90)), 1.0)
     assert np.allclose(
-        server._combined_preview_matrix(180) @ np.asarray([1.0, 0.0, 0.0]),
-        np.asarray([1.0, 0.0, 0.0]),
+        server._manual_preview_matrix(180) @ np.asarray([1.0, 0.0, 0.0]),
+        np.asarray([-1.0, 0.0, 0.0]),
         atol=1e-8,
     )
 
@@ -94,6 +100,12 @@ def test_review_state_is_transform_only_and_decision_is_immutable(
     preview = client.get("/preview/dog_fixture.png")
     assert preview.status_code == 200 and preview.data.startswith(b"\x89PNG")
 
+    fine_rotation = client.post(
+        "/api/rotate/dog_fixture", json={"delta_deg": 5}
+    )
+    assert fine_rotation.status_code == 409
+    assert "cardinal" in fine_rotation.get_json()["error"]
+
     rotated = client.post(
         "/api/rotate/dog_fixture", json={"delta_deg": 180}
     )
@@ -102,23 +114,35 @@ def test_review_state_is_transform_only_and_decision_is_immutable(
 
     decided = client.post(
         "/api/decision/dog_fixture",
-        json={"status": "geometry_orientation_approved", "notes": "head is +X"},
+        json={
+            "status": "source_pose_and_cardinal_orientation_approved",
+            "notes": "torso axis is +X",
+            "pose_checks": {
+                "spine_is_straight": True,
+                "head_is_aligned_with_torso": True,
+                "front_and_hind_legs_share_consistent_planes": True,
+                "all_paws_share_one_ground_plane": True,
+            },
+        },
     )
     assert decided.status_code == 200
     decision_path = state_root / "decisions/dog_fixture.json"
     decision = json.loads(decision_path.read_text(encoding="utf-8"))
-    assert decision["post_mirror_yaw_about_gltf_positive_y_deg"] == 180
+    assert decision["manual_cardinal_yaw_about_gltf_positive_y_deg"] == 180
+    assert decision["automatic_orientation_inference_used"] is False
+    assert decision["initial_preview_pretransform"] == "identity"
+    assert np.isclose(decision["determinant"], 1.0)
     assert decision["downstream_candidate"] == {
-        "flip_x": True,
-        "target_rotate_z_deg_after_flip_x": 180.0,
-        "coordinate_mapping_status": "requires_straight_line_ue_canary",
+        "manual_cardinal_yaw_deg": 180.0,
+        "binding_pretransform": "not_authorized_by_this_visual_gate",
+        "coordinate_mapping_status": "requires_binding_basis_and_straight_line_ue_canary",
     }
     assert decision["current_walking_media_status"] == "rejected_by_user_visual_review"
     assert decision["source_assets_modified"] is False
     assert decision["formal_dataset_registration_authorized"] is False
 
     locked = client.post(
-        "/api/rotate/dog_fixture", json={"delta_deg": 5}
+        "/api/rotate/dog_fixture", json={"delta_deg": 90}
     )
     assert locked.status_code == 409
     assert "immutable" in locked.get_json()["error"]
@@ -143,7 +167,75 @@ def test_rejection_requires_a_note(tmp_path, monkeypatch):
     ).test_client()
     response = client.post(
         "/api/decision/dog_fixture",
-        json={"status": "geometry_orientation_rejected", "notes": ""},
+        json={"status": "source_pose_rejected", "notes": ""},
     )
     assert response.status_code == 409
     assert "note" in response.get_json()["error"]
+
+
+def test_approval_requires_all_manual_pose_checks(tmp_path, monkeypatch):
+    entry = _entry()
+    manifest = {
+        "schema": server.MANIFEST_SCHEMA,
+        "manifest_sha256": "c" * 64,
+        "asset_count": 1,
+        "formal_dataset_registration_authorized": False,
+        "entries": [entry],
+    }
+    monkeypatch.setattr(
+        server,
+        "_validate_manifest",
+        lambda _path: (manifest, {entry["asset_id"]: entry}),
+    )
+    client = server.create_app(
+        tmp_path / "manifest.json", tmp_path / "state"
+    ).test_client()
+    response = client.post(
+        "/api/decision/dog_fixture",
+        json={
+            "status": "source_pose_and_cardinal_orientation_approved",
+            "notes": "looks close",
+            "pose_checks": {
+                "spine_is_straight": True,
+                "head_is_aligned_with_torso": True,
+                "front_and_hind_legs_share_consistent_planes": False,
+                "all_paws_share_one_ground_plane": True,
+            },
+        },
+    )
+    assert response.status_code == 409
+    assert "manual pose checks" in response.get_json()["error"]
+
+
+def test_new_canary_entry_can_omit_apartment_media_from_video_tabs():
+    entry = _entry()
+    entry["current_evidence_status"]["walking_direction"] = (
+        "new_canary_pending_manual_review"
+    )
+    for name in (
+        "apartment_walking_review",
+        "apartment_walking_main",
+        "apartment_walking_topdown",
+        "apartment_idle_review",
+        "apartment_idle_main",
+        "apartment_idle_topdown",
+    ):
+        del entry["artifacts"][name]
+
+    public = server._public_entry(entry)
+
+    assert "walking_side" in public["artifacts"]
+    assert "apartment_walking_review" not in public["artifacts"]
+    assert "Object.keys(labels).filter(k=>a.artifacts[k])" in server.HTML
+
+
+def test_page_exposes_authenticated_apartment_walk_and_idle_tabs():
+    html = server.HTML
+
+    assert "apartment_walking_review" in html
+    assert "apartment_walking_main" in html
+    assert "apartment_walking_topdown" in html
+    assert "apartment_idle_review" in html
+    assert "apartment_idle_main" in html
+    assert "apartment_idle_topdown" in html
+    assert "不会自动注册正式资产" in html

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Build a non-overwriting direction revalidation manifest for controlled animals.
+"""Build a non-overwriting manual source-pose/cardinal-direction manifest.
 
 The published manifest is an overlay on top of the immutable source-asset and
 Apartment evidence.  It deliberately does not edit an existing registry,
 binding, GLB, animation decision, or video.  The companion browser UI records
-only a proposed per-asset orientation transform in a separate mutable state
-directory.
+only a manual source-pose verdict and a rotation-only cardinal transform in a
+separate mutable state directory.  No automatic orientation or hidden mirror
+is part of this review contract.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ if __package__ in (None, ""):
 from tools import controlled_source_asset_schema as contracts
 
 
-SCHEMA = "controlled_animal_direction_revalidation_manifest_v1"
+SCHEMA = "controlled_animal_pose_direction_manual_review_manifest_v2"
 SPEAR_ROOT = Path(__file__).resolve().parents[1]
 AVENGINE_ROOT = SPEAR_ROOT.parents[1]
 DEFAULT_REGISTRY = (
@@ -39,7 +40,7 @@ DEFAULT_REGISTRY = (
 DEFAULT_OUTPUT_ROOT = (
     SPEAR_ROOT
     / "tmp/controlled_source_asset_execution_v1/"
-    "controlled_animal_direction_revalidation_v1_20260713"
+    "controlled_animal_pose_direction_manual_review_v2_20260713"
 )
 
 
@@ -204,6 +205,25 @@ def _load_animation_evidence(
     }
 
 
+def _load_static_pose_evidence(
+    source: Mapping[str, Any], review_path: Path
+) -> dict[str, Path]:
+    review = _read_json(review_path)
+    if (
+        review.get("schema") != "avengine_controlled_animal_static_review_v1"
+        or review.get("instance_id") != source.get("asset_id")
+        or review.get("review_sha256") != _hash_without(review, "review_sha256")
+    ):
+        raise DirectionReviewError("historical static review is invalid")
+    static_batch_root = review_path.parents[1]
+    top_view = _relative_artifact(
+        static_batch_root,
+        review.get("views", {}).get("top", {}),
+        "static top view",
+    )
+    return {"static_review_manifest": review_path, "static_top_view": top_view}
+
+
 def _entry(source: Mapping[str, Any], source_path: Path) -> dict[str, Any]:
     asset_id = str(source.get("asset_id", ""))
     taxonomy = source.get("taxonomy", {})
@@ -213,11 +233,16 @@ def _entry(source: Mapping[str, Any], source_path: Path) -> dict[str, Any]:
 
     decision_path = _source_artifact(source, "animation_decision")
     animation = _load_animation_evidence(source, decision_path)
+    static_review_path = _source_artifact(source, "static_review_manifest")
+    static_pose = _load_static_pose_evidence(source, static_review_path)
     paths = {
         "source_asset": source_path,
         "pixal_raw_glb": _source_artifact(source, "pixal_raw_glb"),
+        "pixal_input_rgba": _source_artifact(source, "pixal_input_rgba"),
         "prebind_lod_glb": animation["prebind_lod"],
         "static_contact_sheet": _source_artifact(source, "static_contact_sheet"),
+        "static_top_view": static_pose["static_top_view"],
+        "static_review_manifest": static_pose["static_review_manifest"],
         "current_bound_glb": _source_artifact(source, "rigged_walk_idle_glb"),
         "walking_side": animation["walking_side"],
         "walking_front": animation["walking_front"],
@@ -247,21 +272,28 @@ def _entry(source: Mapping[str, Any], source_path: Path) -> dict[str, Any]:
         },
         "orientation_contract": {
             "preview_coordinate_frame": "gltf_y_up",
-            "target_visible_forward_axis": "positive_x",
+            "initial_preview_pretransform": "identity",
+            "automatic_orientation_inference": "disabled",
+            "hidden_reflection_or_mirror": "forbidden",
+            "manual_rotation_only": True,
+            "allowed_yaw_degrees": [-90, 0, 90, 180],
+            "target_torso_spine_longitudinal_axis": "positive_x",
             "target_up_axis": "positive_y",
-            "existing_binding_pretransform": "mirror_x",
-            "existing_binding_pretransform_matrix": [
-                [-1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
+            "review_alignment_target": "torso_and_spine_not_visible_nose",
+            "fine_yaw_compensation": "forbidden_reject_source_pose_instead",
+            "source_pose_rejection_conditions": [
+                "head_not_aligned_with_torso",
+                "torso_or_spine_twisted_or_diagonal",
+                "front_and_hind_leg_planes_inconsistent",
+                "paws_not_on_one_ground_plane",
             ],
-            "reviewed_parameter": "post_mirror_yaw_about_gltf_positive_y_deg",
-            "downstream_parameter": "target_rotate_z_deg_after_flip_x",
+            "binding_pretransform": "not_authorized_by_this_visual_gate",
         },
         "current_evidence_status": {
             "historical_automatic_direction_check": "invalidated",
             "walking_direction": "rejected_by_user_visual_review",
-            "binding_orientation": "revalidation_required",
+            "source_pose": "manual_revalidation_required",
+            "binding_orientation": "manual_cardinal_revalidation_required",
             "idle_media": "retained_as_diagnostic_only_pending_revalidation",
             "formal_dataset_asset": False,
         },
@@ -311,7 +343,7 @@ def build_manifest(registry_path: Path, output_root: Path) -> Path:
     manifest: dict[str, Any] = {
         "schema": SCHEMA,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "state_classification": "direction_revalidation_required",
+        "state_classification": "source_pose_and_cardinal_direction_revalidation_required",
         "formal_dataset_registration_authorized": False,
         "source_registry": _record(registry_path, root=AVENGINE_ROOT),
         "source_registry_sha256": registry["registry_sha256"],
@@ -320,12 +352,16 @@ def build_manifest(registry_path: Path, output_root: Path) -> Path:
         "entries": entries,
         "user_visual_override": {
             "recorded_at": datetime.now(timezone.utc).isoformat(),
-            "scope": "all current controlled cat/dog Walking outputs",
-            "decision": "rejected_pending_direction_revalidation",
+            "scope": "all current controlled cat/dog source poses and Walking outputs",
+            "decision": "rejected_pending_manual_source_pose_and_cardinal_direction_review",
             "reason": (
-                "User reported cats running sideways and dogs running backward/sideways; "
-                "bone-only direction checks are not sufficient visual evidence."
+                "User reported cats with turned heads and inconsistent front/hind leg "
+                "planes, plus dogs running backward/sideways and beagles with mismatched "
+                "leg planes. Fine yaw is a reviewer trial, not a valid repair for a "
+                "malformed source pose."
             ),
+            "automatic_orientation_inference_allowed": False,
+            "manual_cardinal_rotation_only": True,
         },
         "safety": {
             "source_assets_modified": False,

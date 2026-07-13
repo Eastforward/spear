@@ -342,8 +342,8 @@ def test_checked_in_profile_catalog_is_valid_breed_specific_and_balanced():
         for path in paths
     ]
 
-    assert len(profiles) == 8
-    assert len({profile["profile_schema_id"] for profile in profiles}) == 8
+    assert len(profiles) == 14
+    assert len({profile["profile_schema_id"] for profile in profiles}) == 14
     by_id = {profile["profile_schema_id"]: profile for profile in profiles}
     assert by_id["dog_golden_retriever_v1"]["sampled_attribute_domains"][
         "coat_color"
@@ -359,6 +359,36 @@ def test_checked_in_profile_catalog_is_valid_breed_specific_and_balanced():
     assert by_id["cat_siamese_bindpose_v2"]["generation_contract"][
         "prompt_template_id"
     ] == "quadruped_bindpose_i2i_v2"
+    strict_side_ids = {
+        "cat_tabby_four_limb_rest_side_v5",
+        "cat_siamese_four_limb_rest_side_v5",
+        "dog_beagle_four_limb_rest_side_v5",
+        "dog_golden_retriever_four_limb_rest_side_v5",
+        "dog_pug_four_limb_rest_side_v5",
+    }
+    for profile_id in strict_side_ids:
+        contract = by_id[profile_id]["generation_contract"]
+        assert contract["prompt_template_id"] == "quadruped_four_limb_authored_rest_side_i2i_v5"
+        assert by_id[profile_id]["base_template"]["provenance_status"] == "verified"
+        assert "authored_rest_pose_side_four_limb_v2" in by_id[profile_id]["base_template"][
+            "template_id"
+        ]
+        assert "orthographic exact side view" in contract["pose_guard_prompt"]
+        assert "head and neck must align" in contract["pose_guard_prompt"]
+        assert "all four individually visible legs" in contract["pose_guard_prompt"]
+        assert "same level ground plane" in contract["pose_guard_prompt"]
+        assert "three-quarter view" in contract["negative_prompt"]
+    dog_clay = by_id["dog_beagle_four_limb_rest_side_clay_v6"]
+    assert dog_clay["generation_contract"]["prompt_template_id"] == (
+        "quadruped_four_limb_uniform_clay_side_i2i_v6"
+    )
+    assert dog_clay["base_template"]["template_id"] == (
+        "quaternius_dog_authored_rest_pose_side_four_limb_clay_v3"
+    )
+    assert "replace every visible clay surface" in dog_clay["generation_contract"][
+        "pose_guard_prompt"
+    ].lower()
+    assert "untextured patch" in dog_clay["generation_contract"]["negative_prompt"]
     for profile in profiles:
         requests = schema.sample_instance_requests(
             profile, count=9, batch_seed=20260713

@@ -1,0 +1,39 @@
+{
+  "schema": "avengine_controlled_animal_animation_decisions_v1",
+  "animation_review_batch_sha256": "a4247f95aef3028ab7eeb886de2ba221edcf99495b53d3a346c086d380873769",
+  "reviewer": "codex_visual_review_2026_07_13",
+  "decisions": [
+    {
+      "asset_id": "dog_beagle_four_limb_rest_side_clay_1550ff78df40",
+      "review_sha256": "5917bec3f2403d2c2a798012d6a930bcf6772f7aba458923fc90814d33e5cb32",
+      "decision": "rejected",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": false,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": false
+      },
+      "caveats": [],
+      "notes": "Direction and body axis are corrected, but Walking shows conspicuous paw/leg stretching plus small detached fragments near the feet. Rejected at the animation gate and blocked from UE Apartment."
+    },
+    {
+      "asset_id": "dog_beagle_four_limb_rest_side_clay_1b1e63af05c3",
+      "review_sha256": "bea8f687231a3b345ccad673a4919c2c540c5789b18b45495963ffb435e4ff1a",
+      "decision": "approved_for_ue_apartment",
+      "checks": {
+        "walking_direction": true,
+        "walking_limb_deformation": true,
+        "walking_ground_contact": true,
+        "idle_ground_contact": true,
+        "body_stability": true,
+        "detached_geometry_absent": true
+      },
+      "caveats": [
+        "Approval covers the isolated Dog-rig Walking/Idle review; Unreal trajectory, collision, audio, and apartment occlusion remain separate downstream gates."
+      ],
+      "notes": "Walking side/front and Idle side media show forward-consistent orientation, straight torso/head alignment, usable quadruped deformation, grounded paws, stable body motion, and no visible detached geometry."
+    }
+  ]
+}

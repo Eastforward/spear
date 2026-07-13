@@ -68,6 +68,20 @@ PROFILE: dict[str, dict[str, Any]] = {
         "audio_lookup": "cat_meow",
         "audio_height_m": 0.25,
     },
+    "cat_tabby_four_limb_rest_side_v5": {
+        "species": "cat",
+        "breed": "tabby",
+        "base_actor_scale": 0.09,
+        "audio_lookup": "cat_meow",
+        "audio_height_m": 0.25,
+    },
+    "dog_beagle_four_limb_rest_side_clay_v6": {
+        "species": "dog",
+        "breed": "beagle",
+        "base_actor_scale": 0.08,
+        "audio_lookup": "dog_bark",
+        "audio_height_m": 0.35,
+    },
 }
 
 

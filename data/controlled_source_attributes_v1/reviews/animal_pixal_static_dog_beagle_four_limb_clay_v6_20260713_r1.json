@@ -1,0 +1,48 @@
+{
+  "schema": "avengine_controlled_animal_static_decisions_v1",
+  "static_review_batch_sha256": "8e13bf71bf44b33bcf96c9516a851348db4026b9389f695ccac67847eaae5f3c",
+  "decisions": [
+    {
+      "instance_id": "dog_beagle_four_limb_rest_side_clay_1550ff78df40",
+      "review_sha256": "58406fececd5b89b301a226209624007f3a9eb382cffd92313d6f466839c8d6e",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_tone": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "The raw Pixal3D mesh remains a high-polygon research candidate and requires the normal LOD gate before Unreal import."
+      ],
+      "notes": "Multiview evidence shows a straight top-view body axis, head aligned with the torso, four usable limbs, grounded paws, coherent standard-tricolor texture, one attached tail, and no large holes."
+    },
+    {
+      "instance_id": "dog_beagle_four_limb_rest_side_clay_1b1e63af05c3",
+      "review_sha256": "ff7888ff68573a5548f301a5332ddcba9ca2a1636d2eee600f443c532534fc03",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_tone": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "The raw Pixal3D mesh remains a high-polygon research candidate and requires the normal LOD gate before Unreal import."
+      ],
+      "notes": "Multiview evidence shows a straight top-view body axis, head aligned with the torso, four usable limbs, grounded paws, coherent dark-tricolor texture, one attached tail, and no large holes."
+    }
+  ]
+}

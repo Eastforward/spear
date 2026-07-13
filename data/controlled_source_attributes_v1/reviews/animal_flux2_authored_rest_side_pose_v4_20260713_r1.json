@@ -1,0 +1,37 @@
+{
+  "schema": "avengine_controlled_animal_2d_review_decisions_v1",
+  "flux2_batch_sha256": "02fcfa99e3cd2bf9312f32236c351b24b8bffdd6c3a8722e79ec600f690c75e4",
+  "reviewer": "codex_visual_review_2026_07_13",
+  "decisions": [
+    {
+      "instance_id": "cat_tabby_rest_side_bindpose_46e28455e1f1",
+      "candidate_sha256": "6e770089ee8bd3e53add524618c1cde6c07b66c771e0573964af6a9e32054029",
+      "decision": "rejected",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "rejected",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Rejected before Pixal3D: exact orthographic overlap hid the far-side limbs, leaving only two usable visible legs/paws for image-to-3D reconstruction."
+    },
+    {
+      "instance_id": "dog_beagle_rest_side_bindpose_3c450331d273",
+      "candidate_sha256": "d75e39e59dc4d98ccac17fa3e2152c76f7b61f2f496b12096b5b4c0099208a2a",
+      "decision": "rejected",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "rejected",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_tone": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Rejected before Pixal3D: exact orthographic overlap hid the far-side limbs, leaving only two usable visible legs/paws for image-to-3D reconstruction."
+    }
+  ]
+}

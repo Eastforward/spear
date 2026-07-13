@@ -1,0 +1,37 @@
+{
+  "schema": "avengine_controlled_animal_2d_review_decisions_v1",
+  "flux2_batch_sha256": "777ca4950438fee34f97184861e1aa3df31809777cf5201604f80b0598618d25",
+  "reviewer": "codex_visual_review_2026_07_13",
+  "decisions": [
+    {
+      "instance_id": "cat_tabby_four_limb_rest_side_3a1ecde08179",
+      "candidate_sha256": "8450fef0c22400fa360d569b43474cf0fade627c14d63b92b7e3667b2a26214d",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Strict orthographic side-view canary passed: torso and head share the longitudinal axis, all four legs and paws remain individually visible with compact fore-aft offsets, and the paws contact one level ground plane. Metric size remains deferred to 3D measurement."
+    },
+    {
+      "instance_id": "dog_beagle_four_limb_rest_side_d187e7715c80",
+      "candidate_sha256": "d732c86d82976365f7276af14ed249c6a7ff8dd3ce1de00f4a7931c65890f8bc",
+      "decision": "rejected",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_tone": "rejected",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Pose correction succeeded, but the candidate retained conspicuous gray template regions around the neck and far-side legs instead of a coherent light tricolor coat. Rejected at 2D; it must not enter Pixal3D."
+    }
+  ]
+}

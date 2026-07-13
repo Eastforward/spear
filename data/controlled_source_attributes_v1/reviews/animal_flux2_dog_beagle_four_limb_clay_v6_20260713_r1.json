@@ -1,0 +1,37 @@
+{
+  "schema": "avengine_controlled_animal_2d_review_decisions_v1",
+  "flux2_batch_sha256": "0279e539cb09fed948eff1908036d8a37752ea582b03b5944bd133703df1a5a9",
+  "reviewer": "codex_visual_review_2026_07_13",
+  "decisions": [
+    {
+      "instance_id": "dog_beagle_four_limb_rest_side_clay_1550ff78df40",
+      "candidate_sha256": "558cf0949cb6153a3432ed30bec7bb6a54f362f5012bea104d12a0e17fd488b0",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_tone": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Uniform-clay v6 canary passed: coherent standard tricolor coat covers every visible surface, the torso/head remain exact side-on, four legs and paws are individually usable, and all paws contact one level ground plane."
+    },
+    {
+      "instance_id": "dog_beagle_four_limb_rest_side_clay_1b1e63af05c3",
+      "candidate_sha256": "c4de094e768cdf71851ca17dc098de7898d79385c1d7dcacf4a983a1d13f10b8",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_tone": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Uniform-clay v6 canary passed: coherent dark tricolor coat covers every visible surface, the torso/head remain exact side-on, four legs and paws are individually usable, and all paws contact one level ground plane."
+    }
+  ]
+}

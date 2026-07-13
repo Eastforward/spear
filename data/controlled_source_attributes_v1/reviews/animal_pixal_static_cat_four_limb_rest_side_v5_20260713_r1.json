@@ -1,0 +1,27 @@
+{
+  "schema": "avengine_controlled_animal_static_decisions_v1",
+  "static_review_batch_sha256": "18c3bc75506e4835edd53e02cd6a333702777bd7eff1b8501b753026888a49f8",
+  "decisions": [
+    {
+      "instance_id": "cat_tabby_four_limb_rest_side_3a1ecde08179",
+      "review_sha256": "eb06b168c1dc61690aa1cadf30b64b1d77f1c659597253fd3485047167b68c33",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "The raw Pixal3D mesh remains a high-polygon research candidate and requires the normal LOD gate before Unreal import."
+      ],
+      "notes": "Front/back/side/top/quarter evidence shows a coherent tabby, a straight longitudinal body axis, head aligned with the torso, four usable grounded limbs, one tail, preserved texture, and no large holes. Approved only for LOD and species-rig binding; animation remains unapproved."
+    }
+  ]
+}

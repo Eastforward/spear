@@ -83,3 +83,42 @@ def test_large_golden_scale_is_breed_base_times_ratio():
         "base_actor_scale"
     ]
     assert rationale["physical_scale_ratio"] == 1.1
+
+
+def test_four_limb_pose_profiles_keep_species_audio_and_physical_scale():
+    cat_attempt = _attempt(
+        "cat_tabby_four_limb_rest_side_v5",
+        size="medium",
+        ratio=1.0,
+        target_cm=27.0,
+    )
+    dog_attempt = _attempt(
+        "dog_beagle_four_limb_rest_side_clay_v6",
+        size="large",
+        ratio=1.1,
+        target_cm=39.6,
+    )
+
+    cat = build_pair(
+        _template(),
+        job=_job("cat_tabby_four_limb_rest_side_v5"),
+        attempt=cat_attempt,
+    )["Walking"]["sources"][0]
+    dog = build_pair(
+        _template(),
+        job=_job("dog_beagle_four_limb_rest_side_clay_v6"),
+        attempt=dog_attempt,
+    )["Walking"]["sources"][0]
+
+    assert (cat["species"], cat["breed"], cat["audio_lookup"]) == (
+        "cat",
+        "tabby",
+        "cat_meow",
+    )
+    assert cat["actor_scale"] == 0.09
+    assert (dog["species"], dog["breed"], dog["audio_lookup"]) == (
+        "dog",
+        "beagle",
+        "dog_bark",
+    )
+    assert dog["actor_scale"] == 0.088
