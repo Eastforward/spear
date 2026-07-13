@@ -124,6 +124,19 @@ def partition_jobs(
     return partitions
 
 
+def build_worker_orders(
+    jobs: Sequence[dict[str, Any]], gpus: Sequence[int]
+) -> dict[int, list[dict[str, Any]]]:
+    """Give each active GPU the full queue with a distinct starting offset."""
+    partition_jobs(jobs, gpus)  # Reuse the strict GPU contract validation.
+    active_gpus = list(gpus[: min(len(gpus), len(jobs))])
+    orders = {}
+    for index, gpu in enumerate(active_gpus):
+        offset = index % len(jobs)
+        orders[int(gpu)] = list(jobs[offset:]) + list(jobs[:offset])
+    return orders
+
+
 def build_worker_job(
     job: dict[str, Any], staging: Path, public_root: Path
 ) -> dict[str, Any]:
@@ -149,6 +162,7 @@ def _run_partition(
     gpu: int,
     jobs: Sequence[dict[str, Any]],
     staging: Path,
+    claim_dir: Path,
 ) -> dict[str, Any]:
     workers = staging / "worker_evidence"
     jobs_path = workers / f"gpu_{gpu}_jobs.json"
@@ -167,6 +181,8 @@ def _run_partition(
                 str(gpu),
                 "--status",
                 str(status_path),
+                "--claim-dir",
+                str(claim_dir),
             ],
             cwd=SPEAR_ROOT,
             stdout=log,
@@ -199,7 +215,7 @@ def _validate_outputs(
     worker_results: Sequence[dict[str, Any]],
     staging: Path,
     public_root: Path,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     status_by_id: dict[str, tuple[int, dict[str, Any], dict[str, Any]]] = {}
     workers: list[dict[str, Any]] = []
     for worker in sorted(worker_results, key=lambda item: item["gpu"]):
@@ -209,6 +225,7 @@ def _validate_outputs(
         if (
             not isinstance(status, dict)
             or status.get("schema") != WORKER_SCHEMA
+            or status.get("scheduling_mode") != "shared_claim_queue_v1"
             or status.get("failed_count") != 0
         ):
             raise contracts.ContractError("Pixal worker status is invalid")
@@ -235,6 +252,45 @@ def _validate_outputs(
         job["controlled_request"]["instance_id"] for job in source_jobs
     }:
         raise contracts.ContractError("Pixal worker result coverage changed")
+
+    claim_root = staging / "worker_evidence" / "claims"
+    claim_paths = sorted(claim_root.glob("*.claim.json"))
+    if len(claim_paths) != len(source_jobs):
+        raise contracts.ContractError("Pixal dynamic claim coverage is incomplete")
+    claims: list[dict[str, Any]] = []
+    claim_by_id: dict[str, Path] = {}
+    for claim_path in claim_paths:
+        if claim_path.is_symlink() or not claim_path.is_file():
+            raise contracts.ContractError("Pixal dynamic claim is not a direct file")
+        claim = contracts.load_json(claim_path)
+        instance_id = claim.get("legacy_tag")
+        expected_id = hashlib.sha256(str(instance_id).encode("utf-8")).hexdigest()
+        if (
+            claim.get("schema") != "pixal_dynamic_work_claim_v1"
+            or claim.get("claim_sha256") != expected_id
+            or claim_path.name != f"{expected_id}.claim.json"
+            or instance_id not in status_by_id
+            or instance_id in claim_by_id
+            or claim.get("gpu") != status_by_id[instance_id][0]
+        ):
+            raise contracts.ContractError("Pixal dynamic claim identity changed")
+        worker_record = status_by_id[instance_id][1]
+        if Path(worker_record.get("claim", "")).resolve() != claim_path.resolve():
+            raise contracts.ContractError("Pixal worker/claim evidence differs")
+        claim_by_id[instance_id] = claim_path
+        claims.append(
+            {
+                "instance_id": instance_id,
+                "gpu": claim["gpu"],
+                "claim": _relative_artifact(claim_path, staging),
+            }
+        )
+    if set(claim_by_id) != set(status_by_id):
+        raise contracts.ContractError("Pixal dynamic claim IDs are incomplete")
+    for worker in workers:
+        worker["claimed_count"] = sum(
+            item["gpu"] == worker["gpu"] for item in claims
+        )
 
     attempts: list[dict[str, Any]] = []
     for job in sorted(
@@ -308,7 +364,7 @@ def _validate_outputs(
                 "next_gate": "static_visual_qa",
             }
         )
-    return attempts, workers
+    return attempts, workers, sorted(claims, key=lambda item: item["instance_id"])
 
 
 def run_batch(
@@ -336,16 +392,14 @@ def run_batch(
         worker_jobs = [
             build_worker_job(job, staging, output_root) for job in payload["jobs"]
         ]
-        partitions = {
-            gpu: bucket
-            for gpu, bucket in partition_jobs(worker_jobs, gpus).items()
-            if bucket
-        }
+        claims = staging / "worker_evidence" / "claims"
+        claims.mkdir(parents=True, exist_ok=False)
+        worker_orders = build_worker_orders(worker_jobs, gpus)
         results: list[dict[str, Any]] = []
-        with ThreadPoolExecutor(max_workers=len(partitions)) as executor:
+        with ThreadPoolExecutor(max_workers=len(worker_orders)) as executor:
             futures = {
-                executor.submit(_run_partition, gpu, bucket, staging): gpu
-                for gpu, bucket in partitions.items()
+                executor.submit(_run_partition, gpu, order, staging, claims): gpu
+                for gpu, order in worker_orders.items()
             }
             for future in as_completed(futures):
                 result = future.result()
@@ -355,7 +409,7 @@ def run_batch(
                     f"gpu={result['gpu']} returncode={result['returncode']}",
                     flush=True,
                 )
-        attempts, workers = _validate_outputs(
+        attempts, workers, work_claims = _validate_outputs(
             payload["jobs"], results, staging, output_root
         )
         manifest: dict[str, Any] = {
@@ -385,10 +439,16 @@ def run_batch(
             "failed_count": 0,
             "attempts": attempts,
             "workers": workers,
+            "scheduling": {
+                "mode": "shared_claim_queue_v1",
+                "claim_count": len(work_claims),
+                "claims": work_claims,
+            },
             "automatic_checks": {
                 "all_inputs_reauthenticated": True,
                 "all_model_revisions_pinned": True,
                 "all_jobs_have_unique_request": True,
+                "all_jobs_claimed_once_by_dynamic_queue": True,
                 "all_outputs_glb2_readable": True,
                 "all_outputs_have_pbr_material_and_texture": True,
                 "no_generated_asset_has_been_registered": True,

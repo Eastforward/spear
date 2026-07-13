@@ -42,11 +42,47 @@ def _atomic_json(path: Path, payload):
     os.replace(temporary, path)
 
 
+def claim_id(legacy_tag: str) -> str:
+    return hashlib.sha256(legacy_tag.encode("utf-8")).hexdigest()
+
+
+def claim_job(claim_dir: Path, job, gpu: int):
+    """Atomically claim one shared-queue job, or return None if already owned."""
+    identifier = claim_id(job["legacy_tag"])
+    path = Path(claim_dir) / f"{identifier}.claim.json"
+    payload = {
+        "schema": "pixal_dynamic_work_claim_v1",
+        "claim_sha256": identifier,
+        "legacy_tag": job["legacy_tag"],
+        "gpu": int(gpu),
+        "claimed_at": _utc_now(),
+    }
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+    except FileExistsError:
+        return None
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    return path
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--jobs", type=Path, required=True)
     parser.add_argument("--gpu", type=int, required=True)
     parser.add_argument("--status", type=Path, required=True)
+    parser.add_argument("--claim-dir", type=Path)
     return parser.parse_args(argv)
 
 
@@ -73,14 +109,45 @@ def main(argv=None):
     jobs = json.loads(args.jobs.read_text(encoding="utf-8"))
     if not isinstance(jobs, list) or not jobs:
         raise ValueError("persistent worker jobs must be a non-empty list")
+    claim_dir = None
+    if args.claim_dir is not None:
+        if args.claim_dir.is_symlink() or not args.claim_dir.is_dir():
+            raise ValueError("claim-dir must be an existing direct directory")
+        claim_dir = args.claim_dir.resolve()
     status = {
         "schema": "pixal_animal_persistent_worker_v1",
         "gpu": args.gpu,
         "started_at": _utc_now(),
         "model_load_seconds": None,
+        "scheduling_mode": (
+            "shared_claim_queue_v1" if claim_dir is not None else "fixed_partition_v1"
+        ),
         "jobs": [],
     }
     _atomic_json(args.status, status)
+
+    def claimable_jobs():
+        for job in jobs:
+            claim_path = (
+                claim_job(claim_dir, job, args.gpu)
+                if claim_dir is not None
+                else None
+            )
+            if claim_dir is None or claim_path is not None:
+                yield job, claim_path
+
+    selected_jobs = claimable_jobs()
+    first = next(selected_jobs, None)
+    if first is None:
+        status.update(
+            {
+                "finished_at": _utc_now(),
+                "passed_count": 0,
+                "failed_count": 0,
+            }
+        )
+        _atomic_json(args.status, status)
+        return 0
 
     assets = wrapper.resolve_backend_assets("pixal3d")
     runtime = wrapper._import_pixal_runtime()
@@ -96,7 +163,11 @@ def main(argv=None):
     status["model_load_seconds"] = time.perf_counter() - load_started
     _atomic_json(args.status, status)
 
-    for job in jobs:
+    def jobs_after_model_load():
+        yield first
+        yield from selected_jobs
+
+    for job, claim_path in jobs_after_model_load():
         started = time.perf_counter()
         output = Path(job["output"]).resolve()
         manifest_path = Path(
@@ -112,6 +183,8 @@ def main(argv=None):
             "seed": int(job["seed"]),
             "started_at": _utc_now(),
         }
+        if claim_path is not None:
+            record["claim"] = str(claim_path)
         try:
             input_metadata = wrapper.inspect_rgba_input(image)
             runtime.inference.run_inference(
