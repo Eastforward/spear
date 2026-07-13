@@ -1,0 +1,599 @@
+{
+  "dataset": {
+    "allowed_states": [
+      "research_candidate"
+    ],
+    "dataset_id": "controlled_human_animal_apartment_candidate_34_final_v1_20260713",
+    "max_qa_pairs_per_split": null,
+    "split_salt": "avengine-controlled-source-v1"
+  },
+  "inputs": {
+    "profile_files": [
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/cat_bindpose_v2_inputs_r2_20260713/profile_snapshot.json",
+        "root_id": "spear_repo",
+        "sha256": "390b7824c20b584d0eb24d5e7d8a4efa7e7d26063b314f5e67e63e0b0550697c",
+        "size_bytes": 15746
+      },
+      {
+        "path": "tmp/controlled_source_asset_input_v1/all_profiles_20260713_v3/profile_snapshot.json",
+        "root_id": "spear_repo",
+        "sha256": "34062be7eae2134cee22df80e243d0041973239732d52cae9a4a46f5e4db6ffb",
+        "size_bytes": 43056
+      }
+    ],
+    "request_batch_files": [
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/cat_bindpose_v2_inputs_r2_20260713/instance_requests.json",
+        "root_id": "spear_repo",
+        "sha256": "0ac639fb26ae994c4a4a3ee3927924bd18d26a5348ef1122a33e2ad3575228aa",
+        "size_bytes": 82666
+      },
+      {
+        "path": "tmp/controlled_source_asset_input_v1/all_profiles_20260713_v3/instance_requests.json",
+        "root_id": "spear_repo",
+        "sha256": "03a486c9498177ff856a495b49b2ec55de71325cd519c4a944f43c95bd65e621",
+        "size_bytes": 225686
+      }
+    ],
+    "source_asset_files": [
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/cat_siamese_bindpose_06763a77c463.json",
+        "root_id": "spear_repo",
+        "sha256": "b58544e3881c9b8a21d98645189d0b9f5d564de54998a6f56fb02c66e91d24d6",
+        "size_bytes": 15317
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/cat_siamese_bindpose_0e9b1ebde772.json",
+        "root_id": "spear_repo",
+        "sha256": "96008a4a3d55e9fb7ec0f62d177d648bf27b4ec711b1fb49eccf4fddac796797",
+        "size_bytes": 15325
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/cat_siamese_bindpose_3a6ef0949afd.json",
+        "root_id": "spear_repo",
+        "sha256": "2d9ce3fb884a4e84cfee027fc5693c8de31e39a53ae4609144f59fdc643fc0c8",
+        "size_bytes": 15313
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/cat_siamese_bindpose_565ca04a74cf.json",
+        "root_id": "spear_repo",
+        "sha256": "61fb6dd1d13b40a233590aa83536196749d37452f3b46dfc56f2610fc01b88fa",
+        "size_bytes": 15313
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/cat_siamese_bindpose_647467e01b24.json",
+        "root_id": "spear_repo",
+        "sha256": "d88d03c3b9acbcf075e86c5595ed83e162617c3af0a4923c51fb1698271bfc1e",
+        "size_bytes": 15315
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/cat_tabby_bindpose_1a888b9782a1.json",
+        "root_id": "spear_repo",
+        "sha256": "02c090b1c589884a3e875c0ebdc3d60b610be7605464a9c5a48aa0725a46c97b",
+        "size_bytes": 15252
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/cat_tabby_bindpose_49976f5ff481.json",
+        "root_id": "spear_repo",
+        "sha256": "248a9e71a022b226bb9750b8a9bf26998b82ac8420dee42bb2fbd889df01f0d6",
+        "size_bytes": 15261
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/cat_tabby_bindpose_52573fcf5c40.json",
+        "root_id": "spear_repo",
+        "sha256": "2514f55b6922776b838d08c428cee2f7b8e5728cfa08fd3ec7f573567d22d6e8",
+        "size_bytes": 15263
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_beagle_0a76614d1794.json",
+        "root_id": "spear_repo",
+        "sha256": "d7942b72ffed9e99d7d1589f00303e9ebffca8b4fd0964ba1427450261cda854",
+        "size_bytes": 15044
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_beagle_6ec85e21cb1a.json",
+        "root_id": "spear_repo",
+        "sha256": "ba6f62d9edd73ab2e478ddea57d4f69623dc8979531951dc3b85cb61ba0ab528",
+        "size_bytes": 14974
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_beagle_832f8beb7390.json",
+        "root_id": "spear_repo",
+        "sha256": "ce5394a2d3de675c37b42d85b6ad0584322a0547e848d06543d72928b1f4438c",
+        "size_bytes": 15044
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_beagle_89025fb62895.json",
+        "root_id": "spear_repo",
+        "sha256": "a990addb7fdecf1e157dbd1cf1187ce78efb9288d969617e5ca9e3b3ecdf6b3b",
+        "size_bytes": 14977
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_beagle_d66c6da023a6.json",
+        "root_id": "spear_repo",
+        "sha256": "a493bfe03ae283acfe008b126e6d9aeb7c24eb9a28adffe0d6e8a8c37fa7c41d",
+        "size_bytes": 15052
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_beagle_d7f41615d79a.json",
+        "root_id": "spear_repo",
+        "sha256": "02f4b59980b62cd014257d379612e3024038be31443ff6059ed609e684621eb4",
+        "size_bytes": 15036
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_beagle_e115e64f642d.json",
+        "root_id": "spear_repo",
+        "sha256": "f1ea73caf319ab870568e998901b2a8bcf3c44d946c47a01aa31f0841b24820c",
+        "size_bytes": 15038
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_beagle_ea05ea06451c.json",
+        "root_id": "spear_repo",
+        "sha256": "852d3f656cedf6b15d93eaa58700f9a2bd43924a517d658c035631661ca91d06",
+        "size_bytes": 15040
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_golden_retriever_16a0565ce2c2.json",
+        "root_id": "spear_repo",
+        "sha256": "d273804bc4fcf02bb9ebd889256361fb8a7cc4bc1abafd7acafaf1550a2b78b8",
+        "size_bytes": 15331
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_golden_retriever_1b9f983d088f.json",
+        "root_id": "spear_repo",
+        "sha256": "2d1c41851534dac3aa7a94d5b396283efa65751bb3ff53ba0911ed81620f7612",
+        "size_bytes": 15270
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_golden_retriever_1be26dd2187a.json",
+        "root_id": "spear_repo",
+        "sha256": "1bc12b866139992cfe80fbc774eb1c5435f623c7deb2e98d8850dab2768eed53",
+        "size_bytes": 15333
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_golden_retriever_3676250e8701.json",
+        "root_id": "spear_repo",
+        "sha256": "cfce2acf1df752d83d3c3568ba7a5e126bf53b954dd9d5237e90095851ef67f7",
+        "size_bytes": 15340
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_golden_retriever_75d932515a16.json",
+        "root_id": "spear_repo",
+        "sha256": "a74918c9c52af0a4e34f6e124ade448f585dcaba72d136755409cd932070aa05",
+        "size_bytes": 15335
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_golden_retriever_9c4b2a916669.json",
+        "root_id": "spear_repo",
+        "sha256": "f816395f7e58f5fe85380581f5df8dd1546eabeb2b75927b2af1e7f084afe7e1",
+        "size_bytes": 15273
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_golden_retriever_e0d4e598839c.json",
+        "root_id": "spear_repo",
+        "sha256": "59ac78d57abb5e55609920c231c148fb25843255b5cc596bbc8ce41a1346559b",
+        "size_bytes": 15344
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_golden_retriever_fb2b8b434096.json",
+        "root_id": "spear_repo",
+        "sha256": "5ccb1842f5ad3c00d1e694a7bb5b6c3c11817006bf54b45f8b427b173cd22196",
+        "size_bytes": 15322
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_golden_retriever_fde797385c48.json",
+        "root_id": "spear_repo",
+        "sha256": "d05fe9e2f313e0f547fc11249eaaa8f3928b59186f9b8235883051b3aa83ec61",
+        "size_bytes": 15335
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_pug_470318272ad1.json",
+        "root_id": "spear_repo",
+        "sha256": "41cfb63a51bbcf2961247178922b7b23fc12e78b0e6eadb6222fcf94b18cafb6",
+        "size_bytes": 15023
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_pug_76e7f639b73c.json",
+        "root_id": "spear_repo",
+        "sha256": "3d51a3f8d98a2a1de9b41010be5a82e1c6077fd82885bd3a3477eafb45eab34b",
+        "size_bytes": 15011
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_pug_8206c63c6dd3.json",
+        "root_id": "spear_repo",
+        "sha256": "d2ea198d6427a5682eae1a5e0508b054809d411f102e47fd8338a9965f3922c2",
+        "size_bytes": 15016
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_pug_b633907db4fb.json",
+        "root_id": "spear_repo",
+        "sha256": "e2834d1842996f8ae9aaff7652956e594d8732155c8dc907f65242093e0043af",
+        "size_bytes": 14942
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_pug_e40ada53c463.json",
+        "root_id": "spear_repo",
+        "sha256": "72226ea54dff24d344701437f40f1bd44467a46441cb314b2384aea19f9eee46",
+        "size_bytes": 15010
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/animal_source_assets_apartment_31_final_v1_20260713/source_assets/dog_pug_ebc5b721a61e.json",
+        "root_id": "spear_repo",
+        "sha256": "a932beb24755236a01d824520aa3de55a15fbeb746d8036a9ccebd9ce245e475",
+        "size_bytes": 15015
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/rocketbox_source_assets_v2_20260713_v1/source_assets/rocketbox_adults_male_adult_01_material_1bb56ccf860c.json",
+        "root_id": "spear_repo",
+        "sha256": "db121d479b92920a1c0f814734909675a0c203171c5e231a75dd3d7c0945ce0f",
+        "size_bytes": 5619
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/rocketbox_source_assets_v2_20260713_v1/source_assets/rocketbox_adults_male_adult_01_material_3545531baa29.json",
+        "root_id": "spear_repo",
+        "sha256": "549d9d4ef43bdeba3548d676f65e7f03d691ce09900bb1a29743938271fad2f7",
+        "size_bytes": 5613
+      },
+      {
+        "path": "tmp/controlled_source_asset_execution_v1/rocketbox_source_assets_v2_20260713_v1/source_assets/rocketbox_adults_male_adult_01_material_377f35d6d606.json",
+        "root_id": "spear_repo",
+        "sha256": "555fc6867c6ecac8f8211dcb06f2a4e26e50dde4d2c1e8cd430826414356fa6a",
+        "size_bytes": 5611
+      }
+    ]
+  },
+  "manifest_sha256": "c1b315c590030f4f952f4b876ab976bae665621f41c46b947efe27f9eb5a1c8c",
+  "request_lineage": {
+    "all_realized_assets_match_exactly_one_request": true,
+    "bindings": [
+      {
+        "asset_id": "cat_siamese_bindpose_06763a77c463",
+        "asset_manifest_sha256": "38e4238705363665e5f35be27e6b1470f684fdf1fbc9f18c7317c526893f17db",
+        "profile_schema_id": "cat_siamese_bindpose_v2",
+        "profile_sha256": "61ddb09c657155398ebcc514c8307f93f277a811102cf5c1572187b3da3f2c46",
+        "request_batch_id": "controlled_request_batch_79d28d9b05e8",
+        "request_instance_id": "cat_siamese_bindpose_06763a77c463",
+        "request_sha256": "06763a77c463590f3ab8ee63f358a597ef11c8cab647fef5676ecd506ddb6257",
+        "status": "passed"
+      },
+      {
+        "asset_id": "cat_siamese_bindpose_0e9b1ebde772",
+        "asset_manifest_sha256": "0b7c6f5d2701b09db431d1384dbd445bc87ee68ce0e75aaef66e534e1c502a76",
+        "profile_schema_id": "cat_siamese_bindpose_v2",
+        "profile_sha256": "61ddb09c657155398ebcc514c8307f93f277a811102cf5c1572187b3da3f2c46",
+        "request_batch_id": "controlled_request_batch_79d28d9b05e8",
+        "request_instance_id": "cat_siamese_bindpose_0e9b1ebde772",
+        "request_sha256": "0e9b1ebde77241e7ca577210ff4257c43812ca5cadae9e62133bfea626fa4cd5",
+        "status": "passed"
+      },
+      {
+        "asset_id": "cat_siamese_bindpose_3a6ef0949afd",
+        "asset_manifest_sha256": "fc7e42ed35f0e46cf2968f06f0945e0b3d039b89738294b6e3db04b42e8952e8",
+        "profile_schema_id": "cat_siamese_bindpose_v2",
+        "profile_sha256": "61ddb09c657155398ebcc514c8307f93f277a811102cf5c1572187b3da3f2c46",
+        "request_batch_id": "controlled_request_batch_79d28d9b05e8",
+        "request_instance_id": "cat_siamese_bindpose_3a6ef0949afd",
+        "request_sha256": "3a6ef0949afdd1b2f275e0b1c8d5dded0c758d0e47237d10aea731e3bdc33a2a",
+        "status": "passed"
+      },
+      {
+        "asset_id": "cat_siamese_bindpose_565ca04a74cf",
+        "asset_manifest_sha256": "115f6d0e167b9a6c9215dcfa3b215a5e026db4cbaa21bfe2d4d9be5a25e5d366",
+        "profile_schema_id": "cat_siamese_bindpose_v2",
+        "profile_sha256": "61ddb09c657155398ebcc514c8307f93f277a811102cf5c1572187b3da3f2c46",
+        "request_batch_id": "controlled_request_batch_79d28d9b05e8",
+        "request_instance_id": "cat_siamese_bindpose_565ca04a74cf",
+        "request_sha256": "565ca04a74cfbb5c62d8cdc7a88e5c48fc73b427f8655d88d35ed220a36efc72",
+        "status": "passed"
+      },
+      {
+        "asset_id": "cat_siamese_bindpose_647467e01b24",
+        "asset_manifest_sha256": "852dbce6e9df0753664159fdd6eb586a3bf4eb9c48dec3171e9668cfcaa412fc",
+        "profile_schema_id": "cat_siamese_bindpose_v2",
+        "profile_sha256": "61ddb09c657155398ebcc514c8307f93f277a811102cf5c1572187b3da3f2c46",
+        "request_batch_id": "controlled_request_batch_79d28d9b05e8",
+        "request_instance_id": "cat_siamese_bindpose_647467e01b24",
+        "request_sha256": "647467e01b2441b9f9187412381a2072116090d6ebdea463c14e40d5d7b0b13a",
+        "status": "passed"
+      },
+      {
+        "asset_id": "cat_tabby_bindpose_1a888b9782a1",
+        "asset_manifest_sha256": "f1ce3564e9915f17710bf31e50d5b3b78aab7ae979ba8eb0d80f133fcfd0ec7a",
+        "profile_schema_id": "cat_tabby_bindpose_v2",
+        "profile_sha256": "e09c97dc6d374b8d5f5696949d552b6a504ebdfc4cc23dc98667a6afbc55d0e1",
+        "request_batch_id": "controlled_request_batch_79d28d9b05e8",
+        "request_instance_id": "cat_tabby_bindpose_1a888b9782a1",
+        "request_sha256": "1a888b9782a1d6e0eefd353a8111ad8c2e46d8b58b402df33aec79f7cf86393d",
+        "status": "passed"
+      },
+      {
+        "asset_id": "cat_tabby_bindpose_49976f5ff481",
+        "asset_manifest_sha256": "5c346d0f1b7b406001a09ef6c8ca95abcb7fc9c7a36346bbecca5389b4f8fc1c",
+        "profile_schema_id": "cat_tabby_bindpose_v2",
+        "profile_sha256": "e09c97dc6d374b8d5f5696949d552b6a504ebdfc4cc23dc98667a6afbc55d0e1",
+        "request_batch_id": "controlled_request_batch_79d28d9b05e8",
+        "request_instance_id": "cat_tabby_bindpose_49976f5ff481",
+        "request_sha256": "49976f5ff4812bc0ff5a6776f9a80f8884bb253f998f51c1a87f1238848fb744",
+        "status": "passed"
+      },
+      {
+        "asset_id": "cat_tabby_bindpose_52573fcf5c40",
+        "asset_manifest_sha256": "51717bea8e3b43e248bb9a5fd9816980b170cfd7f9da39c23e8372fabc1bb6cf",
+        "profile_schema_id": "cat_tabby_bindpose_v2",
+        "profile_sha256": "e09c97dc6d374b8d5f5696949d552b6a504ebdfc4cc23dc98667a6afbc55d0e1",
+        "request_batch_id": "controlled_request_batch_79d28d9b05e8",
+        "request_instance_id": "cat_tabby_bindpose_52573fcf5c40",
+        "request_sha256": "52573fcf5c402f31a89772787dc0afb01c5a62bdf019aa31179999993a61c92a",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_beagle_0a76614d1794",
+        "asset_manifest_sha256": "b62c99d6ca871ea2629a932385e0ff3efe1e3d10cb269a4117d83b1114c5bceb",
+        "profile_schema_id": "dog_beagle_v1",
+        "profile_sha256": "82ac4b094a9dbd4fe4555f84c031417debe3fea7ad6926c58f4828176f1cd1f2",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_beagle_0a76614d1794",
+        "request_sha256": "0a76614d1794434c072f7cfab291f876d550b3aae38211f49cfdec28829f2b51",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_beagle_6ec85e21cb1a",
+        "asset_manifest_sha256": "cf7e4cc3ff8cc0e87127603b3495214a45bac06fae6a17d9211decc20e7523c6",
+        "profile_schema_id": "dog_beagle_v1",
+        "profile_sha256": "82ac4b094a9dbd4fe4555f84c031417debe3fea7ad6926c58f4828176f1cd1f2",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_beagle_6ec85e21cb1a",
+        "request_sha256": "6ec85e21cb1ac0344eabbaa86ed6ced049b0495d4b7581594371f8ba0d86f137",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_beagle_832f8beb7390",
+        "asset_manifest_sha256": "5307f153853112e94ea32f9ddac7d01b8cc44a2c55185b0c75bf8b8bda021231",
+        "profile_schema_id": "dog_beagle_v1",
+        "profile_sha256": "82ac4b094a9dbd4fe4555f84c031417debe3fea7ad6926c58f4828176f1cd1f2",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_beagle_832f8beb7390",
+        "request_sha256": "832f8beb73908f7ec34ca299fc495352cd6a091375f46905d81a5f25a9c88d25",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_beagle_89025fb62895",
+        "asset_manifest_sha256": "be19aa0b4360f644e1f54c7ad890cae9df86293220cd08a7a87e4b8480a1dff8",
+        "profile_schema_id": "dog_beagle_v1",
+        "profile_sha256": "82ac4b094a9dbd4fe4555f84c031417debe3fea7ad6926c58f4828176f1cd1f2",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_beagle_89025fb62895",
+        "request_sha256": "89025fb628954725139bf98aa7808ffcbe46a9ca63871a0e58ceaeca963343bf",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_beagle_d66c6da023a6",
+        "asset_manifest_sha256": "701e40a4552014e10b5827b814c86375d2de55dad37d13f7de06b83fcf824ac3",
+        "profile_schema_id": "dog_beagle_v1",
+        "profile_sha256": "82ac4b094a9dbd4fe4555f84c031417debe3fea7ad6926c58f4828176f1cd1f2",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_beagle_d66c6da023a6",
+        "request_sha256": "d66c6da023a6ed3e1ffb9fa9df877d652f644bbc8f7f3fe1c64ce161c6eae921",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_beagle_d7f41615d79a",
+        "asset_manifest_sha256": "cd83609809bc475a4257b2ccac18b572421af391b1173272599bdb693b7ad50a",
+        "profile_schema_id": "dog_beagle_v1",
+        "profile_sha256": "82ac4b094a9dbd4fe4555f84c031417debe3fea7ad6926c58f4828176f1cd1f2",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_beagle_d7f41615d79a",
+        "request_sha256": "d7f41615d79abf20752a7e6bd343447814e36c28091ac5746b4ded69f9c3f0ae",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_beagle_e115e64f642d",
+        "asset_manifest_sha256": "6c97b4dcaf5cae9b03100ec4a1a9480373bfebec14c9c513d3e86fb6f7686469",
+        "profile_schema_id": "dog_beagle_v1",
+        "profile_sha256": "82ac4b094a9dbd4fe4555f84c031417debe3fea7ad6926c58f4828176f1cd1f2",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_beagle_e115e64f642d",
+        "request_sha256": "e115e64f642d6947addc000606e313abb953a55889409623b50acc5a504e9330",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_beagle_ea05ea06451c",
+        "asset_manifest_sha256": "3c5c12cbcebbd4e1a863be06cb559755c56fbf66ffae7a555bb5f7ff030e6c11",
+        "profile_schema_id": "dog_beagle_v1",
+        "profile_sha256": "82ac4b094a9dbd4fe4555f84c031417debe3fea7ad6926c58f4828176f1cd1f2",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_beagle_ea05ea06451c",
+        "request_sha256": "ea05ea06451c4aeb9666b06f8413fd9d3ef880401a17646afbb526075e0ea85b",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_golden_retriever_16a0565ce2c2",
+        "asset_manifest_sha256": "30a2391ae3f348d9aa76e4ae4aff52ff79e8ab87c35cac46911aec5ae3e3c652",
+        "profile_schema_id": "dog_golden_retriever_v1",
+        "profile_sha256": "9263a8c712b4577857f612e7504b6decd0d40a82ba6fbd3162bfbf0c6238151d",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_golden_retriever_16a0565ce2c2",
+        "request_sha256": "16a0565ce2c2aa9c81d01b3b9cac6004c6c70c08418fd44472fcf94ab5bb6beb",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_golden_retriever_1b9f983d088f",
+        "asset_manifest_sha256": "f80615e2395393fdd61b6b4f13f8cf0950c083a2fdfb5ec3b19d08bdb2bdd9f7",
+        "profile_schema_id": "dog_golden_retriever_v1",
+        "profile_sha256": "9263a8c712b4577857f612e7504b6decd0d40a82ba6fbd3162bfbf0c6238151d",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_golden_retriever_1b9f983d088f",
+        "request_sha256": "1b9f983d088f12536041a5b12df408c0090e6e0d4ae458380c19d9aa28d9c3b1",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_golden_retriever_1be26dd2187a",
+        "asset_manifest_sha256": "d584eb4fdb181d81423ba33665b7905f5e2eb238ec0e83dbb1423d8cecf3484f",
+        "profile_schema_id": "dog_golden_retriever_v1",
+        "profile_sha256": "9263a8c712b4577857f612e7504b6decd0d40a82ba6fbd3162bfbf0c6238151d",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_golden_retriever_1be26dd2187a",
+        "request_sha256": "1be26dd2187a44fc178ffebe97213671159f0d6bd29c90a9254856b30058ec14",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_golden_retriever_3676250e8701",
+        "asset_manifest_sha256": "4e7d5345431bd372fb9982b03bf404329b4e4d52d2bc7a8260dc8e240f5cc398",
+        "profile_schema_id": "dog_golden_retriever_v1",
+        "profile_sha256": "9263a8c712b4577857f612e7504b6decd0d40a82ba6fbd3162bfbf0c6238151d",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_golden_retriever_3676250e8701",
+        "request_sha256": "3676250e87014efe8c34c90ef994892a642530b93bb55d3aebe1281a2d56d8d7",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_golden_retriever_75d932515a16",
+        "asset_manifest_sha256": "0a393d9651a1b89d0be19a4dce23d9ee8d7f895b476a2563a7e93cc6439398e1",
+        "profile_schema_id": "dog_golden_retriever_v1",
+        "profile_sha256": "9263a8c712b4577857f612e7504b6decd0d40a82ba6fbd3162bfbf0c6238151d",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_golden_retriever_75d932515a16",
+        "request_sha256": "75d932515a16e11a29155f065f0399cf52e365e9149d8029fd1ba0861c17cdc7",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_golden_retriever_9c4b2a916669",
+        "asset_manifest_sha256": "cd4cdfae140c374a10215b0415b9a776d10b9cd970ecbd4729b83bdb691a379c",
+        "profile_schema_id": "dog_golden_retriever_v1",
+        "profile_sha256": "9263a8c712b4577857f612e7504b6decd0d40a82ba6fbd3162bfbf0c6238151d",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_golden_retriever_9c4b2a916669",
+        "request_sha256": "9c4b2a9166693b1c1ec8cde36177671338117b9a9b06915d8f19478b3e28344d",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_golden_retriever_e0d4e598839c",
+        "asset_manifest_sha256": "49380bd7ebab051f9b7f600c9db863eca77d2aedb3c21fd7178c6e8d4e6d5d44",
+        "profile_schema_id": "dog_golden_retriever_v1",
+        "profile_sha256": "9263a8c712b4577857f612e7504b6decd0d40a82ba6fbd3162bfbf0c6238151d",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_golden_retriever_e0d4e598839c",
+        "request_sha256": "e0d4e598839cd7b2527d7788ee20297be1c8718b540f8b35ba56f4c83c0ba5ee",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_golden_retriever_fb2b8b434096",
+        "asset_manifest_sha256": "873a5e7d4048187e7ba670549743ef688f697f8edc7c60a271d217caa843d50f",
+        "profile_schema_id": "dog_golden_retriever_v1",
+        "profile_sha256": "9263a8c712b4577857f612e7504b6decd0d40a82ba6fbd3162bfbf0c6238151d",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_golden_retriever_fb2b8b434096",
+        "request_sha256": "fb2b8b434096316f246e126dfa456c750fd8dcd0d8f9366a7c30f42c82235d93",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_golden_retriever_fde797385c48",
+        "asset_manifest_sha256": "a74ea572d3674b765242635a3168689e69a7c6c9c0740e73ea29bc38efd08b4b",
+        "profile_schema_id": "dog_golden_retriever_v1",
+        "profile_sha256": "9263a8c712b4577857f612e7504b6decd0d40a82ba6fbd3162bfbf0c6238151d",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_golden_retriever_fde797385c48",
+        "request_sha256": "fde797385c4829768cbca2d33b0c56ed78371d9888f61b079d4fab60173d0047",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_pug_470318272ad1",
+        "asset_manifest_sha256": "a0fc261d8e87bd5db2e2e251227403b4da3e29bd8311ba7e699eeb4963e5d3e6",
+        "profile_schema_id": "dog_pug_v1",
+        "profile_sha256": "74cb1cc11f8772bb33c1af5a1c942d447a4a73b8166287ab488b4b77dab1ae25",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_pug_470318272ad1",
+        "request_sha256": "470318272ad1ed13ad95d004a4d8f981911a33849a52eb773a1e86e39204843f",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_pug_76e7f639b73c",
+        "asset_manifest_sha256": "cbb2b6e640053d6e4db142afe95e3eac0d2e8780c225874971e85a7f8f419be6",
+        "profile_schema_id": "dog_pug_v1",
+        "profile_sha256": "74cb1cc11f8772bb33c1af5a1c942d447a4a73b8166287ab488b4b77dab1ae25",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_pug_76e7f639b73c",
+        "request_sha256": "76e7f639b73cc6ead3685c91f02c1424fdf2a4f7250c0072063a8f3c4a7a43ee",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_pug_8206c63c6dd3",
+        "asset_manifest_sha256": "9f10ce069c763f84f80d1626a3cc2bfe2ab695d2aedc2aa188167562569ea932",
+        "profile_schema_id": "dog_pug_v1",
+        "profile_sha256": "74cb1cc11f8772bb33c1af5a1c942d447a4a73b8166287ab488b4b77dab1ae25",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_pug_8206c63c6dd3",
+        "request_sha256": "8206c63c6dd31b4b739524615b66d60c4e20445ae6f95184b41c0821fa443d50",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_pug_b633907db4fb",
+        "asset_manifest_sha256": "b96f91f3edf8d919ca5f0228860e227a03fc38e51db8386288c8b61c53f499c1",
+        "profile_schema_id": "dog_pug_v1",
+        "profile_sha256": "74cb1cc11f8772bb33c1af5a1c942d447a4a73b8166287ab488b4b77dab1ae25",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_pug_b633907db4fb",
+        "request_sha256": "b633907db4fb83b8bf901e386ab3607e40a502f626d65cca770458c31155983d",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_pug_e40ada53c463",
+        "asset_manifest_sha256": "1fb219e3923c464263f3aab39d757911eb8dbcfbe0fcd6e4e005d40c95eabf36",
+        "profile_schema_id": "dog_pug_v1",
+        "profile_sha256": "74cb1cc11f8772bb33c1af5a1c942d447a4a73b8166287ab488b4b77dab1ae25",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_pug_e40ada53c463",
+        "request_sha256": "e40ada53c463e4e7ca529e34c892bd863dc0b3cdf6bb227d18bba3d31b38fe0c",
+        "status": "passed"
+      },
+      {
+        "asset_id": "dog_pug_ebc5b721a61e",
+        "asset_manifest_sha256": "cdb13e76b0b40bf776d0bf62d55eacdde7893b25439f9a496e78c4238f8ef9a9",
+        "profile_schema_id": "dog_pug_v1",
+        "profile_sha256": "74cb1cc11f8772bb33c1af5a1c942d447a4a73b8166287ab488b4b77dab1ae25",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "dog_pug_ebc5b721a61e",
+        "request_sha256": "ebc5b721a61e18b059d5dac1f82bf10f9e8610d187678c4edb0d16394599873c",
+        "status": "passed"
+      },
+      {
+        "asset_id": "rocketbox_adults_male_adult_01_material_1bb56ccf860c",
+        "asset_manifest_sha256": "775e8c8b1cb1ec0ee16736f505b1642408f748770cc0ce0679553d32ebae8ad3",
+        "profile_schema_id": "rocketbox_adults_male_adult_01_material_v1",
+        "profile_sha256": "9a5d58d84f24ab28ab454ce89b6612f6cb05cc00dfb742536dcb4c9d17915eea",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "rocketbox_adults_male_adult_01_material_1bb56ccf860c",
+        "request_sha256": "1bb56ccf860c5c690f18d54e145f10cfc46e83f8ef4fc2debce7a51c87391819",
+        "status": "passed"
+      },
+      {
+        "asset_id": "rocketbox_adults_male_adult_01_material_3545531baa29",
+        "asset_manifest_sha256": "6e143a1dd600f637a5cc798f6d51ec74a34654cebd53d8469f250e1aba5bc8b4",
+        "profile_schema_id": "rocketbox_adults_male_adult_01_material_v1",
+        "profile_sha256": "9a5d58d84f24ab28ab454ce89b6612f6cb05cc00dfb742536dcb4c9d17915eea",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "rocketbox_adults_male_adult_01_material_3545531baa29",
+        "request_sha256": "3545531baa29cb2457258a459082f6a9795c0fb8c3743156b7a74509aa648629",
+        "status": "passed"
+      },
+      {
+        "asset_id": "rocketbox_adults_male_adult_01_material_377f35d6d606",
+        "asset_manifest_sha256": "beec00a3232373bde734fcc9ed8345c1ca50a6b0628d17b8101f26934b2228eb",
+        "profile_schema_id": "rocketbox_adults_male_adult_01_material_v1",
+        "profile_sha256": "9a5d58d84f24ab28ab454ce89b6612f6cb05cc00dfb742536dcb4c9d17915eea",
+        "request_batch_id": "controlled_request_batch_a1a538820174",
+        "request_instance_id": "rocketbox_adults_male_adult_01_material_377f35d6d606",
+        "request_sha256": "377f35d6d606197287c745e957c7bcd84df8ae5f0822687bc25e6cb12252afe6",
+        "status": "passed"
+      }
+    ],
+    "matched_asset_count": 34,
+    "profile_count": 8,
+    "realized_asset_count": 34,
+    "request_batch_count": 2,
+    "request_count": 72,
+    "unused_request_count": 38
+  },
+  "schema": "avengine_controlled_dataset_input_manifest_v1"
+}

@@ -1284,6 +1284,64 @@ def build_request_batch(
     return core
 
 
+def validate_request_batch(value: Any, profiles: Sequence[Any]) -> dict[str, Any]:
+    """Validate a frozen request batch against its exact profile revisions.
+
+    Rebuilding the batch is intentional: it authenticates the sampler inputs,
+    every request, the recorded distribution, and both batch identifiers in a
+    single canonical comparison.
+    """
+
+    batch = _require_exact_fields(
+        value,
+        frozenset(
+            {
+                "schema",
+                "sampler",
+                "profiles",
+                "requests",
+                "distribution",
+                "batch_sha256",
+                "batch_id",
+            }
+        ),
+        "instance request batch",
+    )
+    if batch["schema"] != REQUEST_BATCH_SCHEMA:
+        raise ContractError(
+            f"instance request batch schema must be {REQUEST_BATCH_SCHEMA}"
+        )
+    sampler = _require_exact_fields(
+        batch["sampler"],
+        frozenset({"algorithm", "batch_seed", "count_per_profile"}),
+        "instance request batch sampler",
+    )
+    if sampler["algorithm"] != SAMPLER_ALGORITHM:
+        raise ContractError("unsupported request batch sampler algorithm")
+    if (
+        isinstance(sampler["count_per_profile"], bool)
+        or not isinstance(sampler["count_per_profile"], int)
+        or sampler["count_per_profile"] <= 0
+    ):
+        raise ContractError("request batch count_per_profile must be positive")
+    if (
+        isinstance(sampler["batch_seed"], bool)
+        or not isinstance(sampler["batch_seed"], int)
+        or sampler["batch_seed"] < 0
+    ):
+        raise ContractError("request batch batch_seed must be non-negative")
+    rebuilt = build_request_batch(
+        profiles,
+        count_per_profile=sampler["count_per_profile"],
+        batch_seed=sampler["batch_seed"],
+    )
+    if canonical_json(batch) != canonical_json(rebuilt):
+        raise ContractError(
+            "instance request batch does not match deterministic profiles and sampling"
+        )
+    return _deepcopy(dict(batch))
+
+
 def _validate_physical_measurements(value: Any, *, formal: bool) -> dict[str, Any]:
     measurements = _require_mapping(value, "physical_measurements")
     status = measurements.get("status")

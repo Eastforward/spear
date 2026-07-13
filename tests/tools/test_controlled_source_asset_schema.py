@@ -16,6 +16,9 @@ from tools import build_controlled_source_asset_inputs as input_builder
 REPO = Path(__file__).resolve().parents[2]
 BUILD_INPUTS = REPO / "tools" / "build_controlled_source_asset_inputs.py"
 BUILD_DATASET = REPO / "tools" / "build_controlled_source_dataset.py"
+BUILD_DATASET_INPUT_MANIFEST = (
+    REPO / "tools" / "build_controlled_source_dataset_input_manifest.py"
+)
 PROFILE_ROOT = REPO / "data" / "controlled_source_attributes_v1" / "profiles"
 
 
@@ -438,6 +441,28 @@ def test_request_tampering_is_detected():
 
     with pytest.raises(schema.ContractError, match="canonical request"):
         schema.validate_instance_request(request, profile)
+
+
+def test_request_batch_is_rebuilt_from_exact_profile_revision():
+    profile = animal_profile()
+    batch = schema.build_request_batch(
+        [profile], count_per_profile=3, batch_seed=20260713
+    )
+
+    assert schema.validate_request_batch(batch, [profile]) == batch
+
+    changed_profile = copy.deepcopy(profile)
+    changed_profile["profile_revision"] = "2026_07_13_v2"
+    with pytest.raises(schema.ContractError, match="deterministic profiles"):
+        schema.validate_request_batch(batch, [changed_profile])
+
+    changed_batch = copy.deepcopy(batch)
+    first_profile = profile["profile_schema_id"]
+    first_attribute = next(iter(changed_batch["distribution"][first_profile]))
+    first_value = next(iter(changed_batch["distribution"][first_profile][first_attribute]))
+    changed_batch["distribution"][first_profile][first_attribute][first_value] += 1
+    with pytest.raises(schema.ContractError, match="deterministic profiles"):
+        schema.validate_request_batch(changed_batch, [profile])
 
 
 def test_qa_pairs_compare_absolute_profiles_without_edit_history():
@@ -897,3 +922,204 @@ def test_dataset_cli_authenticates_artifacts_and_publishes_realized_qa(tmp_path)
     qa = json.loads((output / "qa_dataset.json").read_text(encoding="utf-8"))
     assert qa["evidence_state"] == "realized"
     assert "pending_formal_acceptance" in qa["answer_policy"]
+
+
+def test_dataset_cli_consumes_frozen_request_lineage_manifest(tmp_path):
+    profile = animal_profile()
+
+    def write_artifact(record: dict, relative_path: str, payload: bytes) -> None:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        record.update(
+            {
+                "root_id": "fixture_root",
+                "path": relative_path,
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+        )
+
+    write_artifact(
+        profile["base_template"]["artifact"],
+        "profile/reference.png",
+        b"reference",
+    )
+    write_artifact(
+        profile["target_physical_profiles"]["reference_provenance"]["artifact"],
+        "profile/measurement.json",
+        b'{"height_cm": 55}\n',
+    )
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(json.dumps(profile), encoding="utf-8")
+
+    runtime_record = artifact("assets/runtime.glb")
+    license_record = artifact("licenses/license.txt")
+    write_artifact(runtime_record, "assets/runtime.glb", b"runtime glb fixture")
+    write_artifact(license_record, "licenses/license.txt", b"fixture license\n")
+
+    request_batch = schema.build_request_batch(
+        [profile], count_per_profile=3, batch_seed=88
+    )
+    request_path = tmp_path / "instance_requests.json"
+    request_path.write_text(json.dumps(request_batch), encoding="utf-8")
+    asset_dir = tmp_path / "source_assets"
+    asset_dir.mkdir()
+    for index, request in enumerate(request_batch["requests"]):
+        asset = realized_asset(request)
+        asset["artifacts"]["runtime_glb"] = copy.deepcopy(runtime_record)
+        asset["rights"]["licenses"] = [copy.deepcopy(license_record)]
+        (asset_dir / f"asset_{index}.json").write_text(
+            json.dumps(asset), encoding="utf-8"
+        )
+
+    input_manifest_path = tmp_path / "dataset_input_manifest.json"
+    compile_command = [
+        "/data/jzy/miniconda3/envs/spear-env/bin/python",
+        str(BUILD_DATASET_INPUT_MANIFEST),
+        "--profile",
+        str(profile_path),
+        "--request-batch",
+        str(request_path),
+        "--asset",
+        str(asset_dir),
+        "--dataset-id",
+        "controlled_dataset_lineage_canary_v1",
+        "--split-salt",
+        "controlled-dataset-lineage-split-v1",
+        "--allow-state",
+        "research_candidate",
+        "--artifact-root",
+        f"fixture_root={tmp_path}",
+        "--output",
+        str(input_manifest_path),
+    ]
+
+    compiled = subprocess.run(compile_command, capture_output=True, text=True)
+
+    assert compiled.returncode == 0, compiled.stderr
+    assert "CONTROLLED_DATASET_INPUT_MANIFEST_OK" in compiled.stdout
+    input_manifest = json.loads(input_manifest_path.read_text(encoding="utf-8"))
+    assert input_manifest["request_lineage"] == {
+        "bindings": input_manifest["request_lineage"]["bindings"],
+        "profile_count": 1,
+        "request_batch_count": 1,
+        "request_count": 3,
+        "realized_asset_count": 3,
+        "matched_asset_count": 3,
+        "unused_request_count": 0,
+        "all_realized_assets_match_exactly_one_request": True,
+    }
+    assert all(
+        binding["status"] == "passed"
+        for binding in input_manifest["request_lineage"]["bindings"]
+    )
+
+    output = tmp_path / "dataset_from_manifest"
+    build_command = [
+        "/data/jzy/miniconda3/envs/spear-env/bin/python",
+        str(BUILD_DATASET),
+        "--input-manifest",
+        str(input_manifest_path),
+        "--artifact-root",
+        f"fixture_root={tmp_path}",
+        "--output-dir",
+        str(output),
+    ]
+    built = subprocess.run(build_command, capture_output=True, text=True)
+
+    assert built.returncode == 0, built.stderr
+    assert "request_lineage=verified" in built.stdout
+    assert {path.name for path in output.iterdir()} == {
+        "dataset_manifest.json",
+        "qa_dataset.json",
+        "scene_source_pool.json",
+        "artifact_audit.json",
+        "dataset_input_manifest.json",
+        "build_receipt.json",
+    }
+    receipt = json.loads((output / "build_receipt.json").read_text(encoding="utf-8"))
+    assert receipt["request_lineage_status"] == "passed"
+    assert receipt["dataset_input_manifest_sha256"] == input_manifest["manifest_sha256"]
+
+    first_asset_path = sorted(asset_dir.glob("*.json"))[0]
+    first_asset_path.write_text(
+        first_asset_path.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+    )
+    rejected = subprocess.run(
+        build_command[:-1] + [str(tmp_path / "tampered_output")],
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode == 2
+    assert "mismatch" in rejected.stderr
+
+
+def test_dataset_input_manifest_rejects_asset_without_normalized_request(tmp_path):
+    profile = animal_profile()
+
+    def write_artifact(record: dict, relative_path: str, payload: bytes) -> None:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        record.update(
+            {
+                "root_id": "fixture_root",
+                "path": relative_path,
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+        )
+
+    write_artifact(profile["base_template"]["artifact"], "reference.png", b"reference")
+    write_artifact(
+        profile["target_physical_profiles"]["reference_provenance"]["artifact"],
+        "measurement.json",
+        b"measurement",
+    )
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(json.dumps(profile), encoding="utf-8")
+    request_batch = schema.build_request_batch(
+        [profile], count_per_profile=1, batch_seed=1
+    )
+    request_path = tmp_path / "instance_requests.json"
+    request_path.write_text(json.dumps(request_batch), encoding="utf-8")
+
+    unmatched_request = schema.sample_instance_requests(
+        profile, count=1, batch_seed=999
+    )[0]
+    runtime = artifact("runtime.glb")
+    license_record = artifact("license.txt")
+    write_artifact(runtime, "runtime.glb", b"runtime")
+    write_artifact(license_record, "license.txt", b"license")
+    asset = realized_asset(unmatched_request)
+    asset["artifacts"]["runtime_glb"] = runtime
+    asset["rights"]["licenses"] = [license_record]
+    asset_path = tmp_path / "asset.json"
+    asset_path.write_text(json.dumps(asset), encoding="utf-8")
+
+    command = [
+        "/data/jzy/miniconda3/envs/spear-env/bin/python",
+        str(BUILD_DATASET_INPUT_MANIFEST),
+        "--profile",
+        str(profile_path),
+        "--request-batch",
+        str(request_path),
+        "--asset",
+        str(asset_path),
+        "--dataset-id",
+        "unmatched_request_canary_v1",
+        "--split-salt",
+        "unmatched-request-split-v1",
+        "--allow-state",
+        "research_candidate",
+        "--artifact-root",
+        f"fixture_root={tmp_path}",
+        "--output",
+        str(tmp_path / "input_manifest.json"),
+    ]
+
+    completed = subprocess.run(command, capture_output=True, text=True)
+
+    assert completed.returncode == 2
+    assert "has no matching normalized request" in completed.stderr

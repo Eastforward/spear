@@ -14,6 +14,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import build_controlled_source_asset_inputs as input_builder
+from tools import build_controlled_source_dataset_input_manifest as dataset_inputs
 from tools import controlled_source_asset_schema as contracts
 
 
@@ -217,6 +218,29 @@ def build_artifact_audit(
     return payload
 
 
+def build_receipt(
+    input_manifest: dict[str, Any],
+    dataset_manifest: dict[str, Any],
+    qa_dataset: dict[str, Any],
+    source_pool: dict[str, Any],
+    artifact_audit: dict[str, Any],
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema": "avengine_controlled_dataset_build_receipt_v1",
+        "dataset_id": dataset_manifest["dataset_id"],
+        "dataset_input_manifest_sha256": input_manifest["manifest_sha256"],
+        "dataset_manifest_sha256": dataset_manifest["manifest_sha256"],
+        "qa_dataset_sha256": qa_dataset["qa_dataset_sha256"],
+        "source_pool_sha256": source_pool["source_pool_sha256"],
+        "artifact_audit_sha256": artifact_audit["audit_sha256"],
+        "asset_count": len(dataset_manifest["assets"]),
+        "request_lineage_status": "passed",
+        "artifact_authentication_status": "passed",
+    }
+    payload["manifest_sha256"] = contracts.manifest_sha256(payload)
+    return payload
+
+
 def publish_output(output_dir: Path, files: dict[str, Any]) -> None:
     try:
         output_dir.mkdir(parents=True, exist_ok=False)
@@ -238,10 +262,18 @@ def publish_output(output_dir: Path, files: dict[str, Any]) -> None:
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--profile", action="append", required=True, type=Path)
-    parser.add_argument("--asset", action="append", required=True, type=Path)
-    parser.add_argument("--dataset-id", required=True)
-    parser.add_argument("--split-salt", required=True)
+    parser.add_argument(
+        "--input-manifest",
+        type=Path,
+        help=(
+            "Canonical mode: consume an authenticated normalized profile/request/asset "
+            "manifest. Raw selectors remain available for legacy candidate builds."
+        ),
+    )
+    parser.add_argument("--profile", action="append", type=Path)
+    parser.add_argument("--asset", action="append", type=Path)
+    parser.add_argument("--dataset-id")
+    parser.add_argument("--split-salt")
     parser.add_argument(
         "--allow-state",
         action="append",
@@ -260,10 +292,56 @@ def build_argument_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_argument_parser().parse_args(argv)
     try:
-        profiles = input_builder.load_profiles(args.profile)
-        profile_map = {profile["profile_schema_id"]: profile for profile in profiles}
-        assets = load_source_assets(args.asset)
         roots = input_builder.parse_artifact_roots(args.artifact_root)
+        input_manifest: dict[str, Any] | None = None
+        if args.input_manifest is not None:
+            raw_selectors = {
+                "--profile": args.profile,
+                "--asset": args.asset,
+                "--dataset-id": args.dataset_id,
+                "--split-salt": args.split_salt,
+                "--allow-state": args.allow_state,
+                "--max-qa-pairs-per-split": args.max_qa_pairs_per_split,
+            }
+            supplied = [name for name, value in raw_selectors.items() if value is not None]
+            if supplied:
+                raise contracts.ContractError(
+                    "--input-manifest cannot be combined with raw dataset selectors: "
+                    + ", ".join(supplied)
+                )
+            input_manifest, profiles, assets = (
+                dataset_inputs.load_and_validate_dataset_input_manifest(
+                    args.input_manifest, roots
+                )
+            )
+            dataset_config = input_manifest["dataset"]
+            dataset_id = dataset_config["dataset_id"]
+            split_salt = dataset_config["split_salt"]
+            allowed_states = set(dataset_config["allowed_states"])
+            max_qa_pairs_per_split = dataset_config["max_qa_pairs_per_split"]
+        else:
+            missing = [
+                name
+                for name, value in (
+                    ("--profile", args.profile),
+                    ("--asset", args.asset),
+                    ("--dataset-id", args.dataset_id),
+                    ("--split-salt", args.split_salt),
+                )
+                if not value
+            ]
+            if missing:
+                raise contracts.ContractError(
+                    "legacy raw dataset build is missing required selectors: "
+                    + ", ".join(missing)
+                )
+            profiles = input_builder.load_profiles(args.profile)
+            assets = load_source_assets(args.asset)
+            dataset_id = args.dataset_id
+            split_salt = args.split_salt
+            allowed_states = set(args.allow_state or ["formal_dataset_asset"])
+            max_qa_pairs_per_split = args.max_qa_pairs_per_split
+        profile_map = {profile["profile_schema_id"]: profile for profile in profiles}
         profile_authentication = {
             profile["profile_schema_id"]: input_builder.authenticate_profile_artifacts(
                 profile, roots
@@ -271,23 +349,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             for profile in profiles
         }
         asset_authentication = authenticate_source_assets(assets, roots)
-        allowed_states = set(args.allow_state or ["formal_dataset_asset"])
         dataset_manifest = contracts.build_dataset_manifest(
             assets,
             profile_map,
-            dataset_id=args.dataset_id,
-            split_salt=args.split_salt,
+            dataset_id=dataset_id,
+            split_salt=split_salt,
             allowed_states=allowed_states,
-            max_qa_pairs_per_split=args.max_qa_pairs_per_split,
+            max_qa_pairs_per_split=max_qa_pairs_per_split,
+        )
+        qa_dataset = build_realized_qa_dataset(dataset_manifest)
+        source_pool = build_scene_source_pool(dataset_manifest)
+        artifact_audit = build_artifact_audit(
+            dataset_manifest, profile_authentication, asset_authentication
         )
         files = {
             "dataset_manifest.json": dataset_manifest,
-            "qa_dataset.json": build_realized_qa_dataset(dataset_manifest),
-            "scene_source_pool.json": build_scene_source_pool(dataset_manifest),
-            "artifact_audit.json": build_artifact_audit(
-                dataset_manifest, profile_authentication, asset_authentication
-            ),
+            "qa_dataset.json": qa_dataset,
+            "scene_source_pool.json": source_pool,
+            "artifact_audit.json": artifact_audit,
         }
+        if input_manifest is not None:
+            files["dataset_input_manifest.json"] = input_manifest
+            files["build_receipt.json"] = build_receipt(
+                input_manifest,
+                dataset_manifest,
+                qa_dataset,
+                source_pool,
+                artifact_audit,
+            )
         publish_output(args.output_dir, files)
     except contracts.ContractError as error:
         print(f"CONTROLLED_SOURCE_DATASET_FAILED {error}", file=sys.stderr)
@@ -298,6 +387,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"assets={len(dataset_manifest['assets'])} "
         f"qa_pairs={len(dataset_manifest['qa_pairs'])} "
         f"questions={files['qa_dataset.json']['question_count']} "
+        f"request_lineage={'verified' if input_manifest is not None else 'legacy_unverified'} "
         f"output={args.output_dir}"
     )
     return 0
