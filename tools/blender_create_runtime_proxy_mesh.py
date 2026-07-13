@@ -34,6 +34,12 @@ def parse_args():
     p.add_argument("--output", required=True)
     p.add_argument("--metadata", required=True)
     p.add_argument("--target-faces", type=int, default=DEFAULT_TARGET_FACES)
+    p.add_argument(
+        "--double-sided",
+        action="store_true",
+        help="Export imported materials as double-sided. Useful for image-to-3D "
+        "meshes whose decimated local shells contain inconsistent winding.",
+    )
     return p.parse_args(argv)
 
 
@@ -77,6 +83,17 @@ def _apply_decimate(objects, ratio):
         bpy.ops.object.modifier_apply(modifier=mod.name)
 
 
+def _make_materials_double_sided(objects):
+    changed = set()
+    for obj in objects:
+        for material in obj.data.materials:
+            if material is None or material.name in changed:
+                continue
+            material.use_backface_culling = False
+            changed.add(material.name)
+    print(f"[runtime_proxy] double-sided materials={sorted(changed)}", flush=True)
+
+
 def main():
     args = parse_args()
     source = Path(args.source)
@@ -111,6 +128,8 @@ def main():
             flush=True,
         )
     _delete_loose_vertices(_mesh_objects())
+    if args.double_sided:
+        _make_materials_double_sided(_mesh_objects())
 
     actual_faces = _face_count(_mesh_objects())
     actual_vertices = _vertex_count(_mesh_objects())

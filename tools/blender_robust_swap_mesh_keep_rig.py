@@ -62,7 +62,9 @@ from tools.robust_skin_transfer import (  # noqa: E402
 GLB_JSON_CHUNK = 0x4E4F534A
 
 
-def postprocess_glb_animation_channels(path, keep_paths):
+def postprocess_glb_animation_channels(
+    path, keep_paths, *, canonical_walk_idle=False
+):
     with open(path, "rb") as f:
         data = f.read()
     magic, version, _ = struct.unpack_from("<4sII", data, 0)
@@ -82,8 +84,42 @@ def postprocess_glb_animation_channels(path, keep_paths):
     raw_json = chunks[0][1].rstrip(b" \t\r\n\x00")
     gltf = json.loads(raw_json.decode("utf-8"))
     removed = filter_gltf_animation_channels_json(gltf, keep_paths=keep_paths)
-    if removed == 0:
-        return 0
+    changed = removed > 0
+    if canonical_walk_idle:
+        animations = list(gltf.get("animations", []))
+        idle = next(
+            (
+                animation
+                for animation in animations
+                if str(animation.get("name", "")).lower().startswith("idle")
+            ),
+            None,
+        )
+        walking = next(
+            (
+                animation
+                for animation in animations
+                if str(animation.get("name", "")).lower() in {"walk", "walking"}
+                or str(animation.get("name", "")).lower().startswith("walking_")
+            ),
+            None,
+        )
+        if idle is None or walking is None:
+            raise ValueError(
+                "exported GLB lacks canonical Idle and Walk/Walking animations: "
+                f"{[animation.get('name') for animation in animations]}"
+            )
+        idle["name"] = "Idle"
+        walking["name"] = "Walking"
+        gltf["animations"] = [idle, walking]
+        changed = True
+    if not changed:
+        return {
+            "removed_channels": 0,
+            "animation_names": [
+                animation.get("name") for animation in gltf.get("animations", [])
+            ],
+        }
 
     new_json = json.dumps(gltf, separators=(",", ":")).encode("utf-8")
     new_json += b" " * ((4 - len(new_json) % 4) % 4)
@@ -96,7 +132,12 @@ def postprocess_glb_animation_channels(path, keep_paths):
         out += chunk
     with open(path, "wb") as f:
         f.write(out)
-    return removed
+    return {
+        "removed_channels": removed,
+        "animation_names": [
+            animation.get("name") for animation in gltf.get("animations", [])
+        ],
+    }
 
 
 def parse_argv():
@@ -120,6 +161,13 @@ def parse_argv():
                    help="Mirror the target along X before aligning.")
     p.add_argument("--target-rotate-z-deg", type=float, default=0.0,
                    help="Rotate the target mesh around Blender Z before bbox alignment and weight transfer.")
+    p.add_argument(
+        "--semantic-forward-axis",
+        default="positive-x",
+        choices=["positive-x", "negative-y"],
+        help="Source-rig longitudinal axis used by anatomical region transfer. "
+             "AnimalPack Cat/Dog use positive-x; Quaternius Farm Horse uses negative-y.",
+    )
     p.add_argument("--max-distance-ratio", type=float, default=0.35,
                    help="Reject source matches farther than this fraction of the source bbox diagonal. "
                         "Use <=0 to disable distance rejection.")
@@ -161,6 +209,13 @@ def parse_argv():
                    help="Comma-separated action name substrings used by --reverse-actions.")
     p.add_argument("--animation-export-mode", default="actions", choices=["actions", "nla"],
                    help="Use actions for GLB sources; use nla when importing multi-action FBX rigs.")
+    p.add_argument(
+        "--export-action-policy",
+        default="all",
+        choices=["all", "walk-idle"],
+        help="Limit exported actions to one canonical Walking and one canonical Idle. "
+             "Use walk-idle for farm rigs whose source also contains Death/Run/Jump/WalkSlow.",
+    )
     p.add_argument("--ue-safe-animation-channels", default="yes", choices=["yes", "no"],
                    help="Post-process exported GLB animations for UE Interchange stability.")
     p.add_argument("--ue-animation-keep-paths", default="translation,rotation",
@@ -211,6 +266,33 @@ def import_rig_scene(path):
         bpy.ops.import_scene.fbx(filepath=path)
     else:
         raise SystemExit(f"unsupported rig format {ext}")
+
+
+def keep_canonical_walk_idle_actions(armature):
+    actions = list(bpy.data.actions)
+    base_name = lambda action: action.name.lower().split("_", 1)[0]
+    idle = next((action for action in actions if base_name(action) == "idle"), None)
+    walking = next(
+        (
+            action
+            for action in actions
+            if base_name(action) in {"walk", "walking"}
+        ),
+        None,
+    )
+    if idle is None or walking is None:
+        raise SystemExit(
+            "walk-idle export requires exact Idle and Walk/Walking actions; "
+            f"available={[action.name for action in actions]}"
+        )
+    idle.name = "Idle"
+    walking.name = "Walking"
+    for action in actions:
+        if action not in {idle, walking}:
+            bpy.data.actions.remove(action)
+    armature.animation_data_create()
+    armature.animation_data.action = idle
+    print("[anim] canonical export actions=['Idle', 'Walking']", flush=True)
 
 
 def object_bbox_world(obj):
@@ -286,17 +368,23 @@ def mesh_vertices_local(obj):
     return np.array([v.co for v in obj.data.vertices], dtype=np.float64)
 
 
-def dog_region_coords(vertices):
-    """Convert Blender dog coordinates to the helper convention: X, up, side.
+def dog_region_coords(vertices, forward_axis="positive-x"):
+    """Convert Blender coordinates to helper convention: front, up, left.
 
     Blender is Z-up here.  The pure helper module uses X=front, Y=up, Z=side.
     """
     vertices = np.asarray(vertices, dtype=np.float64)
-    return vertices[:, [0, 2, 1]]
+    if forward_axis == "positive-x":
+        return vertices[:, [0, 2, 1]]
+    if forward_axis == "negative-y":
+        return np.column_stack((-vertices[:, 1], vertices[:, 2], vertices[:, 0]))
+    raise ValueError(f"unsupported semantic forward axis: {forward_axis}")
 
 
-def _semantic_region_from_point(point_world, region_bounds):
-    point = dog_region_coords(np.asarray([point_world], dtype=np.float64))[0]
+def _semantic_region_from_point(point_world, region_bounds, forward_axis):
+    point = dog_region_coords(
+        np.asarray([point_world], dtype=np.float64), forward_axis
+    )[0]
     mn, mx = region_bounds
     uvw = (point - mn) / np.maximum(mx - mn, 1e-12)
     x, y, z = uvw
@@ -317,7 +405,9 @@ def _semantic_region_from_point(point_world, region_bounds):
     return REGION_TORSO
 
 
-def armature_region_capsules(armature_obj, region_bounds, source_world_diag):
+def armature_region_capsules(
+    armature_obj, region_bounds, source_world_diag, forward_axis="positive-x"
+):
     radius_by_region = {
         REGION_TAIL: 0.025,
         REGION_TORSO: 0.060,
@@ -337,7 +427,9 @@ def armature_region_capsules(armature_obj, region_bounds, source_world_diag):
         length = float(np.linalg.norm(tail - head))
         if length <= 1e-8:
             continue
-        region = _semantic_region_from_point((head + tail) * 0.5, region_bounds)
+        region = _semantic_region_from_point(
+            (head + tail) * 0.5, region_bounds, forward_axis
+        )
         radius = max(float(source_world_diag) * radius_by_region[region], length * 0.18)
         capsules.append(SkeletonCapsule(region=region, start=head, end=tail, radius=radius))
         counts[REGION_NAMES.get(region, str(region))] = counts.get(REGION_NAMES.get(region, str(region)), 0) + 1
@@ -680,20 +772,26 @@ def robust_transfer(src_mesh, tgt_mesh, armature_obj, args):
     src_vertices = mesh_vertices_world(src_mesh)
     src_faces = triangulated_faces(src_mesh)
     group_names, src_weights = source_vertex_weights(src_mesh)
-    src_region_vertices = dog_region_coords(src_vertices)
+    src_region_vertices = dog_region_coords(
+        src_vertices, args.semantic_forward_axis
+    )
     bounds = mesh_bounds(src_region_vertices)
     source_face_regions = face_region_labels(src_region_vertices, src_faces, bounds=bounds)
 
     apply_transforms(tgt_mesh)
     tgt_vertices = mesh_vertices_local(tgt_mesh)
     tgt_faces, tgt_polygon_indices = triangulated_faces_with_polygon_indices(tgt_mesh)
-    coarse_target_regions = coarse_region_labels(dog_region_coords(tgt_vertices), bounds=bounds)
+    coarse_target_regions = coarse_region_labels(
+        dog_region_coords(tgt_vertices, args.semantic_forward_axis), bounds=bounds
+    )
     weight_graph_faces = tgt_faces
 
     diag = float(np.linalg.norm(mesh_bounds(src_vertices)[1] - mesh_bounds(src_vertices)[0]))
     max_distance = None if args.max_distance_ratio <= 0 else diag * args.max_distance_ratio
     if args.segmentation_mode == "skeleton-graph":
-        capsules = armature_region_capsules(armature_obj, bounds, diag)
+        capsules = armature_region_capsules(
+            armature_obj, bounds, diag, args.semantic_forward_axis
+        )
         target_regions, graph_stats = graph_region_labels_from_capsules(
             vertices=tgt_vertices,
             faces=tgt_faces,
@@ -867,6 +965,8 @@ def main():
     dampen_bone_rotation_actions(tail_bones, args.dampen_tail_rotations)
     foot_bones = [b.strip() for b in args.foot_bones.split(",") if b.strip()]
     dampen_bone_rotation_actions(foot_bones, args.dampen_foot_rotations)
+    if args.export_action_policy == "walk-idle":
+        keep_canonical_walk_idle_actions(armature)
     if args.animation_export_mode == "nla":
         stash_armature_actions_for_gltf(armature)
 
@@ -894,8 +994,17 @@ def main():
     )
     if args.ue_safe_animation_channels == "yes":
         keep_paths = [p.strip() for p in args.ue_animation_keep_paths.split(",") if p.strip()]
-        removed = postprocess_glb_animation_channels(args.output, keep_paths)
-        print(f"[anim] UE-safe GLB channel filter keep={keep_paths} removed={removed}", flush=True)
+        postprocess = postprocess_glb_animation_channels(
+            args.output,
+            keep_paths,
+            canonical_walk_idle=(args.export_action_policy == "walk-idle"),
+        )
+        print(
+            f"[anim] UE-safe GLB channel filter keep={keep_paths} "
+            f"removed={postprocess['removed_channels']} "
+            f"animations={postprocess['animation_names']}",
+            flush=True,
+        )
     print(f"ROBUST_SWAP_OK output={args.output} verts={len(tgt_mesh.data.vertices)}", flush=True)
 
 
