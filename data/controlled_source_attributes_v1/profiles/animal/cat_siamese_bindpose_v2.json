@@ -1,0 +1,136 @@
+{
+  "schema": "avengine_attribute_profile_v1",
+  "profile_schema_id": "cat_siamese_bindpose_v2",
+  "profile_revision": "2026_07_13_v2",
+  "asset_class": "animal",
+  "lineage_group_id": "quaternius_cat_bindpose_10cb33f4",
+  "state_classification": "research_candidate",
+  "taxonomy": {
+    "species": "cat",
+    "breed": "siamese"
+  },
+  "base_template": {
+    "template_id": "quaternius_cat_idle_bind_pose_quarter_v1",
+    "kind": "reference_image",
+    "artifact": {
+      "root_id": "spear_repo",
+      "path": "data/controlled_source_attributes_v1/references/animal/quaternius_cat_idle_bind_pose_quarter_v1.png",
+      "sha256": "10cb33f42cb523019008e1d27f76b869df1b460a4bb50a08534343e22c3e43bb",
+      "size_bytes": 1032102
+    },
+    "provenance_status": "verified",
+    "usage_scope": "research_candidate"
+  },
+  "fixed_attributes": {
+    "life_stage": "adult",
+    "coat_length": "short",
+    "coat_pattern": "colorpoint",
+    "ear_shape": "upright",
+    "tail_shape": "long_tapered"
+  },
+  "sampled_attribute_domains": {
+    "size": ["small", "medium", "large"],
+    "point_color": ["seal_point", "chocolate_point", "blue_point"],
+    "body_build": ["slender", "standard", "compact"]
+  },
+  "forbidden_combinations": [],
+  "generation_contract": {
+    "route": "flux2_pixal3d_animal_v1",
+    "prompt_template_id": "quadruped_bindpose_i2i_v2",
+    "positive_template": "Transform this low-poly template into one photorealistic {size} {life_stage} {breed} {species} with a {body_build} anatomically normal body, a {point_color} {coat_length} {coat_pattern} coat, {ear_shape} ears, and a {tail_shape} tail.",
+    "pose_guard_prompt": "Preserve exactly the neutral quadruped bind pose, level spine, upright separated tail, anatomical joint locations, three-quarter side viewpoint, framing, and plain gray background. All four legs and all four paws must remain visible, separated by background gaps, straight under the body, and planted at the same ground height. This is a static rigging reference, not an action pose.",
+    "negative_prompt": "walking, lifted paw, bent walking hock, crouching, sitting, lying down, merged legs, overlapping paws, hidden paw, extra limb, missing limb, fused tail, tabby stripes, cropped body, accessory, background geometry, text",
+    "value_labels": {
+      "species": {"cat": "cat"},
+      "breed": {"siamese": "Siamese"},
+      "life_stage": {"adult": "adult"},
+      "coat_length": {"short": "short"},
+      "coat_pattern": {"colorpoint": "colorpoint"},
+      "ear_shape": {"upright": "upright"},
+      "tail_shape": {"long_tapered": "long tapered"},
+      "size": {
+        "small": "small",
+        "medium": "medium-sized",
+        "large": "large"
+      },
+      "point_color": {
+        "seal_point": "seal-point",
+        "chocolate_point": "chocolate-point",
+        "blue_point": "blue-point"
+      },
+      "body_build": {
+        "slender": "slender",
+        "standard": "standard",
+        "compact": "compact"
+      }
+    },
+    "model_revisions": {
+      "flux2": "e7b7dc27f91deacad38e78976d1f2b499d76a294",
+      "pixal3d": "0b31f9160aa400719af409098bff7936a932f726",
+      "dino": "3c276edd87d6f6e569ff0c4400e086807d0f3881"
+    }
+  },
+  "target_physical_profiles": {
+    "profile_id": "cat_siamese_physical_candidate_v2",
+    "control_attribute": "size",
+    "measurement": "shoulder_height_cm",
+    "mode": "relative_to_profile_reference",
+    "reference_value_cm": 25.0,
+    "reference_provenance": {
+      "status": "provisional",
+      "source_id": "siamese_pipeline_calibration_pending_v2",
+      "artifact": null,
+      "notes": "Provisional pipeline target only; replace with a license-snapshotted breed reference and measured canary before formal registration."
+    },
+    "values": {
+      "small": {"scale_ratio": 0.9, "tolerance_cm": 3.0},
+      "medium": {"scale_ratio": 1.0, "tolerance_cm": 3.0},
+      "large": {"scale_ratio": 1.1, "tolerance_cm": 3.0}
+    }
+  },
+  "rig_profile": {
+    "profile_id": "quadruped_cat_v1",
+    "skeleton_family": "quaternius_cat",
+    "actions": ["Walking", "Idle"],
+    "front_axis": "positive_x"
+  },
+  "acoustic_profile": {
+    "profile_id": "cat_vocalization_v1",
+    "default_event_class": "cat_meow",
+    "allowed_event_classes": ["cat_meow", "cat_purr", "silent"],
+    "selection_attributes": ["species", "breed", "life_stage"]
+  },
+  "locked_attributes": [
+    "species", "breed", "life_stage", "coat_length", "coat_pattern",
+    "ear_shape", "tail_shape"
+  ],
+  "qa_contract": {
+    "subject_label": "Siamese cat",
+    "attributes": {
+      "size": {
+        "kind": "ordered",
+        "label": "size",
+        "value_order": ["small", "medium", "large"],
+        "value_labels": {"small": "small", "medium": "medium-sized", "large": "large"},
+        "comparison_question": "Which Siamese cat is larger?"
+      },
+      "point_color": {
+        "kind": "categorical",
+        "label": "point color",
+        "value_labels": {
+          "seal_point": "seal-point",
+          "chocolate_point": "chocolate-point",
+          "blue_point": "blue-point"
+        },
+        "identification_question": "What is the point color of {instance_label}?"
+      },
+      "body_build": {
+        "kind": "ordered",
+        "label": "body build",
+        "value_order": ["slender", "standard", "compact"],
+        "value_labels": {"slender": "slender", "standard": "standard", "compact": "compact"},
+        "comparison_question": "Which Siamese cat has the more compact build?"
+      }
+    }
+  }
+}

@@ -338,8 +338,8 @@ def test_checked_in_profile_catalog_is_valid_breed_specific_and_balanced():
         for path in paths
     ]
 
-    assert len(profiles) == 6
-    assert len({profile["profile_schema_id"] for profile in profiles}) == 6
+    assert len(profiles) == 8
+    assert len({profile["profile_schema_id"] for profile in profiles}) == 8
     by_id = {profile["profile_schema_id"]: profile for profile in profiles}
     assert by_id["dog_golden_retriever_v1"]["sampled_attribute_domains"][
         "coat_color"
@@ -349,6 +349,12 @@ def test_checked_in_profile_catalog_is_valid_breed_specific_and_balanced():
         "fawn",
         "apricot",
     ]
+    assert by_id["cat_tabby_bindpose_v2"]["base_template"][
+        "provenance_status"
+    ] == "verified"
+    assert by_id["cat_siamese_bindpose_v2"]["generation_contract"][
+        "prompt_template_id"
+    ] == "quadruped_bindpose_i2i_v2"
     for profile in profiles:
         requests = schema.sample_instance_requests(
             profile, count=9, batch_seed=20260713

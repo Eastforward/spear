@@ -1,0 +1,45 @@
+{
+  "schema": "avengine_controlled_reference_provenance_v1",
+  "reference_id": "quaternius_cat_idle_bind_pose_quarter_v1",
+  "state_classification": "research_candidate",
+  "reference": {
+    "path": "data/controlled_source_attributes_v1/references/animal/quaternius_cat_idle_bind_pose_quarter_v1.png",
+    "sha256": "10cb33f42cb523019008e1d27f76b869df1b460a4bb50a08534343e22c3e43bb",
+    "size_bytes": 1032102,
+    "canvas": [1024, 1024]
+  },
+  "source_rig": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/quaternius_animalpack/Cat.glb",
+    "sha256": "af2afb5e92c6d9daae98a918f8bd2bcb13ea4d7cfb880020d0d263e4d2f1277e",
+    "size_bytes": 163516,
+    "action": "Idle",
+    "source_frame": 1.0
+  },
+  "license_snapshot": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/README.md",
+    "sha256": "5887c71ec9a300997bee4445def8f4fb9014ea4e09b36522c1efb9b8eb3a5aef",
+    "size_bytes": 1347,
+    "declared_license": "CC0-1.0",
+    "upstream_url": "https://quaternius.com/packs/animatedanimals.html"
+  },
+  "render": {
+    "spear_revision": "8dd0f675e1088411e9ee37cb46114bffa54e811f",
+    "renderer_path": "tools/blender_render_glb_animation.py",
+    "renderer_sha256": "a074d55f50e0fa989fa24b1d7e0e551816d73b5a172fe15799dd9f0f854a1707",
+    "blender_version": "4.2.1 LTS",
+    "parameters": {
+      "view": "quarter",
+      "width": 1024,
+      "height": 1024,
+      "n_frames": 1,
+      "camera_distance_multiplier": 1.0
+    }
+  },
+  "usage": {
+    "purpose": "license-authenticated pose template for FLUX.2 cat appearance generation",
+    "pose_contract": "neutral quadruped standing reference; generated candidates must show four separated planted paws and a level spine",
+    "formal_dataset_registration_authorized": false
+  }
+}
