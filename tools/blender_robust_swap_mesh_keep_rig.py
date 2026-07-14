@@ -26,6 +26,7 @@ import sys
 import bpy
 import numpy as np
 from mathutils import Matrix, Quaternion, Vector
+from mathutils.bvhtree import BVHTree
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -52,6 +53,7 @@ from tools.robust_skin_transfer import (  # noqa: E402
     low_limb_bridge_component_face_mask,
     low_limb_bridge_face_mask,
     mesh_bounds,
+    normalize_rows,
     regularize_regions_by_connected_components,
     reverse_keyframe_time,
     target_region_labels_from_source_proximity,
@@ -182,6 +184,16 @@ def parse_argv():
                    help="region copies compatible source weights; auto uses Blender automatic weights "
                         "against the original armature after alignment; nearest copies from nearest "
                         "source mesh surface without animal semantic regions.")
+    p.add_argument(
+        "--nearest-backend",
+        default="bvh",
+        choices=["bvh", "bruteforce"],
+        help=(
+            "Nearest-surface query backend. bvh uses Blender's C-level triangle "
+            "BVH and is the production default; bruteforce preserves the older "
+            "reference implementation for small regression fixtures."
+        ),
+    )
     p.add_argument("--segmentation-mode", default="proximity",
                    choices=["proximity", "skeleton-graph", "proximity-components"],
                    help="Target anatomical segmentation mode used by --weight-mode region.")
@@ -254,6 +266,11 @@ def import_mesh_only(path):
     ext = os.path.splitext(path)[1].lower()
     if ext in (".glb", ".gltf"):
         bpy.ops.import_scene.gltf(filepath=path)
+    elif ext == ".fbx":
+        # Stable Rocketbox animal templates are distributed as skinned FBX.
+        # Only the imported mesh is returned; robust_transfer replaces its
+        # original parenting and weights with the selected runtime rig.
+        bpy.ops.import_scene.fbx(filepath=path, use_anim=False)
     elif ext == ".obj":
         bpy.ops.wm.obj_import(filepath=path)
     else:
@@ -918,10 +935,118 @@ def robust_transfer(src_mesh, tgt_mesh, armature_obj, args):
         max_iterations=96,
     )
     print(f"[inpaint] filled={int(filled_mask.sum())}/{len(filled_mask)} iterations={n_iters}", flush=True)
+    if not bool(np.all(filled_mask)):
+        raise SystemExit(
+            "skin transfer left unweighted target vertices: "
+            f"{int((~filled_mask).sum())}/{len(filled_mask)}"
+        )
 
     final_weights = keep_top_k_normalized(filled_weights, k=args.top_k)
     summarize_region_weights(final_weights, target_regions, group_names, "target region weight mass")
     write_vertex_groups(tgt_mesh, group_names, final_weights, args.min_weight)
+
+
+def transfer_weights_by_blender_bvh(
+    source_vertices,
+    source_faces,
+    source_weights,
+    target_vertices,
+    *,
+    max_distance=None,
+):
+    """Interpolate weights from the exact nearest source triangle via Blender BVH.
+
+    The legacy NumPy reference implementation scans every source face center
+    for every target vertex.  That is useful for tiny unit fixtures but becomes
+    quadratic at runtime-mesh scale.  Blender's BVH keeps the same
+    nearest-surface/barycentric contract while moving spatial lookup into its
+    C implementation.
+    """
+    source_vertices = np.asarray(source_vertices, dtype=np.float64)
+    source_faces = np.asarray(source_faces, dtype=np.int64)
+    source_weights = normalize_rows(source_weights)
+    target_vertices = np.asarray(target_vertices, dtype=np.float64)
+
+    if len(source_faces) == 0:
+        return (
+            np.zeros((len(target_vertices), source_weights.shape[1]), dtype=np.float64),
+            np.zeros(len(target_vertices), dtype=bool),
+            {
+                "backend": "blender_bvh",
+                "target_vertices": int(len(target_vertices)),
+                "matched": 0,
+                "unmatched": int(len(target_vertices)),
+                "no_candidates": int(len(target_vertices)),
+                "over_distance": 0,
+            },
+        )
+
+    bvh = BVHTree.FromPolygons(
+        [tuple(float(x) for x in row) for row in source_vertices],
+        [tuple(int(x) for x in row) for row in source_faces],
+        all_triangles=True,
+    )
+    face_vertices = source_vertices[source_faces]
+    out = np.zeros((len(target_vertices), source_weights.shape[1]), dtype=np.float64)
+    matched = np.zeros(len(target_vertices), dtype=bool)
+    no_candidates = 0
+    over_distance = 0
+
+    for i, point in enumerate(target_vertices):
+        hit = bvh.find_nearest(Vector(point))
+        if hit is None or hit[0] is None or hit[2] is None:
+            no_candidates += 1
+            continue
+        location, _normal, face_index, distance = hit
+        if max_distance is not None and float(distance) > float(max_distance):
+            over_distance += 1
+            continue
+
+        triangle = face_vertices[int(face_index)]
+        a, b, c = triangle
+        query = np.asarray(location, dtype=np.float64)
+        v0 = b - a
+        v1 = c - a
+        v2 = query - a
+        d00 = float(np.dot(v0, v0))
+        d01 = float(np.dot(v0, v1))
+        d11 = float(np.dot(v1, v1))
+        d20 = float(np.dot(v2, v0))
+        d21 = float(np.dot(v2, v1))
+        denominator = d00 * d11 - d01 * d01
+        if abs(denominator) <= 1.0e-20:
+            barycentric = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        else:
+            w1 = (d11 * d20 - d01 * d21) / denominator
+            w2 = (d00 * d21 - d01 * d20) / denominator
+            barycentric = np.array([1.0 - w1 - w2, w1, w2], dtype=np.float64)
+            barycentric = np.clip(barycentric, 0.0, 1.0)
+            total = float(barycentric.sum())
+            if total > 0.0:
+                barycentric /= total
+
+        face = source_faces[int(face_index)]
+        out[i] = (
+            barycentric[0] * source_weights[face[0]]
+            + barycentric[1] * source_weights[face[1]]
+            + barycentric[2] * source_weights[face[2]]
+        )
+        matched[i] = True
+        if (i + 1) % 20000 == 0:
+            print(
+                f"[nearest-bvh] queried {i + 1}/{len(target_vertices)} target vertices",
+                flush=True,
+            )
+
+    stats = {
+        "backend": "blender_bvh",
+        "target_vertices": int(len(target_vertices)),
+        "matched": int(matched.sum()),
+        "unmatched": int((~matched).sum()),
+        "no_candidates": int(no_candidates),
+        "over_distance": int(over_distance),
+    }
+    return normalize_rows(out), matched, stats
 
 
 def nearest_transfer(src_mesh, tgt_mesh, armature_obj, args):
@@ -935,14 +1060,23 @@ def nearest_transfer(src_mesh, tgt_mesh, armature_obj, args):
 
     diag = float(np.linalg.norm(mesh_bounds(src_vertices)[1] - mesh_bounds(src_vertices)[0]))
     max_distance = None if args.max_distance_ratio <= 0 else diag * args.max_distance_ratio
-    transferred, matched, stats = transfer_weights_by_nearest_surface(
-        source_vertices=src_vertices,
-        source_faces=src_faces,
-        source_weights=src_weights,
-        target_vertices=tgt_vertices,
-        max_distance=max_distance,
-        candidate_count=args.candidate_count,
-    )
+    if args.nearest_backend == "bvh":
+        transferred, matched, stats = transfer_weights_by_blender_bvh(
+            source_vertices=src_vertices,
+            source_faces=src_faces,
+            source_weights=src_weights,
+            target_vertices=tgt_vertices,
+            max_distance=max_distance,
+        )
+    else:
+        transferred, matched, stats = transfer_weights_by_nearest_surface(
+            source_vertices=src_vertices,
+            source_faces=src_faces,
+            source_weights=src_weights,
+            target_vertices=tgt_vertices,
+            max_distance=max_distance,
+            candidate_count=args.candidate_count,
+        )
     print(f"[nearest-transfer] stats={stats} bbox_diag={diag:.4f} "
           f"max_distance={max_distance}", flush=True)
     filled_weights, filled_mask, n_iters = inpaint_missing_weights(
@@ -987,6 +1121,15 @@ def main():
         raise SystemExit("new mesh import returned no mesh objects")
     tgt_mesh = max(new_meshes, key=lambda o: len(o.data.vertices))
     print(f"[load] target mesh={tgt_mesh.name} verts={len(tgt_mesh.data.vertices)}", flush=True)
+    # FBX targets commonly inherit a unit-conversion transform from their
+    # source armature. Detach while preserving world space before any weld,
+    # cardinal rotation, or bbox alignment.
+    if tgt_mesh.parent is not None:
+        target_world = tgt_mesh.matrix_world.copy()
+        tgt_mesh.parent = None
+        tgt_mesh.matrix_world = target_world
+        bpy.context.view_layer.update()
+        print("[target-parent] detached imported parent while preserving world transform", flush=True)
     weld_target_position_duplicates(tgt_mesh)
 
     if args.flip_x:

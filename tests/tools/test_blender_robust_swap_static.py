@@ -13,6 +13,18 @@ def test_blender_robust_swap_exposes_nearest_weight_mode():
     assert 'args.weight_mode == "nearest"' in text
 
 
+def test_blender_robust_swap_defaults_to_accelerated_bvh_nearest_surface():
+    text = SCRIPT.read_text()
+
+    assert '"--nearest-backend"' in text
+    assert 'default="bvh"' in text
+    assert 'choices=["bvh", "bruteforce"]' in text
+    assert "def transfer_weights_by_blender_bvh(" in text
+    assert "BVHTree.FromPolygons" in text
+    assert 'args.nearest_backend == "bvh"' in text
+    assert "barycentric[0] * source_weights[face[0]]" in text
+
+
 def test_blender_robust_swap_exposes_target_yaw_rotation():
     text = SCRIPT.read_text()
 
@@ -74,3 +86,22 @@ def test_blender_robust_swap_still_recomputes_normals_before_weld_helper():
     assert 'bpy.ops.mesh.select_all(action="SELECT")' in function_text
     assert "bpy.ops.mesh.normals_make_consistent(inside=False)" in function_text
     assert function_text.rstrip().endswith('bpy.ops.object.mode_set(mode="OBJECT")')
+
+
+def test_blender_robust_swap_accepts_stable_rocketbox_fbx_meshes():
+    text = SCRIPT.read_text()
+    function_text = text[
+        text.index("def import_mesh_only(path):") : text.index("def import_rig_scene(path):")
+    ]
+
+    assert 'elif ext == ".fbx":' in function_text
+    assert "bpy.ops.import_scene.fbx(filepath=path, use_anim=False)" in function_text
+
+
+def test_blender_robust_swap_detaches_fbx_parent_and_rejects_zero_weights():
+    text = SCRIPT.read_text()
+
+    assert "target_world = tgt_mesh.matrix_world.copy()" in text
+    assert "tgt_mesh.parent = None" in text
+    assert "tgt_mesh.matrix_world = target_world" in text
+    assert "skin transfer left unweighted target vertices" in text
