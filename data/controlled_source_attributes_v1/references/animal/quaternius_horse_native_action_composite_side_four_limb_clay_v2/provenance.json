@@ -1,0 +1,72 @@
+{
+  "schema": "avengine_controlled_reference_provenance_v1",
+  "reference_id": "quaternius_horse_native_action_composite_side_four_limb_clay_v2",
+  "state_classification": "research_candidate",
+  "reference": {
+    "path": "data/controlled_source_attributes_v1/references/animal/quaternius_horse_native_action_composite_side_four_limb_clay_v2/frame_0000.png",
+    "sha256": "565c18aa24c3a0fdc8e56938b7b72468784cb804a5dd667b422faf830cec6a4e",
+    "size_bytes": 1053924,
+    "canvas": [1024, 1024]
+  },
+  "source_rig": {
+    "root_id": "spear_repo",
+    "path": "tmp/controlled_source_asset_execution_v1/quaternius_ultimate_native_walk_idle_v2_20260714/Horse_walk_idle.glb",
+    "sha256": "b9d1e2a04a1348547400aef2b01dfb00217570d2aa940b036151f33679d1d769",
+    "size_bytes": 389256,
+    "pose": "authored_rest_pose_with_independently_selected_native_action_far_limb_rotations"
+  },
+  "license_snapshot": {
+    "manifest_path": "/data/jzy/code/AVEngine/external/SPEAR/tmp/controlled_source_asset_execution_v1/quaternius_ultimate_native_walk_idle_v2_20260714/Horse_manifest.json",
+    "evidence_path": "/data/jzy/code/Spatial/v77_4ch_S2L/docs/asset_checklist.md",
+    "evidence_sha256": "637be11c941b02ef304679ebea64a8e05572ad4fc3bb349c341e08391fe7d69f",
+    "declared_license": "CC0-1.0"
+  },
+  "render": {
+    "spear_base_revision": "936d91fd5c95b743919311341d0ef8c21f08c353",
+    "renderer_path": "tools/blender_render_glb_animation.py",
+    "renderer_sha256": "7736361cbd8c828dcaec90a1fc4daaa9f3afe781f56dc3ab4c03ab58e79a18b2",
+    "blender_version": "4.2.1 LTS",
+    "parameters": {
+      "rest_pose": true,
+      "orthographic": true,
+      "view": "side",
+      "source_front_axis": "negative_y",
+      "asset_cardinal_yaw_degrees": 90,
+      "canonical_front_axis": "positive_x",
+      "automatic_direction_inference": false,
+      "quadruped_far_limb_action_pose_ratio": 0.18,
+      "quadruped_pose_action": "Walking_AnimalArmature",
+      "quadruped_pose_samples": 57,
+      "far_front_selected_frame": 22.8,
+      "far_front_rotation_blend": 0.9375,
+      "far_hind_selected_frame": 7.8,
+      "far_hind_rotation_blend": 0.34375,
+      "maximum_ground_delta_height_ratio": 0.012054,
+      "chain_root_translation": false,
+      "matrix_translation_and_scale_from_action": false,
+      "far_limb_selection": "geometry_inferred_positive_y_front_and_hind_chains",
+      "pose_template_clay_color": "#b88b6a",
+      "smooth_shading": true,
+      "torso_transform": "identity_except_whole_asset_cardinal_yaw",
+      "camera_yaw_degrees": 0,
+      "width": 1024,
+      "height": 1024,
+      "n_frames": 1,
+      "camera_distance_multiplier": 1.5,
+      "ground_plane": true
+    }
+  },
+  "quality_evidence": {
+    "four_terminal_hooves_visible": true,
+    "maximum_ground_delta_height_ratio": 0.012054,
+    "shoulder_or_hip_chain_translation_used": false,
+    "visible_stretched_surface_patch": false,
+    "manual_fine_yaw_used": false
+  },
+  "usage": {
+    "purpose": "strict current-flow uniform-clay horse pose guide for FLUX.2 then Pixal3D/TRELLIS",
+    "pose_contract": "exact orthographic side torso/head, head world +X, four grounded and individually visible leg silhouettes, no fine yaw correction",
+    "appearance_contract": "uniform clay removes source identity and material leakage while retaining a license-authenticated anatomical and motion-family guide",
+    "formal_dataset_registration_authorized": false
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "schema": "avengine_strict_native_i2i_i23d_animal_contract_v1",
+  "contract_id": "strict_native_i2i_i23d_animal_v1",
+  "state_classification": "research_candidate",
+  "purpose": "reproducible FLUX.2 to Pixal3D/TRELLIS to native rig to motion-family animation pipeline",
+  "attribute_contract": {
+    "maximum_values_per_randomized_attribute": 3,
+    "required_common_domains": ["size", "body_build", "life_stage"],
+    "appearance_domain": "taxon_specific_color_or_pattern_domain",
+    "sampling": "deterministic_code_only",
+    "prompt_generation": "complete_prompt_from_sampled_json",
+    "relative_edit_history_forbidden": true
+  },
+  "pose_reference_contract": {
+    "license_authenticated_guide_required": true,
+    "uniform_clay_appearance": true,
+    "canonical_up_axis": "positive_z",
+    "canonical_front_axis": "positive_x",
+    "direction_adjustment": "explicit_cardinal_yaw_only",
+    "fine_yaw_inference_forbidden": true,
+    "head_yaw_must_not_define_body_direction": true,
+    "quadruped": {
+      "camera": "exact_orthographic_side",
+      "torso_centerline": "straight_and_level",
+      "limbs": "four_separate_visible_silhouettes",
+      "feet": "same_ground_plane",
+      "far_limb_pose": "geometry_inferred_native_action_joint_rotations_blended_toward_rest",
+      "chain_root_translation_forbidden": true,
+      "maximum_ground_delta_height_ratio": 0.025
+    },
+    "bird": {
+      "adapters": ["folded_wing_perched_or_standing", "flight_wings_separated"],
+      "feet_or_wings": "motion_specific_separation_required"
+    },
+    "other_motion_families": "must_define_family_specific_pose_adapter_before_i23d"
+  },
+  "generation_contract": {
+    "image_model": {
+      "name": "black-forest-labs/FLUX.2-klein-4B",
+      "revision": "e7b7dc27f91deacad38e78976d1f2b499d76a294",
+      "local_files_only": true
+    },
+    "default_i23d": {
+      "name": "Pixal3D",
+      "revision": "0b31f9160aa400719af409098bff7936a932f726"
+    },
+    "comparison_i23d": {
+      "name": "microsoft/TRELLIS.2-4B",
+      "revision": "af44b45f2e35a493886929c6d786e563ec68364d"
+    },
+    "foreground_model_revision": "3c276edd87d6f6e569ff0c4400e086807d0f3881",
+    "fov_search_as_geometry_repair_forbidden": true,
+    "raw_pbr_mesh_required": true,
+    "untextured_cleaned_obj_forbidden": true,
+    "hunyuan3d_2x": "technical_spike_only_and_rejected_from_formal_dataset"
+  },
+  "ordered_gates": [
+    {
+      "gate": "attributes_and_prompt",
+      "requirements": ["schema_valid", "all_attributes_named", "non_target_attributes_locked"]
+    },
+    {
+      "gate": "flux2_reference",
+      "requirements": ["species_correct", "strict_pose_preserved", "limbs_or_motion_parts_separated", "plain_background"]
+    },
+    {
+      "gate": "i23d_static",
+      "requirements": ["pbr_present", "topology_audited", "no_visible_holes", "no_fused_motion_parts", "grounding_valid"]
+    },
+    {
+      "gate": "pre_animation_direction",
+      "requirements": ["human_review_page_has_up_and_forward_arrows", "cardinal_rotation_only", "body_axis_matches_positive_x", "decision_persisted"]
+    },
+    {
+      "gate": "native_rig",
+      "requirements": ["mesh_matched_skeleton_and_weights", "semantic_chain_coverage", "rest_matrix_readback", "family_specific_skeleton"]
+    },
+    {
+      "gate": "animation",
+      "requirements": ["family_specific_actions", "foot_or_contact_surface_audit", "loop_audit", "front_axis_matches_motion"]
+    },
+    {
+      "gate": "deformation",
+      "requirements": ["41_frame_readback", "cross_limb_weight_leakage_removed", "no_visible_stretch_holes", "pbr_mesh_preserved"]
+    },
+    {
+      "gate": "media_and_scene",
+      "requirements": ["glb_export_readback", "walk_and_idle_or_family_equivalent_videos", "trajectory_and_topdown", "audio_event_timestamps", "collision_and_occlusion_qa"]
+    }
+  ],
+  "current_evidence": {
+    "cat_dog": {
+      "status": "user_reviewed_significantly_improved_pending_final_approval",
+      "manifest": "/data/jzy/code/AVEngine/external/SPEAR/tmp/controlled_source_asset_execution_v1/generated_animal_motion_aware_weight_repair_200k_v1_20260715/cross_species_canary_manifest.json",
+      "formal_dataset_registration_authorized": false
+    },
+    "horse": {
+      "status": "strict_native_action_composite_pose_reference_ready_flux2_canary_pending",
+      "reference": "/data/jzy/code/AVEngine/external/SPEAR/data/controlled_source_attributes_v1/references/animal/quaternius_horse_native_action_composite_side_four_limb_clay_v2/frame_0000.png",
+      "reference_sha256": "565c18aa24c3a0fdc8e56938b7b72468784cb804a5dd667b422faf830cec6a4e",
+      "superseded_reference": {
+        "path": "/data/jzy/code/AVEngine/external/SPEAR/data/controlled_source_attributes_v1/references/animal/quaternius_horse_authored_rest_pose_side_four_limb_clay_v1/frame_0000.png",
+        "state_classification": "rejected",
+        "reason": "translated limb roots produced surface streaks inherited by FLUX.2"
+      },
+      "formal_dataset_registration_authorized": false
+    }
+  },
+  "formal_dataset_registration_authorized": false
+}
