@@ -235,6 +235,16 @@ def parse_argv():
                    help="Comma-separated glTF animation target paths kept by --ue-safe-animation-channels.")
     p.add_argument("--backface-culling", default="no", choices=["yes", "no"],
                    help="Use single-sided material export. Usually keep no for Hunyuan fur shells.")
+    p.add_argument(
+        "--animal-nonmetallic-roughness",
+        type=float,
+        default=None,
+        help=(
+            "Optional constant roughness in [0,1]. When set, disconnect metallic "
+            "and roughness texture inputs, force metallic=0, and retain the "
+            "imported base-color PBR texture for a matte animal-fur runtime policy."
+        ),
+    )
     p.add_argument("--remove-ground-artifacts", default="yes", choices=["yes", "no"],
                    help="Delete low, flat disconnected floor/shadow cards before skin transfer.")
     p.add_argument("--ground-artifact-max-center-height-ratio", type=float, default=0.035)
@@ -717,6 +727,54 @@ def assign_texture(mesh_obj, diffuse_path, use_backface_culling=False):
     print(f"[texture] assigned {diffuse_path} backface_culling={use_backface_culling}", flush=True)
 
 
+def apply_animal_nonmetallic_material_policy(mesh_obj, roughness):
+    if roughness is None:
+        print("[material] imported PBR metallic/roughness policy preserved", flush=True)
+        return {"enabled": False, "principled_nodes_changed": 0}
+    roughness = float(roughness)
+    if not 0.0 <= roughness <= 1.0:
+        raise SystemExit("--animal-nonmetallic-roughness must be in [0,1]")
+    materials = {
+        slot.material
+        for slot in mesh_obj.material_slots
+        if slot.material is not None
+    }
+    changed = 0
+    metallic_links_removed = 0
+    roughness_links_removed = 0
+    for material in materials:
+        if not material.use_nodes or material.node_tree is None:
+            continue
+        for node in material.node_tree.nodes:
+            if node.type != "BSDF_PRINCIPLED":
+                continue
+            metallic = node.inputs.get("Metallic")
+            roughness_input = node.inputs.get("Roughness")
+            if metallic is None or roughness_input is None:
+                continue
+            for link in list(metallic.links):
+                material.node_tree.links.remove(link)
+                metallic_links_removed += 1
+            for link in list(roughness_input.links):
+                material.node_tree.links.remove(link)
+                roughness_links_removed += 1
+            metallic.default_value = 0.0
+            roughness_input.default_value = roughness
+            changed += 1
+    if changed == 0:
+        raise SystemExit("animal nonmetallic policy found no Principled BSDF material")
+    result = {
+        "enabled": True,
+        "roughness": roughness,
+        "principled_nodes_changed": changed,
+        "metallic_links_removed": metallic_links_removed,
+        "roughness_links_removed": roughness_links_removed,
+        "base_color_policy": "preserve_imported_pbr_base_color",
+    }
+    print(f"[material] animal nonmetallic policy={result}", flush=True)
+    return result
+
+
 def parent_to_armature(mesh_obj, armature_obj):
     mesh_obj.parent = armature_obj
     mesh_obj.matrix_parent_inverse = armature_obj.matrix_world.inverted()
@@ -1148,6 +1206,10 @@ def main():
         assign_texture(tgt_mesh, args.new_diffuse, use_backface_culling=(args.backface_culling == "yes"))
     else:
         print("[texture] no --new-diffuse provided; keeping imported material", flush=True)
+    apply_animal_nonmetallic_material_policy(
+        tgt_mesh,
+        args.animal_nonmetallic_roughness,
+    )
     if args.weight_mode == "auto":
         auto_weight_to_armature(tgt_mesh, armature)
     elif args.weight_mode == "nearest":

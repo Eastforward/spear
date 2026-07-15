@@ -58,6 +58,36 @@ def parse_argv():
     parser.add_argument("--target-faces", type=int, default=100000)
     parser.add_argument("--smooth-iterations", type=int, default=2)
     parser.add_argument(
+        "--shrinkwrap-strength",
+        type=float,
+        default=1.0,
+        help=(
+            "Blend between the clean voxel surface (0) and the nearest raw "
+            "I23D surface (1). Values below 1 prevent closed proxies from "
+            "copying deep crack-like source folds."
+        ),
+    )
+    parser.add_argument(
+        "--post-shrinkwrap-smooth-iterations",
+        type=int,
+        default=0,
+        help=(
+            "Small volume-preserving cleanup after returning to the source "
+            "surface. Use this to remove closed but visually crack-like I23D "
+            "folds before PBR bake and rigging."
+        ),
+    )
+    parser.add_argument(
+        "--torso-fold-repair-iterations",
+        type=int,
+        default=0,
+        help=(
+            "Optional weighted Laplacian cleanup restricted to the normalized "
+            "mid-torso. This removes closed crack-like abdomen folds without "
+            "smoothing paws, head, or tail."
+        ),
+    )
+    parser.add_argument(
         "--attribute-transfer-backend",
         choices=("bake", "bvh", "data-transfer"),
         default="bake",
@@ -178,13 +208,88 @@ def voxel_remesh(proxy, voxel_size, smooth_iterations):
         bpy.ops.object.modifier_apply(modifier=modifier.name)
 
 
-def shrinkwrap_to_source(proxy, source):
+def post_shrinkwrap_smooth(proxy, iterations):
+    activate(proxy)
+    for index in range(iterations):
+        modifier = proxy.modifiers.new(
+            name=f"PostShrinkwrapCleanup{index:02d}",
+            type="LAPLACIANSMOOTH",
+        )
+        modifier.iterations = 1
+        modifier.lambda_factor = 0.08
+        modifier.use_volume_preserve = True
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
+
+
+def repair_normalized_torso_folds(proxy, iterations):
+    if iterations == 0:
+        return {
+            "iterations": 0,
+            "selected_vertices": 0,
+            "policy": "disabled",
+        }
+    points = np.asarray(
+        [tuple(vertex.co) for vertex in proxy.data.vertices],
+        dtype=np.float64,
+    )
+    minimum = points.min(axis=0)
+    extent = np.ptp(points, axis=0)
+    normalized = (points - minimum) / np.maximum(extent, 1.0e-9)
+    longitudinal_axis = 0 if extent[0] >= extent[1] else 1
+    longitudinal = normalized[:, longitudinal_axis]
+    vertical = normalized[:, 2]
+
+    def tapered(values, lower, upper, fade):
+        enter = np.clip((values - lower) / fade, 0.0, 1.0)
+        leave = np.clip((upper - values) / fade, 0.0, 1.0)
+        return np.minimum(enter, leave)
+
+    weights = tapered(longitudinal, 0.25, 0.70, 0.08)
+    weights *= tapered(vertical, 0.34, 0.72, 0.08)
+    selected = np.flatnonzero(weights > 1.0e-4)
+    if len(selected) == 0:
+        raise RuntimeError("normalized torso-fold repair selected no vertices")
+    group = proxy.vertex_groups.new(name="NormalizedTorsoFoldRepair")
+    group_name = group.name
+    for index in selected:
+        group.add([int(index)], float(weights[index]), "REPLACE")
+    activate(proxy)
+    modifier = proxy.modifiers.new(
+        name="NormalizedTorsoFoldCleanup",
+        type="LAPLACIANSMOOTH",
+    )
+    modifier.vertex_group = group_name
+    modifier.iterations = iterations
+    modifier.lambda_factor = 0.18
+    modifier.use_volume_preserve = True
+    bpy.ops.object.modifier_apply(modifier=modifier.name)
+    remaining_group = proxy.vertex_groups.get(group_name)
+    if remaining_group is not None:
+        proxy.vertex_groups.remove(remaining_group)
+    return {
+        "iterations": iterations,
+        "selected_vertices": int(len(selected)),
+        "longitudinal_axis": int(longitudinal_axis),
+        "normalized_longitudinal_range": [0.25, 0.70],
+        "normalized_vertical_range": [0.34, 0.72],
+        "fade": 0.08,
+        "lambda_factor": 0.18,
+        "policy": "weighted_mid_torso_only_preserve_volume",
+    }
+
+
+def shrinkwrap_to_source(proxy, source, strength):
+    clean_positions = [vertex.co.copy() for vertex in proxy.data.vertices]
     activate(proxy)
     modifier = proxy.modifiers.new(name="ReturnToPBRSurface", type="SHRINKWRAP")
     modifier.target = source
     modifier.wrap_method = "NEAREST_SURFACEPOINT"
     modifier.wrap_mode = "ON_SURFACE"
     bpy.ops.object.modifier_apply(modifier=modifier.name)
+    if strength < 1.0:
+        for vertex, clean in zip(proxy.data.vertices, clean_positions):
+            vertex.co = clean.lerp(vertex.co, strength)
+        proxy.data.update()
 
 
 def decimate(proxy, target_faces):
@@ -596,6 +701,14 @@ def main():
         raise SystemExit("--target-faces must be in [10000, 1000000]")
     if not 0 <= args.smooth_iterations <= 8:
         raise SystemExit("--smooth-iterations must be in [0, 8]")
+    if not 0.0 <= args.shrinkwrap_strength <= 1.0:
+        raise SystemExit("--shrinkwrap-strength must be in [0, 1]")
+    if not 0 <= args.post_shrinkwrap_smooth_iterations <= 8:
+        raise SystemExit(
+            "--post-shrinkwrap-smooth-iterations must be in [0, 8]"
+        )
+    if not 0 <= args.torso_fold_repair_iterations <= 20:
+        raise SystemExit("--torso-fold-repair-iterations must be in [0, 20]")
     if args.bake_resolution not in (512, 1024, 2048, 4096):
         raise SystemExit("--bake-resolution must be 512, 1024, 2048, or 4096")
     if any(value <= 0.0 or value > 2.0 for value in args.base_color_gain):
@@ -657,8 +770,29 @@ def main():
     voxel_topology = topology_stats(proxy)
     timer = stage("voxel_remesh_done", timer, faces=voxel_topology["faces"])
     timer = stage("shrinkwrap_start", timer)
-    shrinkwrap_to_source(proxy, source)
+    shrinkwrap_to_source(proxy, source, args.shrinkwrap_strength)
     timer = stage("shrinkwrap_done", timer)
+    timer = stage(
+        "post_shrinkwrap_smooth_start",
+        timer,
+        iterations=args.post_shrinkwrap_smooth_iterations,
+    )
+    post_shrinkwrap_smooth(proxy, args.post_shrinkwrap_smooth_iterations)
+    timer = stage("post_shrinkwrap_smooth_done", timer)
+    timer = stage(
+        "torso_fold_repair_start",
+        timer,
+        iterations=args.torso_fold_repair_iterations,
+    )
+    torso_fold_repair = repair_normalized_torso_folds(
+        proxy,
+        args.torso_fold_repair_iterations,
+    )
+    timer = stage(
+        "torso_fold_repair_done",
+        timer,
+        selected_vertices=torso_fold_repair["selected_vertices"],
+    )
     timer = stage("decimate_start", timer, target_faces=args.target_faces)
     actual_faces = decimate(proxy, args.target_faces)
     timer = stage("decimate_done", timer, faces=actual_faces)
@@ -718,6 +852,13 @@ def main():
             "voxel_size": voxel_size,
             "target_faces": args.target_faces,
             "smooth_iterations": args.smooth_iterations,
+            "shrinkwrap_strength": args.shrinkwrap_strength,
+            "post_shrinkwrap_smooth_iterations": (
+                args.post_shrinkwrap_smooth_iterations
+            ),
+            "torso_fold_repair_iterations": (
+                args.torso_fold_repair_iterations
+            ),
             "double_sided": bool(args.double_sided),
             "attribute_transfer_backend": args.attribute_transfer_backend,
             "bake_resolution": args.bake_resolution,
@@ -730,6 +871,7 @@ def main():
             "final": final_topology,
         },
         "surface_attributes": attributes,
+        "torso_fold_repair": torso_fold_repair,
         "authority_contract": {
             "attribute_source_pbr_material_reused": (
                 args.attribute_transfer_backend != "bake"

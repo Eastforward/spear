@@ -45,12 +45,44 @@ def test_proxy_reports_every_long_phase_without_waiting_for_completion():
         "import_start",
         "voxel_remesh_start",
         "shrinkwrap_start",
+        "post_shrinkwrap_smooth_start",
         "decimate_start",
         "surface_transfer_start",
         "export_start",
     ):
         assert f'"{phase}"' in text
     assert "flush=True" in text
+
+
+def test_proxy_can_remove_closed_crack_like_folds_after_shrinkwrap():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert '"--post-shrinkwrap-smooth-iterations"' in text
+    assert "post_shrinkwrap_smooth(proxy" in text
+    assert 'type="LAPLACIANSMOOTH"' in text
+    assert "modifier.use_volume_preserve = True" in text
+    assert '"post_shrinkwrap_smooth_iterations"' in text
+
+
+def test_proxy_can_limit_return_to_a_defective_raw_surface():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert '"--shrinkwrap-strength"' in text
+    assert "clean_positions = [vertex.co.copy()" in text
+    assert "clean.lerp(vertex.co, strength)" in text
+    assert '"shrinkwrap_strength": args.shrinkwrap_strength' in text
+
+
+def test_proxy_can_repair_only_the_normalized_mid_torso():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert '"--torso-fold-repair-iterations"' in text
+    assert "repair_normalized_torso_folds" in text
+    assert 'name="NormalizedTorsoFoldRepair"' in text
+    assert "modifier.vertex_group = group_name" in text
+    assert "remaining_group = proxy.vertex_groups.get(group_name)" in text
+    assert '"weighted_mid_torso_only_preserve_volume"' in text
+    assert '"torso_fold_repair": torso_fold_repair' in text
 
 
 def test_proxy_can_use_a_lower_face_pbr_copy_only_for_attribute_transfer():
@@ -60,7 +92,7 @@ def test_proxy_can_use_a_lower_face_pbr_copy_only_for_attribute_transfer():
     assert "attribute_source_path != source_path" in text
     assert "attribute_source," in text
     assert "full_resolution_source_remains_geometry_authority" in text
-    assert "shrinkwrap_to_source(proxy, source)" in text
+    assert "shrinkwrap_to_source(proxy, source, args.shrinkwrap_strength)" in text
 
 
 def test_proxy_defaults_to_pbr_bake_and_retains_diagnostic_transfer_backends():

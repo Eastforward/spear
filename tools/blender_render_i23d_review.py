@@ -49,8 +49,14 @@ def parse_args(argv=None):
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--width", type=int, default=600)
     parser.add_argument("--height", type=int, default=800)
+    parser.add_argument("--samples", type=int, default=16)
     parser.add_argument("--include-top", action="store_true")
     parser.add_argument("--animal-material-preview", action="store_true")
+    parser.add_argument(
+        "--clay-preview",
+        action="store_true",
+        help="Replace imported materials with a neutral clay material for geometry QA.",
+    )
     parser.add_argument(
         "--front-axis",
         choices=("negative-y", "positive-y", "negative-x", "positive-x"),
@@ -70,6 +76,12 @@ def main(argv=None):
     from mathutils import Vector
 
     args = parse_args(_blender_argv() if argv is None else argv)
+    if not 1 <= args.samples <= 256:
+        raise SystemExit("--samples must be in [1, 256]")
+    if args.animal_material_preview and args.clay_preview:
+        raise SystemExit(
+            "--animal-material-preview and --clay-preview are mutually exclusive"
+        )
     input_path = args.input.resolve()
     output_dir = args.output_dir.resolve()
     if input_path.suffix.lower() not in {".glb", ".gltf"}:
@@ -88,7 +100,18 @@ def main(argv=None):
         "metallic_links_removed": 0,
         "roughness_links_removed": 0,
     }
-    if args.animal_material_preview:
+    if args.clay_preview:
+        material_preview["mode"] = "neutral_clay_geometry_qa_v1"
+        clay = bpy.data.materials.new("Neutral_Clay_Geometry_QA")
+        clay.use_nodes = True
+        principled = clay.node_tree.nodes.get("Principled BSDF")
+        principled.inputs["Base Color"].default_value = (0.36, 0.39, 0.43, 1.0)
+        principled.inputs["Metallic"].default_value = 0.0
+        principled.inputs["Roughness"].default_value = 0.82
+        for mesh in meshes:
+            mesh.data.materials.clear()
+            mesh.data.materials.append(clay)
+    elif args.animal_material_preview:
         material_preview["mode"] = "ue_animal_nonmetallic_roughness_preview_v1"
         materials = {
             slot.material
@@ -174,6 +197,7 @@ def main(argv=None):
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
     scene.render.film_transparent = False
+    scene.eevee.taa_render_samples = args.samples
     if args.animal_material_preview:
         scene.view_settings.exposure = -0.5
 
@@ -197,6 +221,7 @@ def main(argv=None):
         "front_axis": args.front_axis,
         "views": {name: list(location) for name, location in views.items()},
         "resolution": [args.width, args.height],
+        "samples": args.samples,
         "material_preview": material_preview,
         "lighting": {
             "area_light_scale": light_scale,

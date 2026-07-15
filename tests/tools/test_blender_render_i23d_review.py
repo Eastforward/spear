@@ -56,6 +56,8 @@ def test_parse_args_accepts_static_glb_review_contract(tmp_path):
             "600",
             "--height",
             "800",
+            "--samples",
+            "8",
             "--front-axis",
             "positive-y",
         ]
@@ -64,9 +66,11 @@ def test_parse_args_accepts_static_glb_review_contract(tmp_path):
     assert args.input == tmp_path / "asset.glb"
     assert args.output_dir == tmp_path / "renders"
     assert (args.width, args.height) == (600, 800)
+    assert args.samples == 8
     assert args.front_axis == "positive-y"
     assert args.include_top is False
     assert args.animal_material_preview is False
+    assert args.clay_preview is False
 
     top_args = renderer.parse_args(
         [
@@ -80,6 +84,19 @@ def test_parse_args_accepts_static_glb_review_contract(tmp_path):
     )
     assert top_args.include_top is True
     assert top_args.animal_material_preview is True
+    assert top_args.clay_preview is False
+    assert top_args.samples == 16
+
+    clay_args = renderer.parse_args(
+        [
+            "--input",
+            str(tmp_path / "asset.glb"),
+            "--output-dir",
+            str(tmp_path / "renders"),
+            "--clay-preview",
+        ]
+    )
+    assert clay_args.clay_preview is True
 
 
 def test_renderer_exposes_blender_main_without_importing_bpy_at_module_load():

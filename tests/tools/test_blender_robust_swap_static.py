@@ -105,3 +105,13 @@ def test_blender_robust_swap_detaches_fbx_parent_and_rejects_zero_weights():
     assert "tgt_mesh.parent = None" in text
     assert "tgt_mesh.matrix_world = target_world" in text
     assert "skin transfer left unweighted target vertices" in text
+
+
+def test_blender_robust_swap_can_apply_nonmetallic_animal_runtime_material():
+    text = SCRIPT.read_text()
+
+    assert "--animal-nonmetallic-roughness" in text
+    assert "apply_animal_nonmetallic_material_policy" in text
+    assert 'metallic.default_value = 0.0' in text
+    assert "roughness_input.default_value = roughness" in text
+    assert '"preserve_imported_pbr_base_color"' in text
