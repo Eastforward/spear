@@ -1,0 +1,22 @@
+{
+  "actor_scale": 0.332,
+  "asset_id": "horse_compact_tail_pixal_v4_watertight_r8_37277bdac362",
+  "audio_lookup": "horse_neigh",
+  "audio_source_height_offset_m": 1.3,
+  "breed": "bay_horse",
+  "formal_dataset_registration_authorized": false,
+  "ground_snap_max_abs_correction_cm": 66.4,
+  "profile_schema_id": "horse_bay_native_action_composite_side_clay_v4",
+  "sampled_attributes": {
+    "body_build": "standard",
+    "coat_tone": "bay",
+    "life_stage": "adult",
+    "size": "medium"
+  },
+  "scale_rationale": "The generated runtime mesh is about 4.51 Blender/glTF units high; actor_scale 0.332 yields an approximately 1.50 m visible horse height and matches the already validated Apartment horse scale.",
+  "schema": "user_approved_generated_animal_apartment_config_v1",
+  "species": "horse",
+  "state_classification": "research_candidate",
+  "tag": "pixal_horse_compact_tail_v4_r8_yaw180",
+  "walking_forward_yaw_offset_deg": 90.0
+}
