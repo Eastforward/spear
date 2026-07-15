@@ -131,33 +131,78 @@ def action_sha256(actions) -> str:
     return digest.hexdigest()
 
 
-def vertex_group_weight(mesh, vertex, tokens):
+def parse_optional_csv(value, label):
+    if value is None:
+        return ()
+    if not isinstance(value, str):
+        raise RuntimeError(f"{label} must be a CSV string")
+    result = tuple(item.strip().lower() for item in value.split(",") if item.strip())
+    if not result:
+        raise RuntimeError(f"{label} cannot be empty")
+    return result
+
+
+def vertex_group_weight(mesh, vertex, tokens, exact_group_names=()):
     names = {group.index: group.name.lower() for group in mesh.vertex_groups}
+    exact = set(exact_group_names)
     return min(
         1.0,
         sum(
             float(membership.weight)
             for membership in vertex.groups
-            if any(token in names.get(membership.group, "") for token in tokens)
+            if (
+                names.get(membership.group, "") in exact
+                if exact
+                else any(
+                    token in names.get(membership.group, "") for token in tokens
+                )
+            )
         ),
     )
 
 
-def apply_shape_controls(mesh, torso_girth_scale, head_scale):
+def weighted_rms_radius(coordinates, weights, axes):
+    total = float(weights.sum())
+    center = np.sum(coordinates * weights[:, None], axis=0) / total
+    selected_axes = list(axes)
+    offsets = coordinates[:, selected_axes] - center[selected_axes]
+    return float(
+        np.sqrt(np.sum(weights * np.sum(np.square(offsets), axis=1)) / total)
+    )
+
+
+def apply_shape_controls(
+    mesh,
+    torso_girth_scale,
+    head_scale,
+    *,
+    torso_group_names=(),
+    head_group_names=(),
+):
     count = len(mesh.data.vertices)
     coordinates = np.empty(count * 3, dtype=np.float64)
     mesh.data.vertices.foreach_get("co", coordinates)
     coordinates = coordinates.reshape((-1, 3))
     torso = np.asarray(
         [
-            vertex_group_weight(mesh, vertex, ("pelvis", "spine"))
+            vertex_group_weight(
+                mesh,
+                vertex,
+                ("pelvis", "spine"),
+                exact_group_names=torso_group_names,
+            )
             for vertex in mesh.data.vertices
         ],
         dtype=np.float64,
     )
     head = np.asarray(
         [
-            vertex_group_weight(mesh, vertex, ("head", "ear", "mouth", "eye"))
+            vertex_group_weight(
+                mesh,
+                vertex,
+                ("head", "ear", "mouth", "eye"),
+                exact_group_names=head_group_names,
+            )
             for vertex in mesh.data.vertices
         ],
         dtype=np.float64,
@@ -165,6 +210,8 @@ def apply_shape_controls(mesh, torso_girth_scale, head_scale):
     if np.count_nonzero(torso > 0.05) < 100 or np.count_nonzero(head > 0.05) < 50:
         raise RuntimeError("stable template lacks usable torso/head semantic skin groups")
 
+    torso_rms_before = weighted_rms_radius(coordinates, torso, (1, 2))
+    head_rms_before = weighted_rms_radius(coordinates, head, (0, 1, 2))
     torso_weight_sum = float(torso.sum())
     torso_center_y = float(np.sum(coordinates[:, 1] * torso) / torso_weight_sum)
     torso_center_z = float(np.sum(coordinates[:, 2] * torso) / torso_weight_sum)
@@ -181,6 +228,8 @@ def apply_shape_controls(mesh, torso_girth_scale, head_scale):
     head_center = np.sum(coordinates * head[:, None], axis=0) / head_weight_sum
     head_factor = 1.0 + (float(head_scale) - 1.0) * head
     coordinates = head_center + (coordinates - head_center) * head_factor[:, None]
+    torso_rms_after = weighted_rms_radius(coordinates, torso, (1, 2))
+    head_rms_after = weighted_rms_radius(coordinates, head, (0, 1, 2))
     mesh.data.vertices.foreach_set("co", coordinates.reshape(-1))
     mesh.data.update()
     return {
@@ -188,6 +237,18 @@ def apply_shape_controls(mesh, torso_girth_scale, head_scale):
         "head_selected_vertices": int(np.count_nonzero(head > 0.05)),
         "torso_girth_scale": float(torso_girth_scale),
         "head_scale": float(head_scale),
+        "torso_group_names_csv": ",".join(torso_group_names),
+        "head_group_names_csv": ",".join(head_group_names),
+        "semantic_measurements": {
+            "torso_weighted_lateral_rms_before": torso_rms_before,
+            "torso_weighted_lateral_rms_after": torso_rms_after,
+            "torso_weighted_lateral_rms_ratio": torso_rms_after
+            / max(torso_rms_before, 1.0e-12),
+            "head_weighted_radius_rms_before": head_rms_before,
+            "head_weighted_radius_rms_after": head_rms_after,
+            "head_weighted_radius_rms_ratio": head_rms_after
+            / max(head_rms_before, 1.0e-12),
+        },
     }, head, coordinates
 
 
@@ -272,6 +333,7 @@ def realize_texture(
     coat_gain,
     muzzle_gray_mix,
     muzzle_gray_target,
+    coat_desaturation,
     head,
     coordinates,
 ):
@@ -293,9 +355,26 @@ def realize_texture(
         + 0.0722 * rgb[:, :, 2]
     )
     white_coat = (luminance > 0.52) & (saturation < 0.20)
-    coat_strength = 1.0 - white_coat.astype(np.float32)
+    pigmented_coat = (~white_coat) & (maximum > 0.01)
+    if not np.any(pigmented_coat):
+        raise RuntimeError("base-color image has no measurable nonwhite coat pixels")
+    mean_luminance_before = float(np.mean(luminance[pigmented_coat]))
+    coat_strength = pigmented_coat.astype(np.float32)
     factor = 1.0 + (float(coat_gain) - 1.0) * coat_strength[:, :, None]
     rgb[:] = np.clip(rgb * factor, 0.0, 1.0)
+    if not 0.0 <= float(coat_desaturation) <= 1.0:
+        raise RuntimeError("coat_desaturation must be in [0, 1]")
+    if float(coat_desaturation) > 0.0:
+        adjusted_luminance = (
+            0.2126 * rgb[:, :, 0]
+            + 0.7152 * rgb[:, :, 1]
+            + 0.0722 * rgb[:, :, 2]
+        )
+        desaturated = np.repeat(adjusted_luminance[:, :, None], 3, axis=2)
+        mix = pigmented_coat[:, :, None].astype(np.float32) * float(
+            coat_desaturation
+        )
+        rgb[:] = np.clip(rgb * (1.0 - mix) + desaturated * mix, 0.0, 1.0)
 
     muzzle_mask, mask_record = rasterize_muzzle_mask(
         mesh, head, coordinates, width, height
@@ -308,6 +387,13 @@ def realize_texture(
             muzzle_mask * float(muzzle_gray_mix), 0.0, 1.0
         )[:, :, None]
         rgb[:] = rgb * (1.0 - alpha) + gray[:, :, None] * alpha
+
+    final_luminance = (
+        0.2126 * rgb[:, :, 0]
+        + 0.7152 * rgb[:, :, 1]
+        + 0.0722 * rgb[:, :, 2]
+    )
+    mean_luminance_after = float(np.mean(final_luminance[pigmented_coat]))
 
     realized = source.copy()
     realized.name = "StableAnimalInstanceBaseColor"
@@ -324,6 +410,10 @@ def realize_texture(
         "source_image": source.name,
         "resolution": [width, height],
         "coat_luminance_gain": float(coat_gain),
+        "coat_desaturation": float(coat_desaturation),
+        "mean_nonwhite_coat_luminance_before": mean_luminance_before,
+        "mean_nonwhite_coat_luminance_after": mean_luminance_after,
+        "measured_nonwhite_coat_pixels": int(np.count_nonzero(pigmented_coat)),
         "muzzle_gray_mix": float(muzzle_gray_mix),
         "muzzle_gray_target": float(muzzle_gray_target),
         **mask_record,
@@ -430,6 +520,14 @@ def main():
         mesh,
         body_parameters["torso_girth_scale"],
         age_parameters["head_scale"],
+        torso_group_names=parse_optional_csv(
+            body_parameters.get("torso_group_names_csv"),
+            "torso_group_names_csv",
+        ),
+        head_group_names=parse_optional_csv(
+            age_parameters.get("head_group_names_csv"),
+            "head_group_names_csv",
+        ),
     )
     texture_record = realize_texture(
         mesh,
@@ -437,6 +535,7 @@ def main():
         operations["coat_tone"]["parameters"]["coat_luminance_gain"],
         age_parameters["muzzle_gray_mix"],
         age_parameters.get("muzzle_gray_target", 0.90),
+        age_parameters.get("coat_desaturation", 0.0),
         head,
         coordinates,
     )
@@ -467,7 +566,10 @@ def main():
         "acoustic_profile": job["acoustic_profile"],
         "target_physical_profile": job["target_physical_profile"],
         "realization": {
+            "builder": "stable_animal_textured_pbr_v2",
             "uniform_instance_scale": scale_ratio,
+            "runtime_front_axis": "positive_x",
+            "automatic_fine_yaw_inference": False,
             "shape": shape_record,
             "texture": texture_record,
             "topology_uv_skin_sha256_before": contract_before,

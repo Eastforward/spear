@@ -59,3 +59,19 @@ def test_profile_filter_is_fail_closed():
     plan = batch.build_plan(preflight, {profile})
     assert len(plan) == 9
     assert {entry["profile_schema_id"] for entry in plan} == {profile}
+
+
+def test_builder_mode_uses_profile_surface_mode_without_geometry_guessing():
+    assert batch.builder_for_surface_mode("solid_material_pbr") == batch.BUILDER
+    assert batch.builder_for_surface_mode("textured_pbr") == batch.TEXTURED_BUILDER
+
+
+def test_record_only_policy_keeps_strict_audit_visible():
+    checks, audit = batch.deformation_gate(
+        {"overall": "rejected", "actions": {"Walking": {"overall": "rejected"}}},
+        policy="record_only",
+    )
+    assert checks["deformation_audit_completed"] is True
+    assert checks["deformation_policy_satisfied"] is True
+    assert audit["strict_deformation_passed"] is False
+    assert audit["policy"] == "record_only"

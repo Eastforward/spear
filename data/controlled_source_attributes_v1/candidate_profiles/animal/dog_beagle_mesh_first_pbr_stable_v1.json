@@ -1,0 +1,305 @@
+{
+  "schema": "avengine_attribute_profile_v1",
+  "profile_schema_id": "dog_beagle_mesh_first_pbr_stable_v1",
+  "profile_revision": "2026_07_16_v1_generated_mesh_pbr_walk_idle",
+  "asset_class": "animal",
+  "lineage_group_id": "trellis2_beagle_seed6102_meshfirst_b0fd2204",
+  "state_classification": "research_candidate",
+  "taxonomy": {
+    "species": "dog",
+    "breed": "beagle"
+  },
+  "base_template": {
+    "template_id": "trellis2_beagle_seed6102_meshfirst_pbr_walk_idle_v1",
+    "kind": "stable_animal_template",
+    "artifact": {
+      "root_id": "spear_repo",
+      "path": "tmp/controlled_source_asset_execution_v1/dog_beagle_three_quarter_30deg_i23d_bakeoff_v10_20260714_r1_candidate657/trellis2/seed6102_mesh_first_pbr_animation_v22_matte_fixed_weight_transfer_20260715/animated_walk_idle.glb",
+      "sha256": "1af28de3299cde11cc4bbb61730459fd9044e1f4838348bec6d26ad8cdd72426",
+      "size_bytes": 5906848
+    },
+    "provenance_status": "review_required",
+    "usage_scope": "research_candidate"
+  },
+  "fixed_attributes": {
+    "coat_length": "short",
+    "coat_pattern": "tricolor",
+    "ear_shape": "drop",
+    "tail_shape": "upright_white_tipped"
+  },
+  "sampled_attribute_domains": {
+    "size": [
+      "small",
+      "medium",
+      "large"
+    ],
+    "body_build": [
+      "slim",
+      "standard",
+      "stocky"
+    ],
+    "coat_tone": [
+      "light_tricolor",
+      "standard_tricolor",
+      "dark_tricolor"
+    ],
+    "life_stage": [
+      "young",
+      "adult",
+      "senior"
+    ]
+  },
+  "forbidden_combinations": [],
+  "generation_contract": {
+    "route": "stable_animal_template_v1",
+    "plan_schema": "stable_animal_instance_plan_v1",
+    "prompt_template_id": "mesh_first_beagle_absolute_instance_v1",
+    "positive_template": "One {size} {life_stage} {breed} {species} with a clearly {body_build} anatomically normal body, a visibly {coat_tone} {coat_length} {coat_pattern} coat, {ear_shape} ears, and one {tail_shape} tail.",
+    "pose_guard_prompt": "Keep the frozen generated mesh lineage, positive-X body direction, four separated legs, closed belly, detached tail, existing skeleton, skin weights, UV topology, PBR pattern, Walking, and Idle.",
+    "negative_prompt": "new breed, changed coat pattern, merged legs, fused tail, holes, open belly, changed skeleton, changed animation, extra limbs, accessory, collar, text",
+    "value_labels": {
+      "species": {
+        "dog": "dog"
+      },
+      "breed": {
+        "beagle": "beagle"
+      },
+      "coat_length": {
+        "short": "short"
+      },
+      "coat_pattern": {
+        "tricolor": "tricolor"
+      },
+      "ear_shape": {
+        "drop": "drop"
+      },
+      "tail_shape": {
+        "upright_white_tipped": "upright white-tipped"
+      },
+      "size": {
+        "small": "small",
+        "medium": "medium-sized",
+        "large": "large"
+      },
+      "body_build": {
+        "slim": "slim",
+        "standard": "standard",
+        "stocky": "stocky"
+      },
+      "coat_tone": {
+        "light_tricolor": "light-toned tricolor",
+        "standard_tricolor": "standard tricolor",
+        "dark_tricolor": "dark-toned tricolor"
+      },
+      "life_stage": {
+        "young": "young",
+        "adult": "adult",
+        "senior": "senior"
+      }
+    },
+    "model_revisions": {
+      "flux2": "e7b7dc27f91deacad38e78976d1f2b499d76a294"
+    },
+    "flux_reference_policy": "qa_and_optional_semantic_texture_detail_only",
+    "attribute_bindings": {
+      "size": {
+        "operation": "uniform_actor_scale_from_physical_profile_v1",
+        "values": {
+          "small": {
+            "scale_source": "target_physical_profile"
+          },
+          "medium": {
+            "scale_source": "target_physical_profile"
+          },
+          "large": {
+            "scale_source": "target_physical_profile"
+          }
+        }
+      },
+      "body_build": {
+        "operation": "semantic_torso_girth_preserve_topology_and_skin_v1",
+        "values": {
+          "slim": {
+            "torso_girth_scale": 0.84,
+            "torso_group_names_csv": "bone_0,bone_1"
+          },
+          "standard": {
+            "torso_girth_scale": 1.0,
+            "torso_group_names_csv": "bone_0,bone_1"
+          },
+          "stocky": {
+            "torso_girth_scale": 1.16,
+            "torso_group_names_csv": "bone_0,bone_1"
+          }
+        }
+      },
+      "coat_tone": {
+        "operation": "semantic_coat_luminance_preserve_pattern_pbr_v1",
+        "values": {
+          "light_tricolor": {
+            "coat_luminance_gain": 1.28,
+            "surface_mode": "textured_pbr"
+          },
+          "standard_tricolor": {
+            "coat_luminance_gain": 1.0,
+            "surface_mode": "textured_pbr"
+          },
+          "dark_tricolor": {
+            "coat_luminance_gain": 0.72,
+            "surface_mode": "textured_pbr"
+          }
+        }
+      },
+      "life_stage": {
+        "operation": "semantic_age_morph_and_muzzle_tone_preserve_skin_v1",
+        "values": {
+          "young": {
+            "head_scale": 1.12,
+            "head_group_names_csv": "bone_2,bone_3",
+            "muzzle_gray_mix": 0.0,
+            "muzzle_gray_target": 0.62,
+            "coat_desaturation": 0.0
+          },
+          "adult": {
+            "head_scale": 1.0,
+            "head_group_names_csv": "bone_2,bone_3",
+            "muzzle_gray_mix": 0.0,
+            "muzzle_gray_target": 0.62,
+            "coat_desaturation": 0.0
+          },
+          "senior": {
+            "head_scale": 0.97,
+            "head_group_names_csv": "bone_2,bone_3",
+            "muzzle_gray_mix": 0.85,
+            "muzzle_gray_target": 0.62,
+            "coat_desaturation": 0.22
+          }
+        }
+      }
+    }
+  },
+  "target_physical_profiles": {
+    "profile_id": "dog_beagle_mesh_first_physical_candidate_v1",
+    "control_attribute": "size",
+    "measurement": "shoulder_height_cm",
+    "mode": "relative_to_profile_reference",
+    "reference_value_cm": 36.0,
+    "reference_provenance": {
+      "status": "provisional",
+      "source_id": "mesh_first_beagle_ue_calibration_pending_v1",
+      "artifact": null,
+      "notes": "The three levels are deliberately separated for audiovisual QA. Replace the provisional 36 cm anchor with a license-snapshotted breed reference and UE measurement before formal registration."
+    },
+    "values": {
+      "small": {
+        "scale_ratio": 0.82,
+        "tolerance_cm": 3.0
+      },
+      "medium": {
+        "scale_ratio": 1.0,
+        "tolerance_cm": 3.0
+      },
+      "large": {
+        "scale_ratio": 1.18,
+        "tolerance_cm": 3.0
+      }
+    }
+  },
+  "rig_profile": {
+    "profile_id": "mesh_first_beagle_bone20_v1",
+    "skeleton_family": "generated_quadruped_bone20",
+    "actions": [
+      "Walking",
+      "Idle"
+    ],
+    "front_axis": "positive_x"
+  },
+  "acoustic_profile": {
+    "profile_id": "dog_vocalization_v1",
+    "default_event_class": "dog_bark",
+    "allowed_event_classes": [
+      "dog_bark",
+      "dog_growl",
+      "silent"
+    ],
+    "selection_attributes": [
+      "species",
+      "breed",
+      "size",
+      "life_stage"
+    ]
+  },
+  "locked_attributes": [
+    "species",
+    "breed",
+    "coat_length",
+    "coat_pattern",
+    "ear_shape",
+    "tail_shape"
+  ],
+  "qa_contract": {
+    "subject_label": "beagle",
+    "attributes": {
+      "size": {
+        "kind": "ordered",
+        "label": "size",
+        "value_order": [
+          "small",
+          "medium",
+          "large"
+        ],
+        "value_labels": {
+          "small": "small",
+          "medium": "medium-sized",
+          "large": "large"
+        },
+        "comparison_question": "Which beagle is larger?"
+      },
+      "body_build": {
+        "kind": "ordered",
+        "label": "body build",
+        "value_order": [
+          "slim",
+          "standard",
+          "stocky"
+        ],
+        "value_labels": {
+          "slim": "slim",
+          "standard": "standard",
+          "stocky": "stocky"
+        },
+        "comparison_question": "Which beagle has the stockier build?"
+      },
+      "coat_tone": {
+        "kind": "ordered",
+        "label": "coat tone",
+        "value_order": [
+          "light_tricolor",
+          "standard_tricolor",
+          "dark_tricolor"
+        ],
+        "value_labels": {
+          "light_tricolor": "light-toned tricolor",
+          "standard_tricolor": "standard tricolor",
+          "dark_tricolor": "dark-toned tricolor"
+        },
+        "comparison_question": "Which beagle has the darker tricolor coat?"
+      },
+      "life_stage": {
+        "kind": "ordered",
+        "label": "life stage",
+        "value_order": [
+          "young",
+          "adult",
+          "senior"
+        ],
+        "value_labels": {
+          "young": "young",
+          "adult": "adult",
+          "senior": "senior"
+        },
+        "comparison_question": "Which beagle appears older?"
+      }
+    }
+  }
+}

@@ -27,6 +27,23 @@ def test_every_required_instance_control_has_a_real_operation():
     assert 'muzzle_gray_target must be in [0, 1]' in text
 
 
+def test_generated_animal_rigs_can_use_explicit_semantic_bone_groups():
+    text = source()
+    assert "torso_group_names_csv" in text
+    assert "head_group_names_csv" in text
+    assert "exact_group_names" in text
+    assert "semantic_measurements" in text
+
+
+def test_textured_instances_record_absolute_coat_and_age_measurements():
+    text = source()
+    assert "coat_desaturation" in text
+    assert "mean_nonwhite_coat_luminance_before" in text
+    assert "mean_nonwhite_coat_luminance_after" in text
+    assert '"runtime_front_axis": "positive_x"' in text
+    assert '"automatic_fine_yaw_inference": False' in text
+
+
 def test_builder_preserves_topology_skin_uv_and_actions():
     text = source()
     assert "skin_uv_topology_sha256" in text

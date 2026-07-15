@@ -27,6 +27,7 @@ from tools import prepare_controlled_source_asset_execution as preflight_lib  # 
 SCHEMA = "avengine_stable_quadruped_ofat_batch_v1"
 BLENDER = Path("/data/jzy/.local/bin/blender")
 BUILDER = SPEAR_ROOT / "tools/blender_build_stable_quadruped_instance.py"
+TEXTURED_BUILDER = SPEAR_ROOT / "tools/blender_build_stable_animal_instance.py"
 INVENTORY = SPEAR_ROOT / "tools/blender_inventory_animal_template.py"
 DEFORMATION = SPEAR_ROOT / "tools/blender_audit_skinned_deformation.py"
 BASELINE = {"size": "medium", "body_build": "standard", "life_stage": "adult"}
@@ -54,6 +55,38 @@ def operations(job: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
         item["attribute"]: item
         for item in job["stable_instance_plan"]["attribute_operations"]
     }
+
+
+def builder_for_surface_mode(surface_mode: str) -> Path:
+    if surface_mode == "solid_material_pbr":
+        return BUILDER
+    if surface_mode == "textured_pbr":
+        return TEXTURED_BUILDER
+    raise contracts.ContractError(f"unsupported stable-animal surface mode: {surface_mode}")
+
+
+def job_surface_mode(job: Mapping[str, Any]) -> str:
+    parameters = operations(job)["coat_tone"]["parameters"]
+    # The first textured Beagle profile predates the explicit surface flag.
+    return str(parameters.get("surface_mode", "textured_pbr"))
+
+
+def deformation_gate(deformation: Mapping[str, Any], *, policy: str):
+    if policy not in {"strict", "record_only"}:
+        raise contracts.ContractError(f"unsupported deformation policy: {policy}")
+    strict_passed = deformation.get("overall") == "passed"
+    return (
+        {
+            "deformation_audit_completed": True,
+            "deformation_policy_satisfied": strict_passed or policy == "record_only",
+        },
+        {
+            "policy": policy,
+            "strict_deformation_passed": strict_passed,
+            "strict_overall": deformation.get("overall"),
+            "strict_failure_retained": not strict_passed,
+        },
+    )
 
 
 def coat_baseline(jobs: Sequence[Mapping[str, Any]]) -> str:
@@ -175,6 +208,7 @@ def build_plan(preflight: Mapping[str, Any], profile_filters: set[str]) -> list[
                     "sampled_attributes": job["sampled_attributes"],
                     "acoustic_profile": job["acoustic_profile"],
                     "source_template": job["stable_instance_plan"]["base_template"],
+                    "surface_mode": job_surface_mode(job),
                 }
             )
     return plan
@@ -201,7 +235,15 @@ def run_command(command: Sequence[str], log_path: Path) -> float:
     return elapsed
 
 
-def realize_one(entry, *, preflight_path: Path, output_root: Path, blender: Path):
+def realize_one(
+    entry,
+    *,
+    preflight_path: Path,
+    output_root: Path,
+    blender: Path,
+    deformation_policy: str,
+    license_id: str,
+):
     root = output_root / entry["instance_id"]
     root.mkdir(parents=True, exist_ok=False)
     log = root / "pipeline.log"
@@ -211,12 +253,13 @@ def realize_one(entry, *, preflight_path: Path, output_root: Path, blender: Path
     deformation = root / "deformation.json"
     stage_seconds = {}
     try:
+        builder = builder_for_surface_mode(entry["surface_mode"])
         stage_seconds["realize"] = run_command(
             [
                 str(blender),
                 "--background",
                 "--python",
-                str(BUILDER),
+                str(builder),
                 "--",
                 "--preflight",
                 str(preflight_path),
@@ -241,7 +284,7 @@ def realize_one(entry, *, preflight_path: Path, output_root: Path, blender: Path
                 "--output",
                 str(inventory),
                 "--license-id",
-                "CC0-1.0",
+                license_id,
             ],
             log,
         )
@@ -268,6 +311,9 @@ def realize_one(entry, *, preflight_path: Path, output_root: Path, blender: Path
         realized = json.loads(manifest.read_text(encoding="utf-8"))
         inspected = json.loads(inventory.read_text(encoding="utf-8"))
         deformed = json.loads(deformation.read_text(encoding="utf-8"))
+        deformation_checks, deformation_record = deformation_gate(
+            deformed, policy=deformation_policy
+        )
         checks = {
             "topology_uv_skin_unchanged": realized["realization"]["topology_uv_skin_unchanged"],
             "actions_unchanged": realized["realization"]["actions_unchanged"],
@@ -279,7 +325,7 @@ def realize_one(entry, *, preflight_path: Path, output_root: Path, blender: Path
             ),
             "glb_has_walk": inspected["has_walk_action"],
             "glb_has_idle": inspected["has_idle_action"],
-            "deformation_passed": deformed["overall"] == "passed",
+            **deformation_checks,
         }
         if not all(checks.values()):
             raise RuntimeError(f"post-export checks failed: {checks}")
@@ -288,6 +334,7 @@ def realize_one(entry, *, preflight_path: Path, output_root: Path, blender: Path
             "status": "passed",
             "stage_seconds": stage_seconds,
             "checks": checks,
+            "deformation_gate": deformation_record,
             "artifacts": {
                 "glb": {"path": str(glb), "sha256": sha256_file(glb)},
                 "manifest": {"path": str(manifest), "sha256": sha256_file(manifest)},
@@ -315,6 +362,20 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--blender", type=Path, default=BLENDER)
     result.add_argument("--workers", type=int, default=4)
     result.add_argument("--profile-id", action="append", default=[])
+    result.add_argument(
+        "--deformation-policy",
+        choices=("strict", "record_only"),
+        default="strict",
+        help=(
+            "strict rejects metric failures; record_only retains the strict audit "
+            "but permits a separate lenient visual gate"
+        ),
+    )
+    result.add_argument(
+        "--license-id",
+        default="research_candidate_provenance_review_required",
+        help="License/provenance label written into inventory evidence.",
+    )
     return result
 
 
@@ -326,7 +387,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("STABLE_QUADRUPED_OFAT_FAILED workers must be in [1, 16]", file=sys.stderr)
         return 2
     if not args.blender.is_file() or not all(
-        path.is_file() for path in (BUILDER, INVENTORY, DEFORMATION)
+        path.is_file()
+        for path in (BUILDER, TEXTURED_BUILDER, INVENTORY, DEFORMATION)
     ):
         print("STABLE_QUADRUPED_OFAT_FAILED required executable/script missing", file=sys.stderr)
         return 2
@@ -350,6 +412,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "preflight_sha256": preflight["preflight_sha256"],
             },
             "workers": args.workers,
+            "deformation_policy": args.deformation_policy,
+            "license_id": args.license_id,
             "profile_count": len({item["profile_schema_id"] for item in plan}),
             "instance_count": len(plan),
             "entries": plan,
@@ -370,6 +434,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 preflight_path=preflight_path,
                 output_root=output_root,
                 blender=args.blender.resolve(),
+                deformation_policy=args.deformation_policy,
+                license_id=args.license_id,
             ): entry
             for entry in plan
         }
@@ -397,6 +463,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "sha256": sha256_file(output_root / "batch_plan.json"),
         },
         "elapsed_seconds": elapsed,
+        "deformation_policy": args.deformation_policy,
+        "license_id": args.license_id,
         "instance_count": len(results),
         "passed": passed,
         "failed": len(results) - passed,

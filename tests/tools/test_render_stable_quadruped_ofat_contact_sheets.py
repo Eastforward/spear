@@ -110,3 +110,21 @@ def test_publication_record_rewrites_only_the_staging_prefix(tmp_path: Path):
 
     assert result["absolute_path"] == str(output / "profile" / "frame.png")
     assert result["size_bytes"] == 3
+
+
+def test_textured_pbr_evidence_uses_baked_texture_measurements():
+    manifest = {
+        "realization": {
+            "texture": {
+                "mean_nonwhite_coat_luminance_before": 0.41,
+                "mean_nonwhite_coat_luminance_after": 0.63,
+                "muzzle_gray_mix": 0.8,
+                "coat_desaturation": 0.2,
+            }
+        }
+    }
+    assert review.coat_luminance(manifest) == 0.63
+    assert review.age_appearance_parameters(manifest) == {
+        "muzzle_gray_mix": 0.8,
+        "senior_coat_desaturation": 0.2,
+    }

@@ -122,7 +122,11 @@ def extent_and_diagonal(inventory: Mapping[str, Any], *, skinned_only: bool) -> 
 
 
 def coat_luminance(manifest: Mapping[str, Any]) -> float:
-    materials = manifest.get("realization", {}).get("materials", {}).get("materials", [])
+    realization = manifest.get("realization", {})
+    texture = realization.get("texture", {})
+    if "mean_nonwhite_coat_luminance_after" in texture:
+        return float(texture["mean_nonwhite_coat_luminance_after"])
+    materials = realization.get("materials", {}).get("materials", [])
     colors = [
         item.get("after", [])[:3]
         for item in materials
@@ -134,6 +138,25 @@ def coat_luminance(manifest: Mapping[str, Any]) -> float:
         0.2126 * float(color[0]) + 0.7152 * float(color[1]) + 0.0722 * float(color[2])
         for color in colors
     ) / len(colors)
+
+
+def age_appearance_parameters(manifest: Mapping[str, Any]) -> dict[str, float]:
+    realization = manifest.get("realization", {})
+    texture = realization.get("texture")
+    if isinstance(texture, Mapping):
+        return {
+            "muzzle_gray_mix": float(texture.get("muzzle_gray_mix", 0.0)),
+            "senior_coat_desaturation": float(
+                texture.get("coat_desaturation", 0.0)
+            ),
+        }
+    materials = realization.get("materials", {})
+    return {
+        "muzzle_gray_mix": float(materials.get("muzzle_gray_mix", 0.0)),
+        "senior_coat_desaturation": float(
+            materials.get("senior_coat_desaturation", 0.0)
+        ),
+    }
 
 
 def validate_batch(path: Path) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
@@ -256,12 +279,7 @@ def automatic_checks(ordered: Sequence[dict[str, Any]]) -> dict[str, Any]:
     age_values = {
         item["entry"]["sampled_attributes"]["life_stage"]: {
             "head_scale": float(item["manifest"]["realization"]["shape"]["head_scale"]),
-            "muzzle_gray_mix": float(
-                item["manifest"]["realization"]["materials"]["muzzle_gray_mix"]
-            ),
-            "senior_coat_desaturation": float(
-                item["manifest"]["realization"]["materials"]["senior_coat_desaturation"]
-            ),
+            **age_appearance_parameters(item["manifest"]),
         }
         for item in [baseline, *by_change["life_stage"]]
     }
