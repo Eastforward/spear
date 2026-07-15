@@ -12,7 +12,7 @@ SCRIPT = (
 def test_repair_samples_real_walk_and_idle_before_changing_weights():
     text = SCRIPT.read_text(encoding="utf-8")
 
-    assert "avengine_motion_aware_quadruped_weight_repair_v1" in text
+    assert "avengine_motion_aware_quadruped_weight_repair_v2" in text
     assert '(("Walking", "walk"), ("Idle", "idle"))' in text
     assert "evaluated_geometry" in text
     assert "maximum_extension_ratio_of_rest_diagonal" in text
@@ -60,3 +60,33 @@ def test_repair_uses_manual_front_axis_not_direction_inference():
     assert '"--front-axis"' in text
     assert "infer_quadruped_semantics" in text
     assert "automatic_direction" not in text
+
+
+def test_repair_supports_authenticated_multi_root_template_semantics():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert '"--semantic-label-map"' in text
+    assert "avengine_explicit_quadruped_semantic_labels_v1" in text
+    assert "explicit semantic labels must cover the complete skeleton" in text
+    assert '"explicit_semantic_authority": explicit_semantic_authority' in text
+
+
+def test_residual_repair_can_skip_non_idempotent_semantic_preclean():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert '"--skip-cross-limb-preclean"' in text
+    assert "weights = weights_before.copy()" in text
+    assert '"skipped_for_residual_pass": bool(args.skip_cross_limb_preclean)' in text
+
+
+def test_repair_can_use_immutable_rest_space_limb_domains():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert 'choices=("largest-bone", "nearest-rest-chain", "low-slice-components")' in text
+    assert "nearest_rest_limb_authority" in text
+    assert "low_slice_component_limb_authority" in text
+    assert "four_largest_disconnected_low_slice_components" in text
+    assert "project_weights_to_limb_authority" in text
+    assert 'mode_details["post_repair_limb_projection"]' in text
+    assert '"final_forbidden_entries": final_cross_limb[0]' in text
+    assert "immutable_through_motion_repair" in text

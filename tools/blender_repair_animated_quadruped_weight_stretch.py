@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import hashlib
+import itertools
 import json
 import os
 from pathlib import Path
@@ -37,22 +38,36 @@ from tools.blender_audit_skinned_deformation import (  # noqa: E402
     evaluated_geometry,
 )
 from tools.blender_diagnose_skinned_deformation import (  # noqa: E402
+    LIMB_CHAINS,
     bone_records,
 )
 from tools.blender_smooth_generated_quadruped_joint_weights import (  # noqa: E402
+    cross_limb_weight_count,
+    dominant_semantics,
     extract_weights,
     install_weights,
     linked_armatures,
     lowest_common_ancestor_name,
     real_meshes,
+    remove_cross_limb_leakage,
     top_k_normalize,
 )
 from tools.generated_quadruped_semantics import (  # noqa: E402
     infer_quadruped_semantics,
+    quadruped_semantic_labels,
 )
 
 
-SCHEMA = "avengine_motion_aware_quadruped_weight_repair_v1"
+SCHEMA = "avengine_motion_aware_quadruped_weight_repair_v2"
+
+
+class ExplicitSemantics:
+    def __init__(self, root, chains):
+        self.root = root
+        self._chains = {name: tuple(values) for name, values in chains.items()}
+
+    def chains(self):
+        return dict(self._chains)
 
 
 def parse_argv():
@@ -65,6 +80,34 @@ def parse_argv():
         "--front-axis",
         required=True,
         choices=("positive-x", "negative-x", "positive-y", "negative-y"),
+    )
+    parser.add_argument(
+        "--semantic-label-map",
+        type=Path,
+        help=(
+            "Authenticated explicit bone-to-locomotion labels for trusted "
+            "multi-root template rigs whose detached hoof chains are real "
+            "weight-bearing components rather than disposable controls."
+        ),
+    )
+    parser.add_argument(
+        "--cross-limb-authority",
+        choices=("largest-bone", "nearest-rest-chain", "low-slice-components"),
+        default="largest-bone",
+        help=(
+            "How a vertex's unique locomotion-limb domain is selected. "
+            "nearest-rest-chain uses immutable rest-pose bone segments and "
+            "is the strict option for close left/right generated limbs."
+        ),
+    )
+    parser.add_argument(
+        "--limb-slice-height-fraction",
+        type=float,
+        default=0.4,
+        help=(
+            "For low-slice-components, keep the four largest disconnected "
+            "components below this robust rest-height fraction."
+        ),
     )
     parser.add_argument("--walking-samples", type=int, default=21)
     parser.add_argument("--idle-samples", type=int, default=9)
@@ -109,6 +152,15 @@ def parse_argv():
     parser.add_argument("--top-k", type=int, default=4)
     parser.add_argument("--minimum-weight", type=float, default=1.0e-5)
     parser.add_argument("--maximum-seed-edges", type=int, default=4096)
+    parser.add_argument(
+        "--skip-cross-limb-preclean",
+        action="store_true",
+        help=(
+            "Residual-pass mode for an already repaired asset. Keep the input "
+            "weights intact before motion-aware seed repair; repeated semantic "
+            "preclean is not assumed to be idempotent."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -194,22 +246,391 @@ def find_actions():
     return result
 
 
-def semantic_labels(armature, rest_vertices, front_axis):
+def explicit_semantic_labels(path, armature, front_axis):
+    path = require_input(path)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"invalid explicit semantic label map: {error}") from error
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != "avengine_explicit_quadruped_semantic_labels_v1"
+        or payload.get("front_axis") != front_axis
+        or not isinstance(payload.get("labels"), dict)
+        or not isinstance(payload.get("chains"), dict)
+    ):
+        raise RuntimeError("explicit semantic label map contract changed")
+    bone_names = set(armature.data.bones.keys())
+    labels = {str(name): str(value) for name, value in payload["labels"].items()}
+    if set(labels) != bone_names:
+        raise RuntimeError(
+            "explicit semantic labels must cover the complete skeleton: "
+            f"missing={sorted(bone_names - set(labels))} "
+            f"extra={sorted(set(labels) - bone_names)}"
+        )
+    root = payload.get("root")
+    if root not in bone_names:
+        raise RuntimeError("explicit semantic root is missing from the armature")
+    allowed = {
+        "axial",
+        "head",
+        "tail",
+        "front_side_negative",
+        "front_side_positive",
+        "hind_side_negative",
+        "hind_side_positive",
+    }
+    if not set(labels.values()).issubset(allowed):
+        raise RuntimeError(
+            f"explicit semantic labels contain unsupported values: {sorted(set(labels.values()) - allowed)}"
+        )
+    chains = {
+        str(name): tuple(str(value) for value in values)
+        for name, values in payload["chains"].items()
+    }
+    flattened = {name for values in chains.values() for name in values}
+    if not flattened.issubset(bone_names):
+        raise RuntimeError("explicit semantic chains reference missing bones")
+    return ExplicitSemantics(root, chains), labels, {
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "size_bytes": path.stat().st_size,
+        "schema": payload["schema"],
+    }
+
+
+def semantic_labels(armature, rest_vertices, front_axis, explicit_map=None):
+    if explicit_map is not None:
+        return explicit_semantic_labels(explicit_map, armature, front_axis)
+    records = bone_records(armature)
     semantics = infer_quadruped_semantics(
-        bone_records(armature),
+        records,
         bbox_min=rest_vertices.min(axis=0),
         bbox_extent=np.ptp(rest_vertices, axis=0),
         front_axis=front_axis,
     )
-    labels = {}
-    for label, chain in semantics.chains().items():
-        for name in chain:
-            if name in labels:
-                raise RuntimeError(f"duplicate semantic bone: {name}")
-            labels[name] = label
+    labels = quadruped_semantic_labels(
+        semantics,
+        records,
+        bbox_min=rest_vertices.min(axis=0),
+        bbox_extent=np.ptp(rest_vertices, axis=0),
+        front_axis=front_axis,
+    )
     if set(labels) != set(armature.data.bones.keys()):
         raise RuntimeError("semantic decomposition does not cover the skeleton")
-    return semantics, labels
+    return semantics, labels, None
+
+
+def _world_point(matrix, point):
+    homogeneous = np.asarray((*point, 1.0), dtype=np.float64)
+    return (matrix @ homogeneous)[:3]
+
+
+def _point_segment_distance_squared(points, start, end):
+    direction = end - start
+    denominator = float(direction @ direction)
+    if denominator <= np.finfo(np.float64).eps:
+        return np.square(points - start[None, :]).sum(axis=1)
+    fraction = ((points - start[None, :]) @ direction) / denominator
+    fraction = np.clip(fraction, 0.0, 1.0)
+    nearest = start[None, :] + fraction[:, None] * direction[None, :]
+    return np.square(points - nearest).sum(axis=1)
+
+
+def rest_limb_segment_distances(rest_vertices, armature, semantics):
+    chain_names = sorted(LIMB_CHAINS)
+    semantic_chains = semantics.chains()
+    missing = [name for name in chain_names if not semantic_chains.get(name)]
+    if missing:
+        raise RuntimeError(f"semantic rig has no rest segments for {missing}")
+    armature_world = np.asarray(armature.matrix_world, dtype=np.float64)
+    distances = np.full(
+        (len(rest_vertices), len(chain_names)), np.inf, dtype=np.float64
+    )
+    nearest_bones = np.empty(
+        (len(rest_vertices), len(chain_names)), dtype=object
+    )
+    nearest_bones[:] = None
+    for chain_index, chain in enumerate(chain_names):
+        for name in semantic_chains[chain]:
+            bone = armature.data.bones.get(name)
+            if bone is None:
+                raise RuntimeError(f"semantic rest segment is missing: {name}")
+            start = _world_point(armature_world, bone.head_local)
+            end = _world_point(armature_world, bone.tail_local)
+            candidate = _point_segment_distance_squared(rest_vertices, start, end)
+            update = candidate < distances[:, chain_index]
+            distances[update, chain_index] = candidate[update]
+            nearest_bones[update, chain_index] = name
+    if not np.isfinite(distances).all() or np.any(nearest_bones == None):  # noqa: E711
+        raise RuntimeError("rest-space limb authority contains no finite segment")
+    return chain_names, distances, nearest_bones
+
+
+def nearest_rest_limb_authority(
+    rest_vertices,
+    armature,
+    semantics,
+    weights,
+    bone_names,
+    labels,
+    minimum_weight,
+):
+    """Assign every meaningfully limb-weighted vertex to one rest-space limb.
+
+    The assignment is independent of generated skin weights.  This matters for
+    Bone Heat output where one physical hoof can have its largest individual
+    influence on the correct side while most of its aggregate weight belongs
+    to the opposite side.  The authority remains immutable through all later
+    motion-aware repair passes.
+    """
+    chain_names, distances, nearest_bones = rest_limb_segment_distances(
+        rest_vertices, armature, semantics
+    )
+
+    limb_indices = np.asarray(
+        [
+            index
+            for index, name in enumerate(bone_names)
+            if labels[name] in LIMB_CHAINS
+        ],
+        dtype=np.int64,
+    )
+    limb_mass = weights[:, limb_indices].sum(axis=1)
+    active = limb_mass >= minimum_weight
+    closest = np.argmin(distances, axis=1)
+    authority = np.full(len(rest_vertices), "non_limb", dtype=object)
+    authority[active] = np.asarray(chain_names, dtype=object)[closest[active]]
+    fallback_bone = np.full(len(rest_vertices), None, dtype=object)
+    rows = np.arange(len(rest_vertices), dtype=np.int64)
+    fallback_bone[active] = nearest_bones[rows[active], closest[active]]
+    counts = {
+        chain: int(np.count_nonzero(authority == chain)) for chain in chain_names
+    }
+    if any(value == 0 for value in counts.values()):
+        raise RuntimeError(
+            f"rest-space authority did not find all four limb domains: {counts}"
+        )
+    diagonal = float(np.linalg.norm(np.ptp(rest_vertices, axis=0)))
+    active_distance = np.sqrt(distances[rows[active], closest[active]])
+    return authority, fallback_bone, {
+        "method": "nearest_rest_chain_segment",
+        "immutable_through_motion_repair": True,
+        "limb_weighted_vertex_count": int(np.count_nonzero(active)),
+        "assignment_counts": counts,
+        "median_nearest_distance_ratio_of_rest_diagonal": float(
+            np.median(active_distance) / diagonal
+        ),
+        "maximum_nearest_distance_ratio_of_rest_diagonal": float(
+            active_distance.max(initial=0.0) / diagonal
+        ),
+    }
+
+
+def low_slice_component_limb_authority(
+    rest_vertices,
+    edges,
+    armature,
+    semantics,
+    height_fraction,
+):
+    """Use four disconnected lower-limb topology components as authority.
+
+    A generated watertight body is one global shell, but below the shoulder and
+    hip attachments its four legs must remain four disconnected induced
+    components.  Selecting those components prevents torso, belly, mane, or
+    tail vertices from being forced into an arbitrary left/right limb domain.
+    """
+    robust_floor, robust_ceiling = np.percentile(
+        rest_vertices[:, 2], (0.1, 99.9)
+    )
+    robust_height = float(robust_ceiling - robust_floor)
+    if robust_height <= np.finfo(np.float64).eps:
+        raise RuntimeError("rest mesh has no robust vertical extent")
+    threshold = float(robust_floor + height_fraction * robust_height)
+    selected = rest_vertices[:, 2] <= threshold
+    parent = np.arange(len(rest_vertices), dtype=np.int64)
+    rank = np.zeros(len(rest_vertices), dtype=np.int8)
+
+    def find(value):
+        value = int(value)
+        while parent[value] != value:
+            parent[value] = parent[parent[value]]
+            value = int(parent[value])
+        return value
+
+    def union(first, second):
+        first_root = find(first)
+        second_root = find(second)
+        if first_root == second_root:
+            return
+        if rank[first_root] < rank[second_root]:
+            first_root, second_root = second_root, first_root
+        parent[second_root] = first_root
+        if rank[first_root] == rank[second_root]:
+            rank[first_root] += 1
+
+    for first, second in edges:
+        if selected[int(first)] and selected[int(second)]:
+            union(first, second)
+    # glTF duplicates the same physical vertex at UV/normal seams.  Weld those
+    # copies only in the audit graph; geometry, UVs, and exported topology stay
+    # untouched.
+    position_representative = {}
+    for vertex in np.flatnonzero(selected):
+        key = tuple(float(value) for value in rest_vertices[vertex])
+        representative = position_representative.setdefault(key, int(vertex))
+        union(vertex, representative)
+    grouped = {}
+    for vertex in np.flatnonzero(selected):
+        grouped.setdefault(find(vertex), []).append(int(vertex))
+    minimum_component_size = max(64, int(round(len(rest_vertices) * 0.002)))
+    components = [
+        np.asarray(values, dtype=np.int64)
+        for values in grouped.values()
+        if len(values) >= minimum_component_size
+    ]
+    components.sort(key=len, reverse=True)
+    if len(components) < 4:
+        raise RuntimeError(
+            "low rest slice does not contain four substantial disconnected "
+            f"limbs: sizes={[len(value) for value in components]}"
+        )
+    selected_components = components[:4]
+    fifth_size = len(components[4]) if len(components) > 4 else 0
+    smallest_limb = len(selected_components[-1])
+    if fifth_size >= 0.8 * smallest_limb:
+        raise RuntimeError(
+            "low rest slice has an ambiguous fifth component: "
+            f"top_sizes={[len(value) for value in components[:6]]}"
+        )
+
+    chain_names, distances, nearest_bones = rest_limb_segment_distances(
+        rest_vertices, armature, semantics
+    )
+    cost = np.asarray(
+        [
+            [float(np.median(distances[component, index])) for index in range(4)]
+            for component in selected_components
+        ],
+        dtype=np.float64,
+    )
+    best_permutation = min(
+        itertools.permutations(range(4)),
+        key=lambda permutation: sum(
+            cost[row, chain_index]
+            for row, chain_index in enumerate(permutation)
+        ),
+    )
+    authority = np.full(len(rest_vertices), "non_limb", dtype=object)
+    fallback_bone = np.full(len(rest_vertices), None, dtype=object)
+    component_records = []
+    for component_index, (component, chain_index) in enumerate(
+        zip(selected_components, best_permutation)
+    ):
+        chain = chain_names[chain_index]
+        authority[component] = chain
+        fallback_bone[component] = nearest_bones[component, chain_index]
+        points = rest_vertices[component]
+        component_records.append(
+            {
+                "rank_by_vertex_count": component_index,
+                "semantic_chain": chain,
+                "vertex_count": int(len(component)),
+                "centroid": [float(value) for value in points.mean(axis=0)],
+                "bbox_min": [float(value) for value in points.min(axis=0)],
+                "bbox_max": [float(value) for value in points.max(axis=0)],
+                "median_chain_distance": float(
+                    np.sqrt(np.median(distances[component, chain_index]))
+                ),
+            }
+        )
+    counts = {
+        chain: int(np.count_nonzero(authority == chain)) for chain in chain_names
+    }
+    if any(value == 0 for value in counts.values()):
+        raise RuntimeError(f"low-slice assignment missed a limb: {counts}")
+    return authority, fallback_bone, {
+        "method": "four_largest_disconnected_low_slice_components",
+        "immutable_through_motion_repair": True,
+        "blender_up_axis": "positive-z",
+        "robust_floor": float(robust_floor),
+        "robust_ceiling": float(robust_ceiling),
+        "height_fraction": float(height_fraction),
+        "slice_threshold": threshold,
+        "minimum_component_size": minimum_component_size,
+        "substantial_component_sizes_descending": [
+            int(len(value)) for value in components[:12]
+        ],
+        "fifth_component_size": int(fifth_size),
+        "assignment_counts": counts,
+        "components": component_records,
+    }
+
+
+def project_weights_to_limb_authority(
+    weights,
+    authority,
+    fallback_bone,
+    bone_names,
+    labels,
+    minimum_weight,
+):
+    """Preserve total limb mass while forbidding every non-authority limb."""
+    result = weights.copy()
+    bone_index = {name: index for index, name in enumerate(bone_names)}
+    limb_indices = np.asarray(
+        [index for index, name in enumerate(bone_names) if labels[name] in LIMB_CHAINS],
+        dtype=np.int64,
+    )
+    removed_entries = 0
+    removed_mass = 0.0
+    fallback_vertices = 0
+    for chain in sorted(LIMB_CHAINS):
+        vertices = np.flatnonzero(authority == chain)
+        if not len(vertices):
+            continue
+        allowed = np.asarray(
+            [
+                index
+                for index, name in enumerate(bone_names)
+                if labels[name] == chain
+            ],
+            dtype=np.int64,
+        )
+        forbidden = np.asarray(
+            [index for index in limb_indices if index not in set(allowed)],
+            dtype=np.int64,
+        )
+        block = result[vertices].copy()
+        total_limb_mass = block[:, limb_indices].sum(axis=1)
+        allowed_values = block[:, allowed].copy()
+        allowed_mass = allowed_values.sum(axis=1)
+        forbidden_values = block[:, forbidden]
+        removed_entries += int(np.count_nonzero(forbidden_values >= minimum_weight))
+        removed_mass += float(forbidden_values.sum())
+        block[:, limb_indices] = 0.0
+        has_allowed = allowed_mass > np.finfo(np.float64).eps
+        if np.any(has_allowed):
+            block[np.ix_(has_allowed, allowed)] = (
+                allowed_values[has_allowed]
+                * (total_limb_mass[has_allowed] / allowed_mass[has_allowed])[:, None]
+            )
+        for local_index in np.flatnonzero(~has_allowed):
+            vertex = int(vertices[local_index])
+            name = fallback_bone[vertex]
+            if name not in bone_index or labels[name] != chain:
+                raise RuntimeError(
+                    f"invalid fallback bone for vertex {vertex}: {name!r}"
+                )
+            block[local_index, bone_index[name]] = total_limb_mass[local_index]
+            fallback_vertices += 1
+        sums = block.sum(axis=1)
+        if np.any(sums <= 0.0):
+            raise RuntimeError("limb-domain projection created an unweighted vertex")
+        block /= sums[:, None]
+        result[vertices] = block
+    return result, removed_entries, removed_mass, fallback_vertices
 
 
 def evaluate_edge_error(
@@ -515,6 +936,8 @@ def main():
         raise SystemExit("--top-k must be in [1, 8]")
     if not 1 <= args.maximum_seed_edges <= 65536:
         raise SystemExit("--maximum-seed-edges must be in [1, 65536]")
+    if not 0.1 <= args.limb_slice_height_fraction <= 0.6:
+        raise SystemExit("--limb-slice-height-fraction must be in [0.1, 0.6]")
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.gltf(filepath=str(source))
@@ -545,10 +968,96 @@ def main():
     rest_diagonal = float(np.linalg.norm(np.ptp(rest_vertices, axis=0)))
     rest_lengths = edge_lengths(rest_vertices, edges)
     topology_before = topology_fingerprint(edges, faces)
-    semantics, labels = semantic_labels(armature, rest_vertices, args.front_axis)
+    semantics, labels, explicit_semantic_authority = semantic_labels(
+        armature,
+        rest_vertices,
+        args.front_axis,
+        args.semantic_label_map,
+    )
     bone_names = [bone.name for bone in armature.data.bones]
     weights_before = extract_weights(mesh, bone_names)
-    weights = weights_before.copy()
+    spatial_authority = None
+    fallback_bone = None
+    spatial_authority_details = None
+    if args.cross_limb_authority == "nearest-rest-chain":
+        spatial_authority, fallback_bone, spatial_authority_details = (
+            nearest_rest_limb_authority(
+                rest_vertices,
+                armature,
+                semantics,
+                weights_before,
+                bone_names,
+                labels,
+                args.minimum_weight,
+            )
+        )
+        dominant_chains = spatial_authority
+    elif args.cross_limb_authority == "low-slice-components":
+        spatial_authority, fallback_bone, spatial_authority_details = (
+            low_slice_component_limb_authority(
+                rest_vertices,
+                edges,
+                armature,
+                semantics,
+                args.limb_slice_height_fraction,
+            )
+        )
+        dominant_chains = spatial_authority
+    else:
+        _dominant_bones, dominant_chains = dominant_semantics(
+            weights_before, bone_names, labels
+        )
+    cross_limb_before = cross_limb_weight_count(
+        weights_before,
+        dominant_chains,
+        bone_names,
+        labels,
+        args.minimum_weight,
+    )
+    if args.skip_cross_limb_preclean:
+        weights = weights_before.copy()
+        cross_limb_entries_removed = 0
+        cross_limb_mass_removed = 0.0
+    else:
+        if spatial_authority is not None:
+            (
+                weights,
+                cross_limb_entries_removed,
+                cross_limb_mass_removed,
+                projection_fallback_vertices,
+            ) = project_weights_to_limb_authority(
+                weights_before,
+                spatial_authority,
+                fallback_bone,
+                bone_names,
+                labels,
+                args.minimum_weight,
+            )
+        else:
+            weights, cross_limb_entries_removed, cross_limb_mass_removed = (
+                remove_cross_limb_leakage(
+                    weights_before, dominant_chains, bone_names, labels
+                )
+            )
+            projection_fallback_vertices = 0
+    if args.skip_cross_limb_preclean:
+        projection_fallback_vertices = 0
+    weights = top_k_normalize(weights, args.top_k, args.minimum_weight)
+    if spatial_authority is not None:
+        cleaned_dominant_chains = spatial_authority
+    else:
+        _dominant_bones, cleaned_dominant_chains = dominant_semantics(
+            weights, bone_names, labels
+        )
+    cross_limb_after = cross_limb_weight_count(
+        weights,
+        cleaned_dominant_chains,
+        bone_names,
+        labels,
+        args.minimum_weight,
+    )
+    install_weights(mesh, weights, bone_names, args.minimum_weight)
+    bpy.context.view_layer.update()
     sample_counts = {
         "Walking": args.walking_samples,
         "Idle": args.idle_samples,
@@ -632,6 +1141,25 @@ def main():
             labels,
             args.component_rings,
         )
+        if spatial_authority is not None:
+            (
+                repaired,
+                pass_projection_entries,
+                pass_projection_mass,
+                pass_projection_fallback_vertices,
+            ) = project_weights_to_limb_authority(
+                repaired,
+                spatial_authority,
+                fallback_bone,
+                bone_names,
+                labels,
+                args.minimum_weight,
+            )
+            mode_details["post_repair_limb_projection"] = {
+                "entries_removed": pass_projection_entries,
+                "weight_mass_removed": pass_projection_mass,
+                "fallback_vertices": pass_projection_fallback_vertices,
+            }
         repaired = top_k_normalize(repaired, args.top_k, args.minimum_weight)
         record["changed_vertex_count"] = int(len(touched))
         record["seed_component_count"] = len(components)
@@ -677,6 +1205,15 @@ def main():
         minimum_stretch_ratio=args.minimum_stretch_ratio,
         maximum_rest_edge_ratio=args.maximum_rest_edge_ratio,
         maximum_seed_edges=args.maximum_seed_edges,
+    )
+    final_cross_limb = cross_limb_weight_count(
+        weights,
+        spatial_authority if spatial_authority is not None else dominant_semantics(
+            weights, bone_names, labels
+        )[1],
+        bone_names,
+        labels,
+        args.minimum_weight,
     )
     armature.data.pose_position = "REST"
     armature.animation_data.action = None
@@ -743,6 +1280,7 @@ def main():
             "chains": {
                 name: list(value) for name, value in semantics.chains().items()
             },
+            "explicit_semantic_authority": explicit_semantic_authority,
         },
         "parameters": {
             "walking_samples": args.walking_samples,
@@ -758,6 +1296,22 @@ def main():
             "top_k": args.top_k,
             "minimum_weight": args.minimum_weight,
             "maximum_seed_edges": args.maximum_seed_edges,
+            "skip_cross_limb_preclean": bool(args.skip_cross_limb_preclean),
+            "cross_limb_authority": args.cross_limb_authority,
+            "limb_slice_height_fraction": args.limb_slice_height_fraction,
+        },
+        "cross_limb_preclean": {
+            "entries_before": cross_limb_before[0],
+            "weight_mass_before": cross_limb_before[1],
+            "entries_removed": cross_limb_entries_removed,
+            "weight_mass_removed": cross_limb_mass_removed,
+            "entries_after": cross_limb_after[0],
+            "weight_mass_after": cross_limb_after[1],
+            "skipped_for_residual_pass": bool(args.skip_cross_limb_preclean),
+            "projection_fallback_vertices": projection_fallback_vertices,
+            "spatial_authority": spatial_authority_details,
+            "final_forbidden_entries": final_cross_limb[0],
+            "final_forbidden_weight_mass": final_cross_limb[1],
         },
         "passes": passes,
         "weight_change": {
@@ -778,7 +1332,7 @@ def main():
         },
         "status": (
             "research_candidate_pending_readback_and_visual_qa"
-            if not len(final_seeds)
+            if not len(final_seeds) and final_cross_limb[0] == 0
             else "research_candidate_repair_incomplete"
         ),
         "formal_dataset_registration_authorized": False,
