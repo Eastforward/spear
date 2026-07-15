@@ -202,6 +202,33 @@ def mesh_bbox(meshes):
     return mn, mx
 
 
+def review_visible_meshes(meshes, armature):
+    """Keep real multipart geometry while hiding exporter/helper meshes.
+
+    Several stable Quaternius assets contain unskinned visual accessories such
+    as antlers.  Selecting only the largest body mesh silently removed those
+    parts from review evidence.  Conversely, the source GLBs also contain an
+    unweighted, material-free ``Icosphere`` helper that must not drive framing
+    or appear in the render.  Material slots, skin groups, or an armature
+    modifier are explicit evidence that a mesh belongs to the visible asset.
+    """
+    visible = []
+    hidden = []
+    for mesh in meshes:
+        linked_armature = any(
+            modifier.type == "ARMATURE" and modifier.object == armature
+            for modifier in mesh.modifiers
+        )
+        has_material = any(slot.material is not None for slot in mesh.material_slots)
+        if linked_armature or bool(mesh.vertex_groups) or has_material:
+            visible.append(mesh)
+        else:
+            hidden.append(mesh)
+    if not visible:
+        raise SystemExit("input has no review-visible mesh")
+    return visible, hidden
+
+
 def add_review_ground(center, ground_z, diag):
     bpy.ops.mesh.primitive_plane_add(
         size=max(2.0, diag * 4.0),
@@ -616,14 +643,18 @@ def apply_asset_cardinal_yaw(armature, yaw_deg):
     asset_root = bpy.data.objects.new("ManualCardinalAssetRoot", None)
     bpy.context.collection.objects.link(asset_root)
     asset_root.location = pivot
-    original_world = armature.matrix_world.copy()
-    armature.parent = asset_root
-    armature.matrix_world = original_world
+    authority_root = armature
+    while authority_root.parent is not None:
+        authority_root = authority_root.parent
+    original_world = authority_root.matrix_world.copy()
+    authority_root.parent = asset_root
+    authority_root.matrix_world = original_world
     asset_root.rotation_euler.z = math.radians(float(yaw_deg))
     bpy.context.view_layer.update()
     print(
         f"[direction-candidate] asset_yaw_deg={float(yaw_deg):+.0f} "
-        "axis=blender_positive_z automatic_direction_inference=false",
+        f"axis=blender_positive_z authority_root={authority_root.name} "
+        "automatic_direction_inference=false",
         flush=True,
     )
     return asset_root
@@ -710,12 +741,23 @@ def main():
     armatures = [o for o in bpy.data.objects if o.type == "ARMATURE"]
     if not meshes or not armatures:
         raise SystemExit("input must contain a mesh and armature")
-    body = max(meshes, key=lambda o: len(o.data.vertices))
-    for mesh in meshes:
-        if mesh != body:
-            mesh.hide_viewport = True
-            mesh.hide_render = True
     armature = armatures[0]
+    visible_meshes, hidden_meshes = review_visible_meshes(meshes, armature)
+    skinned_meshes = [
+        mesh
+        for mesh in visible_meshes
+        if mesh.vertex_groups
+        and any(
+            modifier.type == "ARMATURE" and modifier.object == armature
+            for modifier in mesh.modifiers
+        )
+    ]
+    if not skinned_meshes:
+        raise SystemExit("input has no skinned body mesh")
+    body = max(skinned_meshes, key=lambda o: len(o.data.vertices))
+    for mesh in hidden_meshes:
+        mesh.hide_viewport = True
+        mesh.hide_render = True
     armature_modifiers = [
         modifier
         for mesh in meshes
@@ -736,9 +778,11 @@ def main():
     if args.pose_template_yaw_deg:
         apply_pose_template_yaw(asset_root, args.pose_template_yaw_deg)
     if args.pose_template_clay_color:
-        apply_pose_template_clay_material(body, args.pose_template_clay_color)
+        for mesh in visible_meshes:
+            apply_pose_template_clay_material(mesh, args.pose_template_clay_color)
     if args.review_clay_color:
-        apply_pose_template_clay_material(body, args.review_clay_color)
+        for mesh in visible_meshes:
+            apply_pose_template_clay_material(mesh, args.review_clay_color)
     if args.rest_pose:
         armature.animation_data_clear()
         if (
@@ -779,11 +823,12 @@ def main():
         if end <= start:
             end = start + max(1, args.n_frames - 1)
     bpy.context.view_layer.update()
-    print(f"[anim] body={body.name} hidden_meshes={[m.name for m in meshes if m != body]} "
+    print(f"[anim] body={body.name} visible_meshes={[m.name for m in visible_meshes]} "
+          f"hidden_helper_meshes={[m.name for m in hidden_meshes]} "
           f"armature={armature.name} "
           f"action={action_label} frame_range=({start:.2f}, {end:.2f})", flush=True)
 
-    mn, mx = mesh_bbox([body])
+    mn, mx = mesh_bbox(visible_meshes)
     center = [(mn[i] + mx[i]) * 0.5 for i in range(3)]
     diag = math.sqrt(sum((mx[i] - mn[i]) ** 2 for i in range(3)))
     framing_diag = args.camera_reference_diagonal or diag

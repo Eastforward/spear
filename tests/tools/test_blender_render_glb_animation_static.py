@@ -117,7 +117,8 @@ def test_animation_renderer_has_non_mutating_clay_override_for_animation_qa():
 
     assert "--review-clay-color" in text
     assert "if args.review_clay_color" in text
-    assert "apply_pose_template_clay_material(body, args.review_clay_color)" in text
+    assert "for mesh in visible_meshes" in text
+    assert "apply_pose_template_clay_material(mesh, args.review_clay_color)" in text
     assert "bpy.ops.export_scene" not in text
 
 
@@ -148,3 +149,22 @@ def test_animation_renderer_has_non_mutating_preserve_volume_diagnostic():
     assert "modifier.use_deform_preserve_volume = True" in text
     assert "purpose=render_only_diagnostic" in text
     assert "input_asset_unchanged=true" in text
+
+
+def test_animation_renderer_keeps_visual_accessories_and_hides_helpers():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert "def review_visible_meshes" in text
+    assert "has_material" in text
+    assert "visible_meshes, hidden_meshes = review_visible_meshes" in text
+    assert "mn, mx = mesh_bbox(visible_meshes)" in text
+    assert "hidden_helper_meshes=" in text
+
+
+def test_animation_renderer_rotates_the_existing_whole_asset_root():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert "authority_root = armature" in text
+    assert "while authority_root.parent is not None" in text
+    assert "authority_root.parent = asset_root" in text
+    assert "authority_root={authority_root.name}" in text

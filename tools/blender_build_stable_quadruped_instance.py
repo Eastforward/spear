@@ -245,6 +245,12 @@ def apply_shape_controls(
     records = []
     total_torso = 0
     total_head = 0
+    torso_weight_total = 0.0
+    torso_lateral_square_before = 0.0
+    torso_lateral_square_after = 0.0
+    head_weight_total = 0.0
+    head_radius_square_before = 0.0
+    head_radius_square_after = 0.0
     for mesh in meshes:
         coordinates = mesh_coordinates(mesh)
         torso = vertex_semantic_weights(mesh, torso_tokens)
@@ -258,6 +264,11 @@ def apply_shape_controls(
             centered_xy = coordinates[:, :2] - center[:2]
             longitudinal = centered_xy @ forward
             lateral = centered_xy @ width
+            torso_weight = float(torso.sum())
+            torso_weight_total += torso_weight
+            torso_lateral_square_before += float(
+                np.sum(torso * np.square(lateral))
+            )
             lateral *= 1.0 + (float(torso_girth_scale) - 1.0) * torso
             coordinates[:, :2] = (
                 center[:2]
@@ -266,10 +277,24 @@ def apply_shape_controls(
             )
             height_scale = 1.0 + (float(torso_girth_scale) - 1.0) * 0.55 * torso
             coordinates[:, 2] = center[2] + (coordinates[:, 2] - center[2]) * height_scale
+            after_center = weighted_center(coordinates, torso)
+            after_lateral = (coordinates[:, :2] - after_center[:2]) @ width
+            torso_lateral_square_after += float(
+                np.sum(torso * np.square(after_lateral))
+            )
         if float(head.sum()) > 1.0e-8:
             center = weighted_center(coordinates, head)
+            head_weight = float(head.sum())
+            head_weight_total += head_weight
+            head_radius_square_before += float(
+                np.sum(head * np.sum(np.square(coordinates - center), axis=1))
+            )
             factor = 1.0 + (float(head_scale) - 1.0) * head
             coordinates = center + (coordinates - center) * factor[:, None]
+            after_center = weighted_center(coordinates, head)
+            head_radius_square_after += float(
+                np.sum(head * np.sum(np.square(coordinates - after_center), axis=1))
+            )
         mesh.data.vertices.foreach_set("co", coordinates.reshape(-1))
         mesh.data.update()
         records.append(
@@ -282,11 +307,27 @@ def apply_shape_controls(
         )
     if total_torso < 12 or total_head < 8:
         raise RuntimeError("stable template semantic vertex coverage is insufficient")
+    if torso_weight_total <= 0.0 or head_weight_total <= 0.0:
+        raise RuntimeError("stable template semantic measurement mass is zero")
+    torso_rms_before = math.sqrt(torso_lateral_square_before / torso_weight_total)
+    torso_rms_after = math.sqrt(torso_lateral_square_after / torso_weight_total)
+    head_rms_before = math.sqrt(head_radius_square_before / head_weight_total)
+    head_rms_after = math.sqrt(head_radius_square_after / head_weight_total)
     return {
         "torso_group_tokens": list(torso_tokens),
         "head_group_tokens": list(head_tokens),
         "torso_girth_scale": float(torso_girth_scale),
         "head_scale": float(head_scale),
+        "semantic_measurements": {
+            "torso_weighted_lateral_rms_before": torso_rms_before,
+            "torso_weighted_lateral_rms_after": torso_rms_after,
+            "torso_weighted_lateral_rms_ratio": torso_rms_after
+            / max(torso_rms_before, 1.0e-12),
+            "head_weighted_radius_rms_before": head_rms_before,
+            "head_weighted_radius_rms_after": head_rms_after,
+            "head_weighted_radius_rms_ratio": head_rms_after
+            / max(head_rms_before, 1.0e-12),
+        },
         "body_frame": {
             "authority_mesh": frame["authority_mesh"],
             "torso_center": list(map(float, frame["torso_center"])),

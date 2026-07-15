@@ -49,3 +49,12 @@ def test_builder_applies_only_the_registry_cardinal_direction_transform():
     assert "template cardinal yaw must be -90/0/90/180" in text
     assert "root.rotation_euler[2]" in text
     assert '"automatic_fine_yaw_inference": False' in text
+
+
+def test_builder_measures_real_semantic_shape_changes_not_whole_asset_bounds():
+    text = source()
+    assert '"semantic_measurements"' in text
+    assert '"torso_weighted_lateral_rms_after"' in text
+    assert '"head_weighted_radius_rms_after"' in text
+    assert "torso_lateral_square_after" in text
+    assert "head_radius_square_after" in text
