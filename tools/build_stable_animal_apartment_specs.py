@@ -18,7 +18,14 @@ from typing import Any
 SCHEMA = "stable_animal_walk_idle_apartment_specs_v1"
 IMPORT_SCHEMA = "stable_animal_ue_import_batch_v1"
 IMPORT_RESULT_SCHEMA = "stable_animal_ue_import_result_v1"
-REGISTRY_SCHEMA = "avengine_quaternius_stable_template_registry_v1"
+REGISTRY_SCHEMAS = {
+    "avengine_quaternius_stable_template_registry_v1",
+    "avengine_stable_animal_template_registry_v2",
+}
+PENDING_REVIEW_STATUSES = {
+    "agent_selected_pending_human_review",
+    "local_ofat_visual_review_pending",
+}
 
 
 def _sha256(path: Path) -> str:
@@ -66,12 +73,25 @@ def authenticate(
     jobs = _load(jobs_path)
     result = _load(result_path)
     registry = _load(registry_path)
+    registry_schema = registry.get("schema")
+    old_registry_authenticated = (
+        _artifact_matches(jobs.get("registry", {}))
+        and Path(jobs["registry"]["path"]).resolve() == registry_path.resolve()
+    )
+    generic_registry_authenticated = (
+        registry_schema == "avengine_stable_animal_template_registry_v2"
+        and _artifact_matches(registry.get("ue_import_jobs", {}))
+        and Path(registry["ue_import_jobs"]["path"]).resolve()
+        == jobs_path.resolve()
+        and _artifact_matches(registry.get("ue_import_result", {}))
+        and Path(registry["ue_import_result"]["path"]).resolve()
+        == result_path.resolve()
+    )
     if (
         jobs.get("schema") != IMPORT_SCHEMA
         or jobs.get("job_count") != len(jobs.get("jobs", []))
-        or not _artifact_matches(jobs.get("registry", {}))
-        or Path(jobs["registry"]["path"]).resolve() != registry_path.resolve()
-        or registry.get("schema") != REGISTRY_SCHEMA
+        or registry_schema not in REGISTRY_SCHEMAS
+        or not (old_registry_authenticated or generic_registry_authenticated)
     ):
         raise ValueError("stable import jobs or registry changed")
     if (
@@ -101,7 +121,7 @@ def authenticate(
             or entry.get("runtime_glb", {}).get("sha256")
             != job.get("rigged_glb_sha256")
             or entry.get("direction", {}).get("review_status")
-            != "agent_selected_pending_human_review"
+            not in PENDING_REVIEW_STATUSES
             or entry.get("formal_dataset_registration_authorized") is not False
         ):
             raise ValueError(f"stable UE identity changed: {template_id}")
@@ -127,6 +147,15 @@ def build_pair(
             "asset_class": "animal",
             "species": job["species"],
             "breed": job["breed"],
+            "sampled_attributes": copy.deepcopy(
+                job.get("sampled_attributes", {})
+            ),
+            "fixed_attributes": copy.deepcopy(
+                job.get("fixed_attributes", {})
+            ),
+            "target_physical_profile": copy.deepcopy(
+                job.get("target_physical_profile", {})
+            ),
             "kind": "moving",
             "motion": "explicit_camera_pass_table_loop",
             "motion_style": "camera_pass_then_round_table_loop",
@@ -138,8 +167,9 @@ def build_pair(
             "actor_z_lift_cm": 0.0,
             "animation_play_rate": 1.0,
             "ground_snap_to_floor": True,
-            "ground_snap_max_abs_correction_cm": max(
-                25.0, round(float(job["actor_scale"]) * 200.0, 3)
+            "ground_snap_max_abs_correction_cm": min(
+                50.0,
+                max(25.0, round(float(job["actor_scale"]) * 200.0, 3)),
             ),
             "audio_lookup": job["audio_lookup"],
             "audio_source_height_offset_m": job[

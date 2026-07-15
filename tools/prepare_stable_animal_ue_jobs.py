@@ -17,7 +17,14 @@ from typing import Any
 
 
 SELECTION_SCHEMA = "avengine_stable_animal_ue_selection_v1"
-REGISTRY_SCHEMA = "avengine_quaternius_stable_template_registry_v1"
+REGISTRY_SCHEMAS = {
+    "avengine_quaternius_stable_template_registry_v1",
+    "avengine_stable_animal_template_registry_v2",
+}
+PENDING_REVIEW_STATUSES = {
+    "agent_selected_pending_human_review",
+    "local_ofat_visual_review_pending",
+}
 BATCH_SCHEMA = "stable_animal_ue_import_batch_v1"
 PREPARATION_SCHEMA = "stable_animal_ue_import_preparation_v1"
 
@@ -75,7 +82,7 @@ def _validate_entry(entry: dict[str, Any]) -> None:
         or set(entry.get("actions", [])) != {"Walking", "Idle"}
         or entry.get("direction", {}).get("automatic_fine_yaw_inference") is not False
         or entry.get("direction", {}).get("review_status")
-        != "agent_selected_pending_human_review"
+        not in PENDING_REVIEW_STATUSES
         or entry.get("qa", {}).get("ue_apartment_media") != "pending"
         or entry.get("qa", {}).get("human_visual_review") != "pending"
         or not str(entry.get("qa", {}).get("walking_deformation", "")).startswith(
@@ -91,7 +98,7 @@ def _validate_entry(entry: dict[str, Any]) -> None:
 
 
 def build_jobs(registry: dict[str, Any], selection: dict[str, Any]) -> list[dict[str, Any]]:
-    if registry.get("schema") != REGISTRY_SCHEMA:
+    if registry.get("schema") not in REGISTRY_SCHEMAS:
         raise ValueError("stable template registry schema changed")
     if selection.get("schema") != SELECTION_SCHEMA:
         raise ValueError("stable UE selection schema changed")
@@ -143,6 +150,11 @@ def build_jobs(registry: dict[str, Any], selection: dict[str, Any]) -> list[dict
                 "expected_actions": ["Idle", "Walking"],
                 "deformation_audit": entry["deformation_audit"],
                 "human_review_status": entry["direction"]["review_status"],
+                "sampled_attributes": entry.get("sampled_attributes", {}),
+                "fixed_attributes": entry.get("fixed_attributes", {}),
+                "target_physical_profile": entry.get(
+                    "target_physical_profile", {}
+                ),
                 "formal_dataset_registration_authorized": False,
             }
         )

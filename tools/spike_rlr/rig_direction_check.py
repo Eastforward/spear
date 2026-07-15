@@ -97,6 +97,21 @@ _QUATERNIUS_NATIVE_NAMED_BASIS_BONE_CANDIDATES = {
     ),
 }
 
+# Microsoft Rocketbox quadrupeds use a Bip-style hierarchy whose bone names
+# are namespaced by the asset (for example ``beagle-Pelvis``).  Treat the
+# namespace as data: all semantic anchors must share one non-empty prefix and
+# the same prefix must also own a Tail marker.  This avoids hard-coding the
+# Beagle asset ID while preventing an arbitrary humanoid Pelvis/Spine/Foot
+# hierarchy from being mistaken for a quadruped.
+_PREFIXED_BIP_QUADRUPED_BASIS_BONE_CANDIDATES = {
+    "rear": ("Pelvis",),
+    "front": ("Spine2", "Neck"),
+    "body": ("Pelvis",),
+    "left_foot": ("L Foot",),
+    "right_foot": ("R Foot",),
+}
+_PREFIXED_BIP_QUADRUPED_REQUIRED_MARKERS = (("Tail",),)
+
 
 def _integer_return_value(value) -> int:
     """Normalize direct and as-dict Unreal integer return values."""
@@ -133,6 +148,48 @@ def _component_bone_names(component):
         _name_return_value(component.GetBoneName(BoneIndex=index))
         for index in range(bone_count)
     ]
+
+
+def _match_common_prefixed_roles(
+    available_names,
+    candidate_map,
+    *,
+    required_marker_groups=(),
+):
+    """Match a complete semantic scheme under one non-empty bone prefix."""
+    by_normalized_name = {
+        _normalized_bone_name(name): name for name in available_names
+    }
+    first_role = next(iter(candidate_map))
+    prefixes = set()
+    for actual_normalized in by_normalized_name:
+        for candidate in candidate_map[first_role]:
+            suffix = _normalized_bone_name(candidate)
+            if actual_normalized.endswith(suffix) and len(actual_normalized) > len(suffix):
+                prefixes.add(actual_normalized[: -len(suffix)])
+
+    for prefix in sorted(prefixes):
+        marker_groups_present = all(
+            any(
+                prefix + _normalized_bone_name(marker) in by_normalized_name
+                for marker in marker_group
+            )
+            for marker_group in required_marker_groups
+        )
+        if not marker_groups_present:
+            continue
+        matched = {}
+        for role, candidates in candidate_map.items():
+            for candidate in candidates:
+                actual = by_normalized_name.get(
+                    prefix + _normalized_bone_name(candidate)
+                )
+                if actual is not None:
+                    matched[role] = actual
+                    break
+        if len(matched) == len(candidate_map):
+            return matched, prefix
+    return {}, None
 
 
 def _unit_vector(vector, *, label: str):
@@ -242,6 +299,11 @@ def sample_body_basis_in_frame(actor, *, unreal_service=None, diagnostics=None):
         native_named_names = match_roles(
             _QUATERNIUS_NATIVE_NAMED_BASIS_BONE_CANDIDATES
         )
+        prefixed_bip_names, prefixed_bip_namespace = _match_common_prefixed_roles(
+            available_names,
+            _PREFIXED_BIP_QUADRUPED_BASIS_BONE_CANDIDATES,
+            required_marker_groups=_PREFIXED_BIP_QUADRUPED_REQUIRED_MARKERS,
+        )
         if len(human_names) == len(_BODY_BASIS_BONE_CANDIDATES):
             matched_names = human_names
             basis_builder = body_basis_from_positions
@@ -252,6 +314,12 @@ def sample_body_basis_in_frame(actor, *, unreal_service=None, diagnostics=None):
             matched_names = native_named_names
             basis_builder = quadruped_basis_from_positions
             basis_kind = "quaternius_native_named_longitudinal_v1"
+        elif len(prefixed_bip_names) == len(
+            _PREFIXED_BIP_QUADRUPED_BASIS_BONE_CANDIDATES
+        ):
+            matched_names = prefixed_bip_names
+            basis_builder = quadruped_basis_from_positions
+            basis_kind = "prefixed_bip_quadruped_longitudinal_v1"
         elif len(quadruped_names) == len(_QUADRUPED_BASIS_BONE_CANDIDATES):
             matched_names = quadruped_names
             basis_builder = quadruped_basis_from_positions
@@ -275,12 +343,20 @@ def sample_body_basis_in_frame(actor, *, unreal_service=None, diagnostics=None):
                                 _QUATERNIUS_NATIVE_NAMED_BASIS_BONE_CANDIDATES.items()
                             )
                         },
+                        "prefixed_bip_quadruped": {
+                            role: list(candidates)
+                            for role, candidates in (
+                                _PREFIXED_BIP_QUADRUPED_BASIS_BONE_CANDIDATES.items()
+                            )
+                        },
                     },
                     "matched_humanoid_roles": sorted(human_names),
                     "matched_quadruped_roles": sorted(quadruped_names),
                     "matched_quaternius_native_named_roles": sorted(
                         native_named_names
                     ),
+                    "matched_prefixed_bip_roles": sorted(prefixed_bip_names),
+                    "matched_prefixed_bip_namespace": prefixed_bip_namespace,
                     "available_bone_names": available_names,
                 })
             return None

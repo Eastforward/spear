@@ -35,6 +35,25 @@ DATASET_SCHEMA = "avengine_controlled_source_dataset_v1"
 
 SAMPLER_ALGORITHM = "balanced_quota_sampler_v1"
 
+# This guard is compiled by code for every tailed animal.  It is deliberately
+# about the free tail (not the anatomical base), and it does not require an
+# unnaturally raised tail.  A tail/leg contact in the 2D reference commonly
+# becomes fused I2-3D topology and then tears into ribbons when the two motion
+# chains are animated.
+TAILED_ANIMAL_SEPARATION_PROMPT = (
+    "Keep the tail attached only at its anatomical base. From just beyond "
+    "the base through the tip, keep the free tail visibly separated from "
+    "both hind legs and every paw or hoof, with a clear plain-background gap. "
+    "The tail may hang naturally or extend gently backward and does not need "
+    "to point upward. No part of the free tail may touch, cross, overlap, wrap "
+    "around, or merge with a leg or foot."
+)
+TAILED_ANIMAL_SEPARATION_NEGATIVE_PROMPT = (
+    "tail touching hind leg, tail overlapping leg, fused tail and leg, "
+    "tail wrapped around leg, tail obscuring paw, tail obscuring hoof, "
+    "tail merged with foot"
+)
+
 STATE_CLASSIFICATIONS = frozenset(
     {
         "formal_dataset_asset",
@@ -44,7 +63,13 @@ STATE_CLASSIFICATIONS = frozenset(
     }
 )
 ASSET_CLASSES = frozenset({"animal", "human"})
-ROUTES = frozenset({"flux2_pixal3d_animal_v1", "rocketbox_material_v1"})
+ROUTES = frozenset(
+    {
+        "flux2_pixal3d_animal_v1",
+        "stable_animal_template_v1",
+        "rocketbox_material_v1",
+    }
+)
 QA_STATUSES = frozenset({"passed", "pending", "rejected", "not_applicable"})
 QA_FIELDS = (
     "reference_2d",
@@ -323,22 +348,93 @@ def _validate_generation_contract(
         raise ContractError(f"unsupported generation route: {route!r}")
 
     if asset_class == "animal":
-        fields = frozenset(
-            {
-                "route",
-                "prompt_template_id",
-                "positive_template",
-                "pose_guard_prompt",
-                "negative_prompt",
-                "value_labels",
-                "model_revisions",
+        common_fields = {
+            "route",
+            "prompt_template_id",
+            "positive_template",
+            "pose_guard_prompt",
+            "negative_prompt",
+            "value_labels",
+            "model_revisions",
+        }
+        if route == "flux2_pixal3d_animal_v1":
+            _require_exact_fields(
+                contract, frozenset(common_fields), "animal generation_contract"
+            )
+            if base_template.get("kind") != "reference_image":
+                raise ContractError("Pixal animal base_template.kind must be reference_image")
+        elif route == "stable_animal_template_v1":
+            _require_exact_fields(
+                contract,
+                frozenset(
+                    common_fields
+                    | {
+                        "plan_schema",
+                        "attribute_bindings",
+                        "flux_reference_policy",
+                    }
+                ),
+                "stable animal generation_contract",
+            )
+            if base_template.get("kind") != "stable_animal_template":
+                raise ContractError(
+                    "stable animal base_template.kind must be stable_animal_template"
+                )
+            if contract["plan_schema"] != "stable_animal_instance_plan_v1":
+                raise ContractError("unsupported stable animal plan schema")
+            if contract["flux_reference_policy"] != (
+                "qa_and_optional_semantic_texture_detail_only"
+            ):
+                raise ContractError("stable animal FLUX must not change geometry or rig")
+            bindings = _require_mapping(
+                contract["attribute_bindings"], "stable animal attribute_bindings"
+            )
+            if set(bindings) != set(domains):
+                raise ContractError(
+                    "stable animal attribute_bindings must cover every sampled attribute"
+                )
+            allowed_operations = {
+                "uniform_actor_scale_from_physical_profile_v1",
+                "semantic_torso_girth_preserve_topology_and_skin_v1",
+                "semantic_coat_luminance_preserve_pattern_pbr_v1",
+                "semantic_age_morph_and_muzzle_tone_preserve_skin_v1",
             }
-        )
-        _require_exact_fields(contract, fields, "animal generation_contract")
-        if route != "flux2_pixal3d_animal_v1":
-            raise ContractError("animal profiles must use flux2_pixal3d_animal_v1")
-        if base_template.get("kind") != "reference_image":
-            raise ContractError("animal base_template.kind must be reference_image")
+            for attribute, domain in domains.items():
+                binding = _require_exact_fields(
+                    bindings[attribute],
+                    frozenset({"operation", "values"}),
+                    f"stable animal binding {attribute}",
+                )
+                if binding["operation"] not in allowed_operations:
+                    raise ContractError(
+                        f"stable animal binding {attribute} uses an unsupported operation"
+                    )
+                values = _require_mapping(
+                    binding["values"], f"stable animal binding {attribute}.values"
+                )
+                if set(values) != set(domain):
+                    raise ContractError(
+                        f"stable animal binding {attribute}.values must match its domain"
+                    )
+                for value_name, parameters in values.items():
+                    parameters = _require_mapping(
+                        parameters,
+                        f"stable animal binding {attribute}.{value_name}",
+                    )
+                    if not parameters:
+                        raise ContractError("stable animal binding parameters cannot be empty")
+                    for parameter_name, parameter_value in parameters.items():
+                        _validate_attribute_key(
+                            parameter_name,
+                            f"stable animal binding {attribute}.{value_name} parameter",
+                        )
+                        _require_scalar(
+                            parameter_value,
+                            f"stable animal binding {attribute}.{value_name}.{parameter_name}",
+                        )
+        else:
+            raise ContractError(f"animal profiles cannot use route {route!r}")
+
         _require_id(contract["prompt_template_id"], "prompt_template_id")
         template = _require_text(contract["positive_template"], "positive_template")
         _require_text(contract["pose_guard_prompt"], "pose_guard_prompt")
@@ -360,10 +456,13 @@ def _validate_generation_contract(
             expected_values=expected_values,
             label="generation_contract.value_labels",
         )
+        revision_fields = (
+            frozenset({"flux2", "pixal3d", "dino"})
+            if route == "flux2_pixal3d_animal_v1"
+            else frozenset({"flux2"})
+        )
         revisions = _require_exact_fields(
-            contract["model_revisions"],
-            frozenset({"flux2", "pixal3d", "dino"}),
-            "model_revisions",
+            contract["model_revisions"], revision_fields, "model_revisions"
         )
         for name, revision in revisions.items():
             _require_text(revision, f"model_revisions.{name}")
@@ -710,7 +809,11 @@ def validate_attribute_profile(value: Any) -> dict[str, Any]:
         "base_template",
     )
     _require_id(base["template_id"], "base_template.template_id")
-    if base["kind"] not in {"reference_image", "rocketbox_avatar"}:
+    if base["kind"] not in {
+        "reference_image",
+        "stable_animal_template",
+        "rocketbox_avatar",
+    }:
         raise ContractError("unsupported base_template.kind")
     _validate_artifact(base["artifact"], "base_template.artifact")
     if base["provenance_status"] not in {"verified", "review_required", "legacy_unknown"}:
@@ -791,7 +894,10 @@ def legal_attribute_combinations(profile: Any) -> list[dict[str, str]]:
     domains = validated["sampled_attribute_domains"]
     names = sorted(domains)
     combinations = [
-        dict(zip(names, values, strict=True))
+        # itertools.product always emits exactly one value per input domain;
+        # avoid zip(strict=True) so the offline SkinTokens/Pixal support
+        # environment on Python 3.9 can compile the same immutable requests.
+        dict(zip(names, values))
         for values in itertools.product(*(domains[name] for name in names))
     ]
     legal = [
@@ -851,9 +957,9 @@ def _quota_variants(
         results.append(
             {
                 attribute: dict(quota)
-                for (attribute, _variants), quota in zip(
-                    per_attribute, selected, strict=True
-                )
+                # selected is emitted by a product over per_attribute, so the
+                # lengths are equal by construction (and Python 3.9-safe).
+                for (attribute, _variants), quota in zip(per_attribute, selected)
             }
         )
     results.sort(
@@ -1021,13 +1127,57 @@ def _compile_animal_generation_plan(
         labels[attribute] = contract["value_labels"][attribute][str(value)]
     subject = contract["positive_template"].format(**labels).strip()
     prompt = f"{subject} {contract['pose_guard_prompt'].strip()}"
+    negative_prompt = contract["negative_prompt"].strip()
+    tail_shape = combined.get("tail_shape")
+    if tail_shape is not None and str(tail_shape).lower() not in {
+        "none",
+        "tailless",
+        "absent",
+    }:
+        if "free tail visibly separated from both hind legs" not in prompt:
+            prompt = f"{prompt} {TAILED_ANIMAL_SEPARATION_PROMPT}"
+        if "fused tail and leg" not in negative_prompt:
+            negative_prompt = (
+                f"{negative_prompt}, {TAILED_ANIMAL_SEPARATION_NEGATIVE_PROMPT}"
+            )
+    if contract["route"] == "stable_animal_template_v1":
+        operations = []
+        for attribute in sorted(sampled):
+            binding = contract["attribute_bindings"][attribute]
+            selected = sampled[attribute]
+            operations.append(
+                {
+                    "attribute": attribute,
+                    "value": selected,
+                    "operation": binding["operation"],
+                    "parameters": _deepcopy(binding["values"][selected]),
+                }
+            )
+        return {
+            "schema": contract["plan_schema"],
+            "route": contract["route"],
+            "base_template": _deepcopy(profile["base_template"]),
+            "geometry_topology_changes_allowed": False,
+            "skin_weight_changes_allowed": False,
+            "skeleton_changes_allowed": False,
+            "attribute_operations": operations,
+            "appearance_reference": {
+                "prompt_template_id": contract["prompt_template_id"],
+                "prompt": prompt,
+                "negative_prompt": negative_prompt,
+                "generation_seed": generation_seed,
+                "flux_invocations": 1,
+                "policy": contract["flux_reference_policy"],
+                "model_revisions": _deepcopy(contract["model_revisions"]),
+            },
+        }
     return {
         "schema": "flux2_pixal3d_generation_plan_v1",
         "route": contract["route"],
         "prompt_template_id": contract["prompt_template_id"],
         "base_template": _deepcopy(profile["base_template"]),
         "prompt": prompt,
-        "negative_prompt": contract["negative_prompt"],
+        "negative_prompt": negative_prompt,
         "generation_seed": generation_seed,
         "flux_invocations": 1,
         "model_revisions": _deepcopy(contract["model_revisions"]),

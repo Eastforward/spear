@@ -76,6 +76,19 @@ def test_build_jobs_uses_stable_namespace_and_authored_cardinal_yaw(tmp_path):
     assert jobs[0]["formal_dataset_registration_authorized"] is False
 
 
+def test_build_jobs_accepts_generic_ofat_registry_and_local_pending_status(tmp_path):
+    registry, selection = _inputs(tmp_path)
+    registry["schema"] = "avengine_stable_animal_template_registry_v2"
+    entry = registry["entries"][0]
+    entry["direction"]["review_status"] = "local_ofat_visual_review_pending"
+    entry["sampled_attributes"] = {"size": "small"}
+
+    jobs = build_jobs(registry, selection)
+
+    assert jobs[0]["human_review_status"] == "local_ofat_visual_review_pending"
+    assert jobs[0]["sampled_attributes"] == {"size": "small"}
+
+
 def test_prepare_publishes_non_overwriting_authenticated_jobs(tmp_path):
     registry, selection = _inputs(tmp_path)
     registry_path = tmp_path / "registry.json"

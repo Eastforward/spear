@@ -457,6 +457,98 @@ def test_sample_body_basis_matches_quaternius_native_named_husky_bones():
     assert basis["up_alignment_z"] > 0.99
 
 
+def test_sample_body_basis_matches_namespaced_rocketbox_beagle_bones():
+    from rig_direction_check import sample_body_basis_in_frame
+
+    # UE preserves the Rocketbox asset namespace with hyphens.  The torso
+    # chain runs rear-to-front along +X and the paired hind feet establish the
+    # ground/up plane.
+    positions = {
+        "beagle-Pelvis": [0.0, 0.0, 33.0],
+        "beagle-Spine": [5.0, 0.0, 33.0],
+        "beagle-Spine1": [13.0, 0.0, 33.0],
+        "beagle-Spine2": [21.0, 0.0, 34.0],
+        "beagle-L-Foot": [-12.0, -6.0, 10.0],
+        "beagle-R-Foot": [-12.0, 6.0, 10.0],
+        "beagle-Tail": [-4.0, 0.0, 34.0],
+    }
+
+    class Component:
+        bone_names = list(positions)
+
+        def GetNumBones(self):
+            return len(self.bone_names)
+
+        def GetBoneName(self, BoneIndex):
+            return self.bone_names[BoneIndex]
+
+        def GetBoneIndex(self, BoneName):
+            return self.bone_names.index(BoneName)
+
+        def GetBoneTransform(self, InBoneName, TransformSpace, as_dict):
+            x, y, z = positions[InBoneName]
+            return {"translation": {"x": x, "y": y, "z": z}}
+
+    class UnrealService:
+        def get_components_by_class(self, **_kwargs):
+            return [Component()]
+
+    basis = sample_body_basis_in_frame(
+        object(), unreal_service=UnrealService()
+    )
+
+    assert basis["basis_kind"] == "prefixed_bip_quadruped_longitudinal_v1"
+    assert basis["bone_names"] == {
+        "rear": "beagle-Pelvis",
+        "front": "beagle-Spine2",
+        "body": "beagle-Pelvis",
+        "left_foot": "beagle-L-Foot",
+        "right_foot": "beagle-R-Foot",
+    }
+    assert basis["forward_yaw_ue_deg"] == pytest.approx(0.0, abs=3.0)
+    assert basis["up_alignment_z"] > 0.85
+
+
+def test_namespaced_bip_without_quadruped_tail_marker_is_not_auto_classified():
+    from rig_direction_check import sample_body_basis_in_frame
+
+    positions = {
+        "avatar-Pelvis": [0.0, 0.0, 100.0],
+        "avatar-Spine2": [0.0, 0.0, 130.0],
+        "avatar-L-Foot": [0.0, -10.0, 0.0],
+        "avatar-R-Foot": [0.0, 10.0, 0.0],
+    }
+
+    class Component:
+        bone_names = list(positions)
+
+        def GetNumBones(self):
+            return len(self.bone_names)
+
+        def GetBoneName(self, BoneIndex):
+            return self.bone_names[BoneIndex]
+
+        def GetBoneIndex(self, BoneName):
+            return self.bone_names.index(BoneName)
+
+        def GetBoneTransform(self, InBoneName, TransformSpace, as_dict):
+            x, y, z = positions[InBoneName]
+            return {"translation": {"x": x, "y": y, "z": z}}
+
+    class UnrealService:
+        def get_components_by_class(self, **_kwargs):
+            return [Component()]
+
+    diagnostics = []
+    basis = sample_body_basis_in_frame(
+        object(), unreal_service=UnrealService(), diagnostics=diagnostics
+    )
+
+    assert basis is None
+    assert diagnostics[-1]["stage"] == "body_basis_bone_lookup"
+    assert diagnostics[-1]["matched_prefixed_bip_roles"] == []
+
+
 def test_sample_body_basis_matches_quaternius_farm_horse_bones():
     from rig_direction_check import sample_body_basis_in_frame
 

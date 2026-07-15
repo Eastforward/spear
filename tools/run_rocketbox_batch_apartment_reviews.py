@@ -26,6 +26,14 @@ DEFAULT_SS2_PYTHON = Path("/data/jzy/miniconda3/envs/ss2/bin/python")
 DEFAULT_AUDIO_LAUNCHER = SPEAR_ROOT / "tools/spike_rlr/run_audio_pass_rlr.py"
 DEFAULT_AUDIO_MESH = SPEAR_ROOT / "tmp/spike_rlr/apartment_v1_mesh.glb"
 DEFAULT_AUDIO_MATERIALS = SPEAR_ROOT / "tmp/spike_rlr/apartment_v1_materials.json"
+STABLE_TEMPLATE_REGISTRY_SCHEMAS = {
+    "avengine_quaternius_stable_template_registry_v1",
+    "avengine_stable_animal_template_registry_v2",
+}
+STABLE_PENDING_REVIEW_STATUSES = {
+    "agent_selected_pending_human_review",
+    "local_ofat_visual_review_pending",
+}
 
 
 @dataclass(frozen=True)
@@ -158,8 +166,7 @@ def _stable_animal_source_gate_is_valid(source: dict) -> bool:
         item.get("template_id"): item for item in imported.get("results", [])
     }.get(source.get("template_id"))
     return bool(
-        registry.get("schema")
-        == "avengine_quaternius_stable_template_registry_v1"
+        registry.get("schema") in STABLE_TEMPLATE_REGISTRY_SCHEMAS
         and imported.get("schema") == "stable_animal_ue_import_result_v1"
         and entry
         and result
@@ -176,7 +183,7 @@ def _stable_animal_source_gate_is_valid(source: dict) -> bool:
         and entry.get("direction", {}).get("automatic_fine_yaw_inference")
         is False
         and entry.get("direction", {}).get("review_status")
-        == "agent_selected_pending_human_review"
+        in STABLE_PENDING_REVIEW_STATUSES
         and float(source.get("walking_forward_yaw_offset_deg"))
         == float(entry.get("direction", {}).get("cardinal_yaw_deg"))
         and result.get("tag") == source.get("tag")

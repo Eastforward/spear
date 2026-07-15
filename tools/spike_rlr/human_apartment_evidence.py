@@ -28,6 +28,14 @@ STABLE_ANIMAL_REGISTRY_SCHEMA = (
     "stable_animal_apartment_research_candidate_registry_v1"
 )
 STABLE_ANIMAL_GATE_SCHEMA = "stable_animal_apartment_gate_v1"
+STABLE_TEMPLATE_REGISTRY_SCHEMAS = {
+    "avengine_quaternius_stable_template_registry_v1",
+    "avengine_stable_animal_template_registry_v2",
+}
+STABLE_PENDING_REVIEW_STATUSES = {
+    "agent_selected_pending_human_review",
+    "local_ofat_visual_review_pending",
+}
 _SAFE_TAG = re.compile(r"[a-z0-9_]+")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -498,8 +506,7 @@ def publish_stable_animal_registry_clip(
     except (TypeError, ValueError) as exc:
         raise ValueError("stable-animal cardinal direction is invalid") from exc
     if (
-        template_registry.get("schema")
-        != "avengine_quaternius_stable_template_registry_v1"
+        template_registry.get("schema") not in STABLE_TEMPLATE_REGISTRY_SCHEMAS
         or imported.get("schema") != "stable_animal_ue_import_result_v1"
         or deformation.get("schema")
         != "avengine_skinned_deformation_audit_v1"
@@ -519,8 +526,7 @@ def publish_stable_animal_registry_clip(
             "passed_"
         )
         or direction.get("automatic_fine_yaw_inference") is not False
-        or direction.get("review_status")
-        != "agent_selected_pending_human_review"
+        or direction.get("review_status") not in STABLE_PENDING_REVIEW_STATUSES
         or source_yaw != cardinal_yaw
         or imported_result.get("asset_id") != asset_id
         or imported_result.get("tag") != tag
@@ -528,7 +534,7 @@ def publish_stable_animal_registry_clip(
         or set(imported_result.get("actions", [])) != {"Idle", "Walking"}
         or imported_result.get("status", "passed") != "passed"
         or imported_result.get("human_review_status")
-        != "agent_selected_pending_human_review"
+        not in STABLE_PENDING_REVIEW_STATUSES
         or imported_result.get("formal_dataset_registration_authorized") is not False
         or not imported_result.get("blueprint")
     ):

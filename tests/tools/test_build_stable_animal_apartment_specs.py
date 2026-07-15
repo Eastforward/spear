@@ -29,6 +29,9 @@ def test_stable_pair_keeps_cardinal_offset_and_builds_stationary_idle():
         "audio_lookup": "dog_bark",
         "audio_source_height_offset_m": 0.45,
         "walking_forward_yaw_offset_deg": 90.0,
+        "sampled_attributes": {"size": "small"},
+        "fixed_attributes": {"coat_pattern": "tricolor"},
+        "target_physical_profile": {"target_value_cm": 32.4},
     }
     gate = {
         "schema": "stable_animal_apartment_gate_v1",
@@ -43,7 +46,20 @@ def test_stable_pair_keeps_cardinal_offset_and_builds_stationary_idle():
     assert walking["walking_forward_yaw_offset_deg"] == 90.0
     assert walking["actor_scale"] == 0.15
     assert walking["audio_lookup"] == "dog_bark"
+    assert walking["sampled_attributes"] == {"size": "small"}
+    assert walking["fixed_attributes"] == {"coat_pattern": "tricolor"}
+    assert walking["target_physical_profile"] == {"target_value_cm": 32.4}
+    assert walking["ground_snap_max_abs_correction_cm"] == 30.0
     assert walking["stable_animal_gate"] == gate
     assert idle["wanted_anim"] == "Idle"
     assert idle["trajectory_m"] == [[2.0, 0.0, 0.0]] * 6
     assert "rig_direction_check_windows" not in pair["Idle"]
+
+    meter_scale_job = dict(job, actor_scale=1.0)
+    meter_scale = build_pair(_template(), job=meter_scale_job, gate=gate)
+    assert (
+        meter_scale["Walking"]["sources"][0][
+            "ground_snap_max_abs_correction_cm"
+        ]
+        == 50.0
+    )
