@@ -59,6 +59,7 @@ POSE_CHECK_HINTS = (
     "front_and_hind_legs_share_consistent_planes",
     "all_paws_share_one_ground_plane",
 )
+INTERACTIVE_MAX_POINTS = 18_000
 
 
 class ReviewServerError(RuntimeError):
@@ -120,6 +121,21 @@ def _atomic_json(path: Path, value: Mapping[str, Any], *, replace: bool) -> None
     os.replace(temporary, path)
 
 
+def _atomic_compact_json(path: Path, value: Mapping[str, Any]) -> None:
+    """Persist a non-authoritative browser cache without partial files."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, delete=False
+    ) as stream:
+        temporary = Path(stream.name)
+        json.dump(value, stream, ensure_ascii=False, separators=(",", ":"))
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
 def _normalize_yaw(value: float) -> float:
     normalized = (float(value) + 180.0) % 360.0 - 180.0
     if math.isclose(normalized, -180.0, abs_tol=1e-9):
@@ -158,6 +174,39 @@ def _load_preview_mesh(path: Path) -> trimesh.Trimesh:
     return mesh
 
 
+def _sample_surface_points(
+    mesh: trimesh.Trimesh,
+    *,
+    max_points: int,
+) -> np.ndarray:
+    """Return deterministic area-uniform points from the real mesh surface."""
+
+    if max_points <= 0:
+        raise ReviewServerError("max_points must be positive")
+    source_vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    face_areas = np.asarray(mesh.area_faces, dtype=np.float64)
+    valid_faces = np.flatnonzero(np.isfinite(face_areas) & (face_areas > 0.0))
+    if len(faces) and len(valid_faces):
+        probabilities = face_areas[valid_faces]
+        probabilities /= probabilities.sum()
+        rng = np.random.default_rng(0xA11CE)
+        chosen = rng.choice(valid_faces, size=max_points, replace=True, p=probabilities)
+        triangles = source_vertices[faces[chosen]]
+        root_u = np.sqrt(rng.random(max_points))
+        v = rng.random(max_points)
+        return (
+            (1.0 - root_u)[:, None] * triangles[:, 0]
+            + (root_u * (1.0 - v))[:, None] * triangles[:, 1]
+            + (root_u * v)[:, None] * triangles[:, 2]
+        )
+    points = source_vertices
+    if len(points) > max_points:
+        indices = np.linspace(0, len(points) - 1, max_points, dtype=np.int64)
+        points = points[indices]
+    return points.copy()
+
+
 def _render_orientation_preview(
     mesh: trimesh.Trimesh,
     destination: Path,
@@ -165,7 +214,7 @@ def _render_orientation_preview(
     yaw_deg: float,
     max_points: int = 45_000,
 ) -> None:
-    """Render a fast side/top silhouette without exporting a scratch mesh.
+    """Render a side/top fallback image without exporting a scratch mesh.
 
     The previous Hunyuan review renderer accepted a mesh filename, which made
     every button click serialize a 100k-face GLB before drawing it.  That is
@@ -187,27 +236,7 @@ def _render_orientation_preview(
     # vertex-only plots made broad valid belly/chest triangles look like holes
     # when viewed end-on.  Surface samples still leave a real missing face
     # empty, while representing existing triangles faithfully.
-    faces = np.asarray(mesh.faces, dtype=np.int64)
-    face_areas = np.asarray(mesh.area_faces, dtype=np.float64)
-    valid_faces = np.flatnonzero(np.isfinite(face_areas) & (face_areas > 0.0))
-    if len(faces) and len(valid_faces):
-        probabilities = face_areas[valid_faces]
-        probabilities /= probabilities.sum()
-        rng = np.random.default_rng(0xA11CE)
-        chosen = rng.choice(valid_faces, size=max_points, replace=True, p=probabilities)
-        triangles = source_vertices[faces[chosen]]
-        root_u = np.sqrt(rng.random(max_points))
-        v = rng.random(max_points)
-        points = (
-            (1.0 - root_u)[:, None] * triangles[:, 0]
-            + (root_u * (1.0 - v))[:, None] * triangles[:, 1]
-            + (root_u * v)[:, None] * triangles[:, 2]
-        )
-    else:  # pragma: no cover - manifest validation requires faces
-        points = source_vertices
-        if len(points) > max_points:
-            indices = np.linspace(0, len(points) - 1, max_points, dtype=np.int64)
-            points = points[indices]
+    points = _sample_surface_points(mesh, max_points=max_points)
     vertices = points @ rotation.T
 
     bounds = np.vstack((bounds_vertices.min(axis=0), bounds_vertices.max(axis=0)))
@@ -293,7 +322,7 @@ def _validate_manifest(path: Path) -> tuple[dict[str, Any], dict[str, dict[str, 
             not isinstance(asset_id, str)
             or not asset_id
             or asset_id in entries
-            or entry.get("species") not in {"cat", "dog"}
+            or entry.get("species") not in {"cat", "dog", "horse"}
             or entry.get("current_evidence_status", {}).get("walking_direction")
             not in {
                 "rejected_by_user_visual_review",
@@ -304,7 +333,6 @@ def _validate_manifest(path: Path) -> tuple[dict[str, Any], dict[str, dict[str, 
         ):
             raise ReviewServerError("direction review entry identity/status is invalid")
         required_artifacts = (
-            "pixal_input_rgba",
             "prebind_lod_glb",
             "static_contact_sheet",
             "static_top_view",
@@ -322,12 +350,22 @@ def _validate_manifest(path: Path) -> tuple[dict[str, Any], dict[str, dict[str, 
             "apartment_spec_manifest",
             "apartment_batch_status",
             "pixal_raw_glb",
+            "i23d_raw_glb",
+            "reference_image",
+            "generation_manifest",
             "current_bound_glb",
         )
         artifacts = entry.get("artifacts", {})
-        if any(name not in artifacts for name in required_artifacts):
+        if (
+            any(name not in artifacts for name in required_artifacts)
+            or not ({"pixal_input_rgba", "reference_image"} & set(artifacts))
+        ):
             raise ReviewServerError("direction review core evidence is incomplete")
-        for name in (*required_artifacts, *optional_artifacts):
+        for name in (
+            *required_artifacts,
+            "pixal_input_rgba",
+            *optional_artifacts,
+        ):
             if name not in artifacts:
                 continue
             record = entry.get("artifacts", {}).get(name, {})
@@ -350,7 +388,10 @@ def _validate_manifest(path: Path) -> tuple[dict[str, Any], dict[str, dict[str, 
 def _public_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
     artifact_names = (
         "pixal_raw_glb",
+        "i23d_raw_glb",
         "pixal_input_rgba",
+        "reference_image",
+        "generation_manifest",
         "prebind_lod_glb",
         "static_contact_sheet",
         "static_top_view",
@@ -386,7 +427,7 @@ def _public_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
 HTML = r"""<!doctype html>
 <html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>猫狗源姿势与整90°方向人工审核</title>
+<title>动物源姿势与整90°方向人工审核</title>
 <style>
 :root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,sans-serif}*{box-sizing:border-box}
 body{margin:0;background:#0b0e14;color:#e7eaf0;height:100vh;overflow:hidden}button,input,select,textarea{font:inherit}
@@ -396,7 +437,7 @@ header{padding:16px;border-bottom:1px solid #273043}h1{font-size:19px;margin:0 0
 .filters{display:grid;gap:8px;padding:10px;border-bottom:1px solid #273043}input,select,textarea{width:100%;color:#e7eaf0;background:#171e2b;border:1px solid #303b50;border-radius:8px;padding:8px}
 #list{overflow:auto;padding:7px}.item{width:100%;text-align:left;color:inherit;background:transparent;border:1px solid transparent;border-radius:9px;padding:9px;cursor:pointer}.item:hover{background:#171e2b}.item.active{background:#1b2940;border-color:#3c6ea8}.item-title{font-size:12px;font-weight:650;overflow-wrap:anywhere}.item-meta{font-size:11px;color:#9aa7ba;margin-top:3px}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;background:#f59e0b}.dot.ok{background:#22c55e}.dot.bad{background:#ef4444}
 main{overflow:auto;padding:20px}.stage{max-width:1450px;margin:auto}.danger{background:#441b22;border:1px solid #9f3446;border-radius:10px;padding:12px;margin-bottom:14px;color:#ffd8df}.title-row{display:flex;justify-content:space-between;gap:12px}h2{font-size:20px;margin:0;overflow-wrap:anywhere}.pills{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}.pill{font-size:12px;border:1px solid #334155;background:#172131;border-radius:999px;padding:4px 8px}
-.grid{display:grid;grid-template-columns:minmax(430px,1.15fr) minmax(400px,1fr);gap:14px}.card{background:#111620;border:1px solid #273043;border-radius:12px;padding:14px}h3{font-size:15px;margin:0 0 8px}.instructions{font-size:13px;color:#ccd6e5;line-height:1.55;margin-bottom:10px}.preview-wrap{background:#fff;border-radius:8px;min-height:380px;display:flex;align-items:center;justify-content:center;overflow:hidden}.preview-wrap img{width:100%;max-height:590px;object-fit:contain}.static img{width:100%;border-radius:8px;background:#05070a}.evidence-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}.evidence figure{margin:0}.evidence figcaption{font-size:11px;color:#b8c6dc;margin:4px 0 10px}.contact{margin-top:8px}
+.grid{display:grid;grid-template-columns:minmax(430px,1.15fr) minmax(400px,1fr);gap:14px}.card{background:#111620;border:1px solid #273043;border-radius:12px;padding:14px}h3{font-size:15px;margin:0 0 8px}.instructions{font-size:13px;color:#ccd6e5;line-height:1.55;margin-bottom:10px}.preview-wrap{position:relative;background:#fff;border-radius:8px;min-height:380px;display:flex;align-items:center;justify-content:center;overflow:hidden}.preview-wrap canvas{display:block;width:100%;height:min(56vh,590px);min-height:380px}.preview-loading{position:absolute;color:#334155;font-size:13px;pointer-events:none}.static img{width:100%;border-radius:8px;background:#05070a}.evidence-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}.evidence figure{margin:0}.evidence figcaption{font-size:11px;color:#b8c6dc;margin:4px 0 10px}.contact{margin-top:8px}
 .controls{display:grid;grid-template-columns:repeat(4,minmax(70px,1fr));gap:6px;margin-top:9px}.controls button{padding:8px 3px}.yaw{font-family:ui-monospace,monospace;color:#7dd3fc;text-align:center;margin:8px 0}.checks{display:grid;gap:5px;margin-top:10px;padding:9px;border:1px solid #334155;border-radius:8px;background:#0d141f}.checks-title{font-size:12px;color:#8fb3df;margin-bottom:3px}.checks label{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#d5deeb}.checks input{width:auto;margin-top:2px}.decision{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.approve{background:#126137;border-color:#1f9d57}.reject{background:#7d2631;border-color:#bd4353}
 .video-card{margin-top:14px}.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.tabs button.active{background:#24466e;border-color:#4e83bd}video{width:100%;max-height:560px;background:#000;border-radius:9px}.path{font-size:11px;color:#b8c6dc;white-space:nowrap;overflow:auto;margin-top:7px;padding:7px;background:#0c111a;border-radius:6px}
 .note{margin-top:8px}.nav{display:flex;gap:6px}.status-line{font-size:12px;color:#fbbf24;margin-top:5px}
@@ -404,11 +445,11 @@ main{overflow:auto;padding:20px}.stage{max-width:1450px;margin:auto}.danger{back
 </style></head><body>
 <script id="assets" type="application/json">{{assets_json|safe}}</script>
 <div class="app"><aside><header><h1>源姿势 + 整90°方向人工审核</h1><div class="summary">{{asset_count}} 个资产 · 不使用自动方向或细角度补偿</div><div class="links"><a class="link" href="/docs/controlled_animal_video_review.html">动物成片</a><a class="link" href="/docs/rocketbox_human_video_review.html">人类视频</a></div></header>
-<div class="filters"><input id="search" type="search" placeholder="搜索 asset / breed / 属性"><select id="species"><option value="">猫 + 狗</option><option value="cat">猫</option><option value="dog">狗</option></select></div><div id="list"></div></aside>
-<main><div class="stage"><div class="danger"><b>先审源姿势，再审坐标方向：</b>猫的歪头/斜身、比格犬前后脚错轨不能靠 yaw 修复。若躯干、头颈、腿平面或落地任一项不合格，请直接拒绝并回到 2D/Pixal 重生。页面不自动判断方向、不预置 mirror，也不覆盖旧 GLB 或视频。</div>
+<div class="filters"><input id="search" type="search" placeholder="搜索 asset / breed / 属性"><select id="species"><option value="">全部动物</option><option value="cat">猫</option><option value="dog">狗</option><option value="horse">马</option></select></div><div id="list"></div></aside>
+<main><div class="stage"><div class="danger"><b>先审源姿势，再审坐标方向：</b>歪头/斜身、前后脚错轨不能靠 yaw 修复。若躯干、头颈、腿平面或落地任一项不合格，请直接拒绝并回到 2D/image-to-3D 重生。页面不自动判断方向、不预置 mirror，也不覆盖旧 GLB 或视频。</div>
 <div class="title-row"><div><h2 id="title"></h2><div id="sub" class="muted"></div><div id="status" class="status-line"></div></div><div class="nav"><button class="btn" id="prev">←</button><button class="btn" id="next">→</button></div></div><div id="pills" class="pills"></div>
-<div class="grid"><section class="card"><h3>人工门：源姿势合格后，选择一个整90°倍数方向</h3><div class="instructions">预览从<strong>原始 100k mesh、identity 变换</strong>开始。可保存的绝对方向为 0°、−90°、+90° 或 180°；按钮每次只绕 glTF UP 轴旋转。请让<strong style="color:#4ade80">躯干/脊柱纵轴朝绿色 +X</strong>；不要追着歪向一边的头调角度，头歪就拒绝源姿势。</div><div class="preview-wrap"><img id="preview" alt="方向预览"></div><div id="yaw" class="yaw"></div><div class="controls"><button class="btn rot" data-d="-90">↺ −90°</button><button class="btn" id="reset">重置 0°</button><button class="btn rot" data-d="90">↻ +90°</button><button class="btn rot" data-d="180">⇄ 180°</button></div><div class="checks"><div class="checks-title">可选检查提示（不勾选也能保存）</div><label><input class="pose-check" id="check-spine" type="checkbox">躯干/脊柱纵轴笔直，没有整体斜扭</label><label><input class="pose-check" id="check-head" type="checkbox">头颈沿躯干方向，没有朝镜头或侧面歪转</label><label><input class="pose-check" id="check-legs" type="checkbox">前后腿轨迹/平面一致，没有像比格当前结果那样错轨</label><label><input class="pose-check" id="check-ground" type="checkbox">四只脚处于同一合理地面，没有悬空</label></div><textarea id="notes" class="note" rows="2" placeholder="可选备注；拒绝时建议写明：歪头 / 躯干斜扭 / 前后脚错轨 / 脚未落地"></textarea><div class="decision"><button class="btn approve" id="approve">姿势合格并保存当前方向（0°）</button><button class="btn reject" id="reject">拒绝源姿势，退回重生</button></div></section>
-<section class="card static evidence"><h3>绑定前原始证据（不随按钮变化）</h3><div class="instructions">左图是进入 Pixal3D 的 2D RGBA，右图是 Pixal 原始 mesh 顶视图。两者用于区分“生成时已经歪”与“后续坐标方向错误”。</div><div class="evidence-pair"><figure><img id="inputref" alt="Pixal input RGBA"><figcaption>Pixal 输入 2D</figcaption></figure><figure><img id="topview" alt="Pixal static top view"><figcaption>Pixal 原始 mesh 顶视图</figcaption></figure></div><img id="contact" class="contact" alt="static contact sheet"><div id="rawpath" class="path"></div></section></div>
+<div class="grid"><section class="card"><h3>人工门：源姿势合格后，选择一个整90°倍数方向</h3><div class="instructions">预览从<strong>原始 100k mesh、identity 变换</strong>开始。可保存的绝对方向为 0°、−90°、+90° 或 180°；按钮每次只绕 glTF UP 轴旋转。请让<strong style="color:#4ade80">躯干/脊柱纵轴朝绿色 +X</strong>；不要追着歪向一边的头调角度，头歪就拒绝源姿势。</div><div class="preview-wrap"><canvas id="preview" aria-label="方向实时预览"></canvas><span id="preview-loading" class="preview-loading">正在加载原始 mesh 点云…</span></div><div id="yaw" class="yaw"></div><div class="controls"><button class="btn rot" data-d="-90">↺ −90°</button><button class="btn" id="reset">重置 0°</button><button class="btn rot" data-d="90">↻ +90°</button><button class="btn rot" data-d="180">⇄ 180°</button></div><div class="checks"><div class="checks-title">可选检查提示（不勾选也能保存）</div><label><input class="pose-check" id="check-spine" type="checkbox">躯干/脊柱纵轴笔直，没有整体斜扭</label><label><input class="pose-check" id="check-head" type="checkbox">头颈沿躯干方向，没有朝镜头或侧面歪转</label><label><input class="pose-check" id="check-legs" type="checkbox">前后腿轨迹/平面一致，没有像比格当前结果那样错轨</label><label><input class="pose-check" id="check-ground" type="checkbox">四只脚处于同一合理地面，没有悬空</label></div><textarea id="notes" class="note" rows="2" placeholder="可选备注；拒绝时建议写明：歪头 / 躯干斜扭 / 前后脚错轨 / 脚未落地"></textarea><div class="decision"><button class="btn approve" id="approve">姿势合格并保存当前方向（0°）</button><button class="btn reject" id="reject">拒绝源姿势，退回重生</button></div></section>
+<section class="card static evidence"><h3>绑定前原始证据（不随按钮变化）</h3><div class="instructions">左图是进入 image-to-3D 的当次 FLUX 参考图，右图是当次原始 3D mesh 顶视图。两者用于区分“生成时已经歪”与“后续坐标方向错误”。</div><div class="evidence-pair"><figure><img id="inputref" alt="I2-3D input"><figcaption>当次 FLUX / I2-3D 输入</figcaption></figure><figure><img id="topview" alt="I2-3D static top view"><figcaption>当次原始 3D mesh 顶视图</figcaption></figure></div><img id="contact" class="contact" alt="static contact sheet"><div id="rawpath" class="path"></div></section></div>
 <section class="card video-card"><h3>第二道门：绑定后动作与真实移动方向</h3><div class="instructions">页面同时保留隔离动画证据和已通过批状态认证的 UE Apartment Walk/Idle。请以当前资产的状态标签为准：被拒绝结果只用于定位问题；带 Apartment 标签的结果仍需人工确认方向，不能据此自动注册为正式资产。</div><div class="tabs" id="tabs"></div><video id="video" controls preload="metadata"></video><div id="videopath" class="path"></div></section>
 </div></main></div>
 <script>
@@ -421,14 +462,21 @@ function evidenceLabel(a){const e=a.current_evidence_status.walking_direction||'
 function renderList(){const list=$('list');list.replaceChildren();filtered.forEach((a,i)=>{const b=document.createElement('button'),st=itemStatus(a.asset_id),failed=(a.current_evidence_status.walking_direction||'').includes('rejected');b.className='item'+(i===idx?' active':'');b.innerHTML=`<div class="item-title"><span class="dot ${st.includes('approved')?'ok':(st.includes('rejected')||failed)?'bad':''}"></span></div><div class="item-meta"></div>`;b.querySelector('.item-title').append(a.asset_id);b.querySelector('.item-meta').textContent=`${a.species} · ${a.breed} · ${evidenceLabel(a)} · ${st}`;b.onclick=()=>{idx=i;render()};list.append(b)})}
 let view='apartment_walking_review';const labels={walking_side:'绑定后 Walk 侧面',walking_front:'绑定后 Walk 正面',idle_side:'绑定后 Idle 侧面',apartment_walking_review:'UE Walk + Top-down',apartment_walking_main:'UE Walk 主视图',apartment_walking_topdown:'Walk Top-down',apartment_idle_review:'UE Idle + Top-down',apartment_idle_main:'UE Idle 主视图',apartment_idle_topdown:'Idle Top-down'};
 function poseChecks(){return{spine_is_straight:$('check-spine').checked,head_is_aligned_with_torso:$('check-head').checked,front_and_hind_legs_share_consistent_planes:$('check-legs').checked,all_paws_share_one_ground_plane:$('check-ground').checked}}
-let prefetchTimer=0,prefetchGeneration=0;function preloadImage(url){return new Promise(resolve=>{const image=new Image();image.onload=image.onerror=resolve;image.src=url})}
-async function prefetchNeighbors(){const generation=++prefetchGeneration;if(filtered.length<2)return;for(const offset of [1,-1]){if(generation!==prefetchGeneration)return;const a=filtered[(idx+offset+filtered.length)%filtered.length],st=state[a.asset_id]||{yaw_deg:0,revision:0};const urls=[`/preview/${encodeURIComponent(a.asset_id)}.png?r=${st.revision||0}`,a.artifacts.pixal_input_rgba.url,a.artifacts.static_top_view.url,a.artifacts.static_contact_sheet.url];await Promise.all(urls.map(preloadImage))}}
+const cloudCache=new Map();let prefetchTimer=0,prefetchGeneration=0,yawBusy=false;
+function preloadImage(url){return new Promise(resolve=>{const image=new Image();image.onload=image.onerror=resolve;image.src=url})}
+async function ensureCloud(a,{quiet=false}={}){if(cloudCache.has(a.asset_id)){if(current()?.asset_id===a.asset_id)drawPreview();return cloudCache.get(a.asset_id)}if(!quiet)$('preview-loading').textContent='正在加载原始 mesh 点云…';const response=await fetch(`/api/preview-points/${encodeURIComponent(a.asset_id)}`);if(!response.ok)throw Error((await response.json()).error||'点云加载失败');const data=await response.json();cloudCache.set(a.asset_id,data);if(current()?.asset_id===a.asset_id)drawPreview();return data}
+function arrow(ctx,x1,y1,x2,y2,color,label){const angle=Math.atan2(y2-y1,x2-x1);ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=4;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.beginPath();ctx.moveTo(x2,y2);ctx.lineTo(x2-13*Math.cos(angle-Math.PI/6),y2-13*Math.sin(angle-Math.PI/6));ctx.lineTo(x2-13*Math.cos(angle+Math.PI/6),y2-13*Math.sin(angle+Math.PI/6));ctx.closePath();ctx.fill();ctx.font='700 13px system-ui';ctx.fillText(label,Math.min(x1,x2)+5,Math.min(y1,y2)-8);ctx.restore()}
+function drawPreview(){const canvas=$('preview'),a=current();if(!a)return;const cloud=cloudCache.get(a.asset_id),loading=$('preview-loading');if(!cloud){loading.hidden=false;return}loading.hidden=true;const rect=canvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1,w=Math.max(430,Math.round(rect.width)),h=Math.max(380,Math.round(rect.height));canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);const yaw=Number((state[a.asset_id]||{}).yaw_deg||0)*Math.PI/180,c=Math.cos(yaw),s=Math.sin(yaw),points=cloud.points.map(p=>[c*p[0]+s*p[2],p[1],-s*p[0]+c*p[2]]);const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];for(const p of points)for(let k=0;k<3;k++){if(p[k]<min[k])min[k]=p[k];if(p[k]>max[k])max[k]=p[k]}const gap=26,leftW=(w-gap)*.61,rightX=leftW+gap,rightW=w-rightX,pad=38,topPad=52,bottomPad=58;function projector(kind){const x0=kind==='side'?0:rightX,pw=kind==='side'?leftW:rightW,vi=kind==='side'?1:2,rx=Math.max(1e-9,max[0]-min[0]),ry=Math.max(1e-9,max[vi]-min[vi]),scale=Math.min((pw-pad*2)/rx,(h-topPad-bottomPad)/ry)*.92,cx=(min[0]+max[0])/2,cy=(min[vi]+max[vi])/2;return p=>[x0+pw/2+(p[0]-cx)*scale,topPad+(h-topPad-bottomPad)/2-(p[vi]-cy)*scale]};const side=projector('side'),top=projector('top');ctx.fillStyle='rgba(40,107,179,.24)';for(const p of points){const q=side(p);ctx.fillRect(q[0],q[1],1.25,1.25)}ctx.fillStyle='rgba(31,138,85,.24)';for(const p of points){const q=top(p);ctx.fillRect(q[0],q[1],1.25,1.25)}ctx.strokeStyle='#cbd5e1';ctx.lineWidth=1;ctx.strokeRect(1,1,leftW-2,h-2);ctx.strokeRect(rightX+1,1,rightW-2,h-2);ctx.fillStyle='#111827';ctx.font='700 14px system-ui';ctx.fillText('SIDE：动物必须直立',18,26);ctx.fillText('TOP-DOWN：躯干/脊柱必须朝右',rightX+18,26);arrow(ctx,leftW*.22,h-28,leftW*.82,h-28,'#08752d','FORWARD +X  →');arrow(ctx,rightX+rightW*.16,h-28,rightX+rightW*.84,h-28,'#08752d','FORWARD +X  →');arrow(ctx,22,h*.72,22,h*.28,'#2563eb','UP +Y  ↑')}
+function normalizeYaw(value){let yaw=((Number(value)+180)%360+360)%360-180;if(Math.abs(yaw+180)<1e-9)return 180;if(Math.abs(yaw)<1e-9)return 0;return yaw}
+function updateYawUI(){const a=current();if(!a)return;const st=state[a.asset_id]||{yaw_deg:0},yaw=Number(st.yaw_deg||0);$('yaw').textContent=`raw mesh + manual cardinal yaw = ${yaw}°`;$('approve').textContent=`姿势合格并保存当前方向（${yaw}°）`;const locked=Boolean(st.decision)||yawBusy;document.querySelectorAll('.rot,#reset,#approve,#reject,.pose-check').forEach(x=>x.disabled=locked)}
+async function mutateYaw(operation,value=0){if(yawBusy)return;const a=current();if(!a)return;const assetId=a.asset_id,before=Number((state[assetId]||{}).yaw_deg||0),next=operation==='reset'?0:normalizeYaw(before+value);state[assetId]={...(state[assetId]||{}),yaw_deg:next};yawBusy=true;updateYawUI();drawPreview();try{const url=operation==='reset'?`/api/reset/${encodeURIComponent(assetId)}`:`/api/rotate/${encodeURIComponent(assetId)}`,payload=operation==='reset'?{}:{delta_deg:Number(value)},response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),result=await response.json();if(!response.ok)throw Error(result.error||'方向保存失败');state[assetId]=result}catch(error){state[assetId]={...(state[assetId]||{}),yaw_deg:before};alert(error.message)}finally{yawBusy=false;if(current()?.asset_id===assetId){updateYawUI();drawPreview()}renderList()}}
+async function prefetchNeighbors(){const generation=++prefetchGeneration;if(filtered.length<2)return;for(const offset of [1,-1]){if(generation!==prefetchGeneration)return;const a=filtered[(idx+offset+filtered.length)%filtered.length],input=(a.artifacts.reference_image||a.artifacts.pixal_input_rgba).url;await Promise.all([ensureCloud(a,{quiet:true}),...([input,a.artifacts.static_top_view.url,a.artifacts.static_contact_sheet.url].map(preloadImage))])}}
 function queueNeighborPrefetch(){clearTimeout(prefetchTimer);prefetchTimer=setTimeout(prefetchNeighbors,120)}
-function render(){renderList();const a=current();if(!a)return;const st=state[a.asset_id]||{yaw_deg:0,revision:0};const yaw=Number(st.yaw_deg||0);$('title').textContent=a.asset_id;$('sub').textContent=`${a.species} · ${a.breed} · ${a.profile_schema_id}`;$('status').textContent=`${evidenceLabel(a)}；源姿势/整90°倍数方向：${st.decision?.status||'待人工审核'}`;$('pills').replaceChildren(...Object.entries(a.sampled_attributes).map(([k,v])=>{const x=document.createElement('span');x.className='pill';x.textContent=`${k}=${v}`;return x}));$('yaw').textContent=`raw mesh + manual cardinal yaw = ${yaw}°`;$('approve').textContent=`姿势合格并保存当前方向（${yaw}°）`;$('preview').src=`/preview/${encodeURIComponent(a.asset_id)}.png?r=${st.revision||0}`;$('inputref').src=a.artifacts.pixal_input_rgba.url;$('topview').src=a.artifacts.static_top_view.url;$('contact').src=a.artifacts.static_contact_sheet.url;$('rawpath').textContent=(a.artifacts.pixal_raw_glb||a.artifacts.prebind_lod_glb).absolute_path;document.querySelectorAll('.pose-check').forEach(x=>x.checked=false);renderVideo();const locked=Boolean(st.decision);document.querySelectorAll('.rot,#reset,#approve,#reject,.pose-check').forEach(x=>x.disabled=locked);queueNeighborPrefetch()}
+function render(){renderList();const a=current();if(!a)return;const st=state[a.asset_id]||{yaw_deg:0,revision:0};$('title').textContent=a.asset_id;$('sub').textContent=`${a.species} · ${a.breed} · ${a.profile_schema_id}`;$('status').textContent=`${evidenceLabel(a)}；源姿势/整90°倍数方向：${st.decision?.status||'待人工审核'}`;$('pills').replaceChildren(...Object.entries(a.sampled_attributes).map(([k,v])=>{const x=document.createElement('span');x.className='pill';x.textContent=`${k}=${v}`;return x}));$('inputref').src=(a.artifacts.reference_image||a.artifacts.pixal_input_rgba).url;$('topview').src=a.artifacts.static_top_view.url;$('contact').src=a.artifacts.static_contact_sheet.url;$('rawpath').textContent=(a.artifacts.i23d_raw_glb||a.artifacts.pixal_raw_glb||a.artifacts.prebind_lod_glb).absolute_path;document.querySelectorAll('.pose-check').forEach(x=>x.checked=false);renderVideo();updateYawUI();drawPreview();ensureCloud(a).catch(e=>{$('preview-loading').hidden=false;$('preview-loading').textContent=e.message});queueNeighborPrefetch()}
 function renderVideo(){const a=current();const keys=Object.keys(labels).filter(k=>a.artifacts[k]);const tabs=$('tabs');if(!keys.length){tabs.replaceChildren();$('video').removeAttribute('src');$('videopath').textContent='该阶段尚无动画媒体';return}if(!a.artifacts[view])view=keys[0];tabs.replaceChildren(...keys.map(k=>{const b=document.createElement('button');b.className='btn'+(view===k?' active':'');b.textContent=labels[k];b.onclick=()=>{view=k;renderVideo()};return b}));const m=a.artifacts[view];$('video').src=m.url;$('videopath').textContent=m.absolute_path}
 async function post(url,payload={}){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const j=await r.json();if(!r.ok){alert(j.error||'操作失败');throw Error(j.error)}state[j.asset_id]=j;render()}
-document.querySelectorAll('.rot').forEach(b=>b.onclick=()=>post(`/api/rotate/${encodeURIComponent(current().asset_id)}`,{delta_deg:Number(b.dataset.d)}));$('reset').onclick=()=>post(`/api/reset/${encodeURIComponent(current().asset_id)}`);$('approve').onclick=()=>{const checks=poseChecks(),yaw=Number((state[current().asset_id]||{}).yaw_deg||0);if(confirm(`确认源姿势合格，并保存当前方向 ${yaw}°？检查项为可选提示；这只保存人工方向，不会自动注册正式资产。`))post(`/api/decision/${encodeURIComponent(current().asset_id)}`,{status:'source_pose_and_cardinal_orientation_approved',notes:$('notes').value,pose_checks:checks})};$('reject').onclick=()=>{const notes=$('notes').value.trim()||'源姿势失败：头颈、躯干、腿平面或落地至少一项不合格';if(confirm('确认拒绝源姿势并退回 2D/Pixal 重生？'))post(`/api/decision/${encodeURIComponent(current().asset_id)}`,{status:'source_pose_rejected',notes,pose_checks:poseChecks()})};
-$('prev').onclick=()=>{if(filtered.length){idx=(idx-1+filtered.length)%filtered.length;render()}};$('next').onclick=()=>{if(filtered.length){idx=(idx+1)%filtered.length;render()}};$('search').oninput=apply;$('species').oninput=apply;window.onkeydown=e=>{if(e.key==='ArrowLeft')$('prev').click();if(e.key==='ArrowRight')$('next').click()};loadState();
+document.querySelectorAll('.rot').forEach(b=>b.onclick=()=>mutateYaw('rotate',Number(b.dataset.d)));$('reset').onclick=()=>mutateYaw('reset');$('approve').onclick=()=>{const checks=poseChecks(),yaw=Number((state[current().asset_id]||{}).yaw_deg||0);if(confirm(`确认源姿势合格，并保存当前方向 ${yaw}°？检查项为可选提示；这只保存人工方向，不会自动注册正式资产。`))post(`/api/decision/${encodeURIComponent(current().asset_id)}`,{status:'source_pose_and_cardinal_orientation_approved',notes:$('notes').value,pose_checks:checks})};$('reject').onclick=()=>{const notes=$('notes').value.trim()||'源姿势失败：头颈、躯干、腿平面或落地至少一项不合格';if(confirm('确认拒绝源姿势并退回 2D/image-to-3D 重生？'))post(`/api/decision/${encodeURIComponent(current().asset_id)}`,{status:'source_pose_rejected',notes,pose_checks:poseChecks()})};
+$('prev').onclick=()=>{if(filtered.length){idx=(idx-1+filtered.length)%filtered.length;render()}};$('next').onclick=()=>{if(filtered.length){idx=(idx+1)%filtered.length;render()}};$('search').oninput=apply;$('species').oninput=apply;window.onresize=drawPreview;window.onkeydown=e=>{if(e.key==='ArrowLeft')$('prev').click();if(e.key==='ArrowRight')$('next').click()};loadState();
 </script></body></html>"""
 
 
@@ -446,10 +494,13 @@ def create_app(
     (state_root / "previews").mkdir(exist_ok=True)
     (state_root / "states").mkdir(exist_ok=True)
     (state_root / "decisions").mkdir(exist_ok=True)
+    (state_root / "interactive_points").mkdir(exist_ok=True)
     locks = {asset_id: threading.Lock() for asset_id in entries}
     mesh_cache: OrderedDict[str, trimesh.Trimesh] = OrderedDict()
     mesh_cache_lock = threading.Lock()
     mesh_cache_capacity = min(4, max(1, len(entries)))
+    point_cache: dict[str, dict[str, Any]] = {}
+    point_cache_lock = threading.Lock()
     preview_render_lock = threading.Lock()
 
     app = Flask(__name__)
@@ -519,6 +570,17 @@ def create_app(
         token = f"{yaw_deg:+09.3f}".replace("+", "p").replace("-", "m").replace(".", "d")
         return state_root / "previews" / asset_id / f"surface_v2_yaw_{token}.png"
 
+    def interactive_points_path(asset_id: str) -> Path:
+        source = entries[asset_id]["artifacts"]["prebind_lod_glb"]
+        return (
+            state_root
+            / "interactive_points"
+            / (
+                f"{asset_id}_{source['sha256'][:16]}_"
+                f"n{INTERACTIVE_MAX_POINTS}.json"
+            )
+        )
+
     def cached_preview_mesh(asset_id: str) -> trimesh.Trimesh:
         with mesh_cache_lock:
             cached = mesh_cache.pop(asset_id, None)
@@ -549,6 +611,50 @@ def create_app(
                 _render_orientation_preview(mesh, destination, yaw_deg=yaw_deg)
         return destination
 
+    def cached_preview_points(asset_id: str) -> dict[str, Any]:
+        with point_cache_lock:
+            cached = point_cache.get(asset_id)
+            if cached is not None:
+                return cached
+        entry = entries[asset_id]
+        source = entry["artifacts"]["prebind_lod_glb"]
+        cache_path = interactive_points_path(asset_id)
+        if cache_path.is_file():
+            payload = _read_json(cache_path)
+            if (
+                payload.get("schema")
+                != "controlled_animal_direction_interactive_points_v1"
+                or payload.get("asset_id") != asset_id
+                or payload.get("source_sha256") != source["sha256"]
+                or payload.get("source_size_bytes") != source["size_bytes"]
+                or payload.get("coordinate_frame") != "gltf_y_up"
+                or not isinstance(payload.get("point_count"), int)
+                or not 0 < payload["point_count"] <= INTERACTIVE_MAX_POINTS
+                or len(payload.get("points", [])) != payload["point_count"]
+            ):
+                raise ReviewServerError(
+                    f"invalid persistent interactive point cache: {asset_id}"
+                )
+        else:
+            mesh = cached_preview_mesh(asset_id)
+            points = _sample_surface_points(
+                mesh,
+                max_points=INTERACTIVE_MAX_POINTS,
+            )
+            payload = {
+                "schema": "controlled_animal_direction_interactive_points_v1",
+                "asset_id": asset_id,
+                "source_sha256": source["sha256"],
+                "source_size_bytes": source["size_bytes"],
+                "coordinate_frame": "gltf_y_up",
+                "point_count": int(len(points)),
+                "points": np.round(points, decimals=6).tolist(),
+            }
+            _atomic_compact_json(cache_path, payload)
+        with point_cache_lock:
+            existing = point_cache.setdefault(asset_id, payload)
+        return existing
+
     @app.errorhandler(ReviewServerError)
     def handle_review_error(error):
         if request.path.startswith("/api/"):
@@ -567,6 +673,16 @@ def create_app(
     @app.get("/api/state")
     def api_state():
         return jsonify({asset_id: read_state(asset_id) for asset_id in entries})
+
+    @app.get("/api/preview-points/<asset_id>")
+    def preview_points(asset_id: str):
+        require_asset(asset_id)
+        cached_preview_points(asset_id)
+        return send_file(
+            interactive_points_path(asset_id),
+            mimetype="application/json",
+            conditional=True,
+        )
 
     @app.get("/preview/<asset_id>.png")
     def preview(asset_id: str):
@@ -597,7 +713,6 @@ def create_app(
             state["revision"] = int(state.get("revision", 0)) + 1
             state["updated_at"] = datetime.now(timezone.utc).isoformat()
             write_state(asset_id, state)
-            render_preview(asset_id, float(state["yaw_deg"]))
         return jsonify(state)
 
     @app.post("/api/reset/<asset_id>")
@@ -617,7 +732,6 @@ def create_app(
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             write_state(asset_id, state)
-            render_preview(asset_id, 0.0)
         return jsonify(state)
 
     @app.post("/api/decision/<asset_id>")
@@ -657,8 +771,9 @@ def create_app(
                 "source_prebind_lod": copy.deepcopy(
                     entry["artifacts"]["prebind_lod_glb"]
                 ),
-                "source_reference_rgba": copy.deepcopy(
-                    entry["artifacts"]["pixal_input_rgba"]
+                "source_reference_image": copy.deepcopy(
+                    entry["artifacts"].get("reference_image")
+                    or entry["artifacts"]["pixal_input_rgba"]
                 ),
                 "source_static_top_view": copy.deepcopy(
                     entry["artifacts"]["static_top_view"]
@@ -683,12 +798,16 @@ def create_app(
                 "next_gate": (
                     "derive_binding_basis_then_straight_line_and_curve_dynamic_canary"
                     if status == "source_pose_and_cardinal_orientation_approved"
-                    else "regenerate_strict_side_profile_reference_then_pixal_static_review"
+                    else "regenerate_strict_profile_reference_then_i23d_static_review"
                 ),
                 "formal_dataset_registration_authorized": False,
                 "source_assets_modified": False,
                 "history": copy.deepcopy(state["history"]),
             }
+            if "pixal_input_rgba" in entry["artifacts"]:
+                decision["source_reference_rgba"] = copy.deepcopy(
+                    entry["artifacts"]["pixal_input_rgba"]
+                )
             decision["decision_sha256"] = _hash_without(decision, "decision_sha256")
             _atomic_json(decision_path(asset_id), decision, replace=False)
             state["decision"] = {

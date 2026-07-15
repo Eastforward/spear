@@ -21,6 +21,8 @@ def _entry() -> dict:
         name: {
             "absolute_path": f"/not-read/{name}",
             "server_path": f"/external/{name}",
+            "sha256": "1" * 64,
+            "size_bytes": 1,
         }
         for name in (
             "pixal_raw_glb",
@@ -84,6 +86,7 @@ def test_review_state_is_transform_only_and_decision_is_immutable(
         lambda _path: (manifest, {entry["asset_id"]: entry}),
     )
     load_count = 0
+    render_count = 0
 
     def fake_load(_path):
         nonlocal load_count
@@ -93,6 +96,8 @@ def test_review_state_is_transform_only_and_decision_is_immutable(
     monkeypatch.setattr(server, "_load_preview_mesh", fake_load)
 
     def fake_render(_mesh, destination, *, yaw_deg, max_points=45_000):
+        nonlocal render_count
+        render_count += 1
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(b"\x89PNG\r\n\x1a\nfixture")
 
@@ -104,6 +109,22 @@ def test_review_state_is_transform_only_and_decision_is_immutable(
     assert client.get("/api/state").get_json()["dog_fixture"]["yaw_deg"] == 0
     preview = client.get("/preview/dog_fixture.png")
     assert preview.status_code == 200 and preview.data.startswith(b"\x89PNG")
+    points = client.get("/api/preview-points/dog_fixture")
+    assert points.status_code == 200
+    assert points.get_json()["schema"] == (
+        "controlled_animal_direction_interactive_points_v1"
+    )
+    assert points.get_json()["point_count"] == server.INTERACTIVE_MAX_POINTS
+    persistent_point_cache = next((state_root / "interactive_points").glob("*.json"))
+    assert persistent_point_cache.is_file()
+
+    second_client = server.create_app(
+        tmp_path / "manifest.json", state_root
+    ).test_client()
+    second_points = second_client.get("/api/preview-points/dog_fixture")
+    assert second_points.status_code == 200
+    assert second_points.get_json()["source_sha256"] == "1" * 64
+    assert load_count == 1
 
     fine_rotation = client.post(
         "/api/rotate/dog_fixture", json={"delta_deg": 5}
@@ -117,6 +138,7 @@ def test_review_state_is_transform_only_and_decision_is_immutable(
     assert rotated.status_code == 200
     assert rotated.get_json()["yaw_deg"] == 180
     assert load_count == 1
+    assert render_count == 1
 
     decided = client.post(
         "/api/decision/dog_fixture",
@@ -270,4 +292,8 @@ def test_page_marks_pose_checks_optional_and_prefetches_neighbor_previews():
     assert "可选检查提示（不勾选也能保存）" in html
     assert "四项源姿势检查必须全部人工确认" not in html
     assert "prefetchNeighbors" in html
+    assert "/api/preview-points/" in html
+    assert '<canvas id="preview"' in html
+    assert "b.onclick=()=>mutateYaw('rotate'" in html
+    assert "yaw_deg:next};yawBusy=true;updateYawUI();drawPreview();try" in html
     assert "历史失败动画，仅供定位" in html
