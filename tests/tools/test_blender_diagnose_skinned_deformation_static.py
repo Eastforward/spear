@@ -38,3 +38,12 @@ def test_diagnostic_uses_geometry_inferred_quadruped_semantics():
     assert "front_side_positive" in text
     assert "hind_side_negative" in text
     assert "hind_side_positive" in text
+
+
+def test_diagnostic_can_use_authenticated_labels_for_trusted_multi_root_rigs():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert '"--semantic-label-map"' in text
+    assert "avengine_explicit_quadruped_semantic_labels_v1" in text
+    assert "authenticated_explicit_labels" in text
+    assert "geometry_inferred_one_root" in text

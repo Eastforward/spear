@@ -33,6 +33,7 @@ from tools.blender_audit_skinned_deformation import (  # noqa: E402
 )
 from tools.generated_quadruped_semantics import (  # noqa: E402
     infer_quadruped_semantics,
+    quadruped_semantic_labels,
 )
 
 
@@ -57,6 +58,14 @@ def parse_argv():
         "--front-axis",
         required=True,
         choices=("positive-x", "negative-x", "positive-y", "negative-y"),
+    )
+    parser.add_argument(
+        "--semantic-label-map",
+        type=Path,
+        help=(
+            "Authenticated explicit bone labels for a trusted multi-root rig; "
+            "when omitted, geometry-based one-root inference remains mandatory."
+        ),
     )
     parser.add_argument("--minimum-influence", type=float, default=0.01)
     return parser.parse_args(argv)
@@ -100,24 +109,70 @@ def bone_records(armature):
     return records
 
 
-def semantic_labels(armature, rest_vertices, front_axis):
+class ExplicitSemantics:
+    def __init__(self, root, chains):
+        self.root = root
+        self._chains = {name: tuple(values) for name, values in chains.items()}
+
+    def chains(self):
+        return dict(self._chains)
+
+
+def explicit_semantic_labels(path, armature, front_axis):
+    source = require_input(path)
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"invalid explicit semantic label map: {error}") from error
+    chains = payload.get("chains")
+    labels = payload.get("labels")
+    bone_names = {bone.name for bone in armature.data.bones}
+    if (
+        payload.get("schema") != "avengine_explicit_quadruped_semantic_labels_v1"
+        or payload.get("front_axis") != front_axis
+        or not isinstance(chains, dict)
+        or not isinstance(labels, dict)
+        or payload.get("root") not in bone_names
+        or set(labels) != bone_names
+        or any(label not in chains for label in labels.values())
+    ):
+        raise RuntimeError("explicit semantic label map does not match the armature")
+    return (
+        ExplicitSemantics(payload["root"], chains),
+        {str(name): str(label) for name, label in labels.items()},
+        {
+            "mode": "authenticated_explicit_labels",
+            "path": str(source),
+            "sha256": sha256_file(source),
+            "size_bytes": source.stat().st_size,
+        },
+    )
+
+
+def semantic_labels(armature, rest_vertices, front_axis, semantic_label_map=None):
+    if semantic_label_map is not None:
+        return explicit_semantic_labels(
+            semantic_label_map, armature, front_axis
+        )
     minimum = rest_vertices.min(axis=0)
     extent = np.ptp(rest_vertices, axis=0)
+    records = bone_records(armature)
     semantics = infer_quadruped_semantics(
-        bone_records(armature),
+        records,
         bbox_min=minimum,
         bbox_extent=extent,
         front_axis=front_axis,
     )
-    labels = {}
-    for label, chain in semantics.chains().items():
-        for name in chain:
-            if name in labels:
-                raise RuntimeError(f"bone appears in multiple semantic chains: {name}")
-            labels[name] = label
+    labels = quadruped_semantic_labels(
+        semantics,
+        records,
+        bbox_min=minimum,
+        bbox_extent=extent,
+        front_axis=front_axis,
+    )
     if set(labels) != set(armature.data.bones.keys()):
         raise RuntimeError("semantic labels do not cover the armature")
-    return semantics, labels
+    return semantics, labels, {"mode": "geometry_inferred_one_root"}
 
 
 def vertex_influences(body, bone_labels, minimum):
@@ -254,8 +309,11 @@ def main():
     rest_diagonal = float(np.linalg.norm(np.ptp(rest_vertices, axis=0)))
     rest_lengths = edge_lengths(rest_vertices, edges)
     valid_edges = rest_lengths > rest_diagonal * 1.0e-5
-    semantics, bone_labels = semantic_labels(
-        armature, rest_vertices, args.front_axis
+    semantics, bone_labels, semantic_source = semantic_labels(
+        armature,
+        rest_vertices,
+        args.front_axis,
+        semantic_label_map=args.semantic_label_map,
     )
     influences = vertex_influences(body, bone_labels, args.minimum_influence)
     dominant, cross_limb_edges, mixed_vertices = edge_static_classification(
@@ -356,6 +414,7 @@ def main():
             "chains": {
                 name: list(value) for name, value in semantics.chains().items()
             },
+            "mapping_source": semantic_source,
         },
         "static_weight_topology": {
             "minimum_recorded_influence": args.minimum_influence,
