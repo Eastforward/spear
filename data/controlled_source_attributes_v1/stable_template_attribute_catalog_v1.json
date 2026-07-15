@@ -1,0 +1,343 @@
+{
+  "schema": "avengine_stable_template_attribute_catalog_v1",
+  "state_classification": "research_candidate",
+  "formal_dataset_registration_authorized": false,
+  "template_registry_sha256": "e49361673d481c575dc78cff0f6065eddb90cffe2fd70bb283da1c409d66182a",
+  "attribute_contract": {
+    "maximum_values_per_randomized_attribute": 3,
+    "required_domains": [
+      "size",
+      "body_build",
+      "coat_tone",
+      "life_stage"
+    ],
+    "relative_edit_history_forbidden": true,
+    "sampling": "code_only_complete_prompt_and_json"
+  },
+  "entries": [
+    {
+      "template_id": "quaternius_ultimate_alpaca_v1",
+      "species": "alpaca",
+      "breed": "domestic_alpaca",
+      "subject_label": "alpaca",
+      "motion_family": "quadruped_small_ungulate",
+      "fixed_attributes": {
+        "coat_length": "long",
+        "coat_pattern": "solid",
+        "ear_shape": "upright",
+        "tail_shape": "short_natural"
+      },
+      "coat_tone_values": ["light_brown", "warm_brown", "dark_brown"],
+      "coat_tone_labels": ["light brown", "warm brown", "dark brown"],
+      "coat_material_names": ["Main", "Main_Light", "Main_Dark"],
+      "muzzle_material_names": ["Muzzle"],
+      "physical_profile": {
+        "measurement": "withers_height_cm",
+        "reference_value_cm": 90,
+        "tolerance_cm": 8
+      },
+      "acoustic_profile": {
+        "profile_id": "alpaca_vocalization_v1",
+        "default_event_class": "silent",
+        "allowed_event_classes": ["alpaca_hum", "silent"]
+      }
+    },
+    {
+      "template_id": "quaternius_ultimate_bull_v1",
+      "species": "cattle",
+      "breed": "domestic_bull",
+      "subject_label": "bull",
+      "motion_family": "quadruped_bovid",
+      "fixed_attributes": {
+        "coat_length": "short",
+        "coat_pattern": "solid",
+        "ear_shape": "lateral_bovine",
+        "tail_shape": "long_tufted"
+      },
+      "coat_tone_values": ["soft_black", "black", "deep_black"],
+      "coat_tone_labels": ["soft black", "black", "deep black"],
+      "coat_material_names": ["Main", "Main_Light"],
+      "muzzle_material_names": ["Muzzle"],
+      "physical_profile": {
+        "measurement": "withers_height_cm",
+        "reference_value_cm": 145,
+        "tolerance_cm": 12
+      },
+      "acoustic_profile": {
+        "profile_id": "cattle_vocalization_v1",
+        "default_event_class": "cattle_moo",
+        "allowed_event_classes": ["cattle_moo", "cattle_bellow", "silent"]
+      }
+    },
+    {
+      "template_id": "quaternius_ultimate_cow_v1",
+      "species": "cattle",
+      "breed": "domestic_cow",
+      "subject_label": "cow",
+      "motion_family": "quadruped_bovid",
+      "fixed_attributes": {
+        "coat_length": "short",
+        "coat_pattern": "solid_with_lighter_regions",
+        "ear_shape": "lateral_bovine",
+        "tail_shape": "long_tufted"
+      },
+      "coat_tone_values": ["light_reddish_brown", "reddish_brown", "dark_reddish_brown"],
+      "coat_tone_labels": ["light reddish brown", "reddish brown", "dark reddish brown"],
+      "coat_material_names": ["Main", "Main_Light"],
+      "muzzle_material_names": ["Muzzle"],
+      "physical_profile": {
+        "measurement": "withers_height_cm",
+        "reference_value_cm": 140,
+        "tolerance_cm": 12
+      },
+      "acoustic_profile": {
+        "profile_id": "cattle_vocalization_v1",
+        "default_event_class": "cattle_moo",
+        "allowed_event_classes": ["cattle_moo", "cattle_bellow", "silent"]
+      }
+    },
+    {
+      "template_id": "quaternius_ultimate_deer_v1",
+      "species": "deer",
+      "breed": "generic_deer",
+      "subject_label": "deer",
+      "motion_family": "quadruped_small_ungulate",
+      "fixed_attributes": {
+        "coat_length": "short",
+        "coat_pattern": "natural_fawn_with_lighter_regions",
+        "ear_shape": "upright_cervid",
+        "tail_shape": "short_natural"
+      },
+      "coat_tone_values": ["light_fawn", "fawn", "dark_fawn"],
+      "coat_tone_labels": ["light fawn", "fawn", "dark fawn"],
+      "coat_material_names": ["Main", "Main_Light", "Main_Dark"],
+      "muzzle_material_names": ["none"],
+      "physical_profile": {
+        "measurement": "shoulder_height_cm",
+        "reference_value_cm": 95,
+        "tolerance_cm": 9
+      },
+      "acoustic_profile": {
+        "profile_id": "deer_vocalization_v1",
+        "default_event_class": "deer_call",
+        "allowed_event_classes": ["deer_call", "deer_grunt", "silent"]
+      }
+    },
+    {
+      "template_id": "quaternius_ultimate_donkey_v1",
+      "species": "donkey",
+      "breed": "domestic_donkey",
+      "subject_label": "donkey",
+      "motion_family": "quadruped_equid",
+      "fixed_attributes": {
+        "coat_length": "short",
+        "coat_pattern": "solid_with_dark_points",
+        "ear_shape": "long_upright",
+        "tail_shape": "long_tufted"
+      },
+      "coat_tone_values": ["light_gray", "neutral_gray", "dark_gray"],
+      "coat_tone_labels": ["light gray", "neutral gray", "dark gray"],
+      "coat_material_names": ["Main", "Main_Light", "Main_Dark"],
+      "muzzle_material_names": ["Muzzle"],
+      "physical_profile": {
+        "measurement": "withers_height_cm",
+        "reference_value_cm": 115,
+        "tolerance_cm": 10
+      },
+      "acoustic_profile": {
+        "profile_id": "donkey_vocalization_v1",
+        "default_event_class": "silent",
+        "allowed_event_classes": ["donkey_braying", "silent"]
+      }
+    },
+    {
+      "template_id": "quaternius_ultimate_fox_v1",
+      "species": "fox",
+      "breed": "red_fox",
+      "subject_label": "red fox",
+      "motion_family": "quadruped_canid",
+      "fixed_attributes": {
+        "coat_length": "medium",
+        "coat_pattern": "red_with_dark_points_and_light_underside",
+        "ear_shape": "upright_triangular",
+        "tail_shape": "long_bushy"
+      },
+      "coat_tone_values": ["light_russet", "russet", "dark_russet"],
+      "coat_tone_labels": ["light russet", "russet", "dark russet"],
+      "coat_material_names": ["Main", "Main_Light", "Grey"],
+      "muzzle_material_names": ["none"],
+      "physical_profile": {
+        "measurement": "shoulder_height_cm",
+        "reference_value_cm": 40,
+        "tolerance_cm": 4
+      },
+      "acoustic_profile": {
+        "profile_id": "red_fox_vocalization_v1",
+        "default_event_class": "fox_call",
+        "allowed_event_classes": ["fox_call", "fox_bark", "silent"]
+      }
+    },
+    {
+      "template_id": "quaternius_ultimate_horse_v1",
+      "species": "horse",
+      "breed": "bay_horse",
+      "subject_label": "bay horse",
+      "motion_family": "quadruped_equid",
+      "fixed_attributes": {
+        "coat_length": "short",
+        "coat_pattern": "bay_with_dark_points",
+        "ear_shape": "upright_equine",
+        "tail_shape": "long_natural"
+      },
+      "coat_tone_values": ["light_bay", "standard_bay", "dark_bay"],
+      "coat_tone_labels": ["light bay", "standard bay", "dark bay"],
+      "coat_material_names": ["Main", "Main_Dark", "Main_Light"],
+      "muzzle_material_names": ["Muzzle"],
+      "physical_profile": {
+        "measurement": "withers_height_cm",
+        "reference_value_cm": 160,
+        "tolerance_cm": 12
+      },
+      "acoustic_profile": {
+        "profile_id": "horse_vocalization_v1",
+        "default_event_class": "horse_neigh",
+        "allowed_event_classes": ["horse_neigh", "horse_snort", "silent"]
+      }
+    },
+    {
+      "template_id": "quaternius_ultimate_horse_white_v1",
+      "species": "horse",
+      "breed": "white_horse",
+      "subject_label": "white horse",
+      "motion_family": "quadruped_equid",
+      "fixed_attributes": {
+        "coat_length": "short",
+        "coat_pattern": "solid_light_coat",
+        "ear_shape": "upright_equine",
+        "tail_shape": "long_natural"
+      },
+      "coat_tone_values": ["light_ivory", "ivory", "shaded_ivory"],
+      "coat_tone_labels": ["light ivory", "ivory", "shaded ivory"],
+      "coat_material_names": ["Main", "Main_Light"],
+      "muzzle_material_names": ["Muzzle"],
+      "physical_profile": {
+        "measurement": "withers_height_cm",
+        "reference_value_cm": 160,
+        "tolerance_cm": 12
+      },
+      "acoustic_profile": {
+        "profile_id": "horse_vocalization_v1",
+        "default_event_class": "horse_neigh",
+        "allowed_event_classes": ["horse_neigh", "horse_snort", "silent"]
+      }
+    },
+    {
+      "template_id": "quaternius_ultimate_husky_v1",
+      "species": "dog",
+      "breed": "siberian_husky",
+      "subject_label": "Siberian husky",
+      "motion_family": "quadruped_canid",
+      "fixed_attributes": {
+        "coat_length": "medium",
+        "coat_pattern": "gray_and_white_husky_markings",
+        "ear_shape": "upright_triangular",
+        "tail_shape": "curled_bushy"
+      },
+      "coat_tone_values": ["light_silver_gray", "silver_gray", "dark_charcoal_gray"],
+      "coat_tone_labels": ["light silver gray", "silver gray", "dark charcoal gray"],
+      "coat_material_names": ["Material", "Material.001"],
+      "muzzle_material_names": ["Material.003"],
+      "physical_profile": {
+        "measurement": "shoulder_height_cm",
+        "reference_value_cm": 55,
+        "tolerance_cm": 5
+      },
+      "acoustic_profile": {
+        "profile_id": "dog_vocalization_v1",
+        "default_event_class": "dog_bark",
+        "allowed_event_classes": ["dog_bark", "dog_howl", "silent"]
+      }
+    },
+    {
+      "template_id": "quaternius_ultimate_shibainu_v1",
+      "species": "dog",
+      "breed": "shiba_inu",
+      "subject_label": "Shiba Inu",
+      "motion_family": "quadruped_canid",
+      "fixed_attributes": {
+        "coat_length": "short_double_coat",
+        "coat_pattern": "red_with_cream_urajiro",
+        "ear_shape": "upright_triangular",
+        "tail_shape": "curled"
+      },
+      "coat_tone_values": ["light_red", "standard_red", "dark_red"],
+      "coat_tone_labels": ["light red", "standard red", "dark red"],
+      "coat_material_names": ["Main", "Main_Light"],
+      "muzzle_material_names": ["none"],
+      "physical_profile": {
+        "measurement": "shoulder_height_cm",
+        "reference_value_cm": 39,
+        "tolerance_cm": 4
+      },
+      "acoustic_profile": {
+        "profile_id": "dog_vocalization_v1",
+        "default_event_class": "dog_bark",
+        "allowed_event_classes": ["dog_bark", "dog_growl", "silent"]
+      }
+    },
+    {
+      "template_id": "quaternius_ultimate_stag_v1",
+      "species": "deer",
+      "breed": "stag",
+      "subject_label": "stag",
+      "motion_family": "quadruped_small_ungulate",
+      "fixed_attributes": {
+        "coat_length": "short",
+        "coat_pattern": "natural_brown_with_lighter_regions",
+        "ear_shape": "upright_cervid",
+        "tail_shape": "short_natural"
+      },
+      "coat_tone_values": ["light_brown", "natural_brown", "dark_brown"],
+      "coat_tone_labels": ["light brown", "natural brown", "dark brown"],
+      "coat_material_names": ["Material", "Material.003", "Material.010"],
+      "muzzle_material_names": ["none"],
+      "physical_profile": {
+        "measurement": "shoulder_height_cm",
+        "reference_value_cm": 120,
+        "tolerance_cm": 10
+      },
+      "acoustic_profile": {
+        "profile_id": "deer_vocalization_v1",
+        "default_event_class": "deer_call",
+        "allowed_event_classes": ["deer_call", "stag_roar", "silent"]
+      }
+    },
+    {
+      "template_id": "quaternius_ultimate_wolf_v1",
+      "species": "wolf",
+      "breed": "gray_wolf",
+      "subject_label": "gray wolf",
+      "motion_family": "quadruped_canid",
+      "fixed_attributes": {
+        "coat_length": "medium",
+        "coat_pattern": "natural_gray_with_lighter_regions",
+        "ear_shape": "upright_triangular",
+        "tail_shape": "long_bushy"
+      },
+      "coat_tone_values": ["light_gray", "natural_gray", "dark_gray"],
+      "coat_tone_labels": ["light gray", "natural gray", "dark gray"],
+      "coat_material_names": ["Main", "Main_Light"],
+      "muzzle_material_names": ["none"],
+      "physical_profile": {
+        "measurement": "shoulder_height_cm",
+        "reference_value_cm": 80,
+        "tolerance_cm": 7
+      },
+      "acoustic_profile": {
+        "profile_id": "wolf_vocalization_v1",
+        "default_event_class": "wolf_howl",
+        "allowed_event_classes": ["wolf_howl", "wolf_growl", "silent"]
+      }
+    }
+  ]
+}
