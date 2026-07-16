@@ -1,0 +1,57 @@
+{
+  "_meta": {
+    "spec_version": "v1",
+    "description": "Acoustic material database for RLR / pyroomacoustics. Each material has 4 octave bands (125, 500, 2000, 8000 Hz) of absorption α, one scattering coefficient s, and 4-band transmission τ. Values sourced from Vorländer 2008 'Auralization' materials database or standard architectural acoustics tables.",
+    "bands_hz": [125, 500, 2000, 8000],
+    "reference": "Vorländer, M. (2008). Auralization: Fundamentals of Acoustics, Modelling, Simulation, Algorithms and Acoustic Virtual Reality. Springer.",
+    "usage": "shoebox_v2_spec.json.surfaces.* and shoebox_v2_spec.json.furniture[].material reference the keys here."
+  },
+  "drywall_painted": {
+    "description": "Painted gypsum drywall over stud (standard interior wall).",
+    "alpha": [0.05, 0.10, 0.10, 0.15],
+    "scattering": 0.05,
+    "transmission": [0.0, 0.0, 0.0, 0.0]
+  },
+  "hardwood_oak": {
+    "description": "Solid oak plank floor.",
+    "alpha": [0.10, 0.07, 0.06, 0.06],
+    "scattering": 0.05,
+    "transmission": [0.0, 0.0, 0.0, 0.0]
+  },
+  "painted_plaster": {
+    "description": "Painted plaster ceiling.",
+    "alpha": [0.14, 0.10, 0.06, 0.04],
+    "scattering": 0.05,
+    "transmission": [0.0, 0.0, 0.0, 0.0]
+  },
+  "fabric_upholstery": {
+    "description": "Fabric-covered sofa (upholstered furniture). High mid/high-freq absorption. Some transmission for sound sneaking through.",
+    "alpha": [0.15, 0.30, 0.45, 0.60],
+    "scattering": 0.20,
+    "transmission": [0.05, 0.10, 0.20, 0.30]
+  },
+  "leather_upholstery": {
+    "description": "Leather-covered sofa. Lower absorption than fabric. Kept for future material sweep.",
+    "alpha": [0.08, 0.15, 0.20, 0.25],
+    "scattering": 0.15,
+    "transmission": [0.02, 0.05, 0.10, 0.15]
+  },
+  "carpet_thick": {
+    "description": "Thick pile carpet on concrete. Kept for future room material sweep.",
+    "alpha": [0.14, 0.35, 0.60, 0.65],
+    "scattering": 0.10,
+    "transmission": [0.0, 0.0, 0.0, 0.0]
+  },
+  "concrete_bare": {
+    "description": "Bare concrete surface (very reflective). Kept for future room material sweep.",
+    "alpha": [0.01, 0.02, 0.02, 0.02],
+    "scattering": 0.02,
+    "transmission": [0.0, 0.0, 0.0, 0.0]
+  },
+  "glass_window": {
+    "description": "Standard 6mm window glass. Some transmission modeled (single-pane).",
+    "alpha": [0.35, 0.18, 0.07, 0.04],
+    "scattering": 0.02,
+    "transmission": [0.10, 0.05, 0.02, 0.01]
+  }
+}

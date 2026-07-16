@@ -1,0 +1,57 @@
+{
+  "schema": "avengine_controlled_reference_provenance_v1",
+  "reference_id": "quaternius_dog_authored_rest_pose_three_quarter_four_limb_clay_v1",
+  "state_classification": "research_candidate",
+  "reference": {
+    "path": "data/controlled_source_attributes_v1/references/animal/quaternius_dog_authored_rest_pose_three_quarter_four_limb_clay_v1/frame_0000.png",
+    "sha256": "5592611e0a158f7b5e1c60a110b2b6f7dd633237e97ecdd7ecccaaa988be146d",
+    "size_bytes": 1031410,
+    "canvas": [
+      1024,
+      1024
+    ]
+  },
+  "source_rig": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/quaternius_animalpack/Dog.glb",
+    "sha256": "bf9d2fdaf74a36be453edf4516a0b13b042cfce2d2614e0bf3ee24d40d553032",
+    "size_bytes": 143692,
+    "pose": "authored_armature_rest_pose_with_deterministic_far_limb_offset"
+  },
+  "license_snapshot": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/README.md",
+    "sha256": "5887c71ec9a300997bee4445def8f4fb9014ea4e09b36522c1efb9b8eb3a5aef",
+    "size_bytes": 1347,
+    "declared_license": "CC0-1.0",
+    "upstream_url": "https://quaternius.com/packs/animatedanimals.html"
+  },
+  "render": {
+    "spear_base_revision": "6b527ff467fb6e8b974cd267d8828c9c2eb37942",
+    "renderer_path": "tools/blender_render_glb_animation.py",
+    "renderer_sha256": "ab8c11198dcac65bed910bdaea05b44027b8eb0194982bbc209b2793f29adbc4",
+    "blender_version": "4.2.1 LTS",
+    "parameters": {
+      "rest_pose": true,
+      "orthographic": true,
+      "view": "side",
+      "pose_template_yaw_deg": -20,
+      "quadruped_far_limb_offset_ratio": 0.3,
+      "pose_template_clay_color": "#b88b6a",
+      "smooth_shading": true,
+      "camera_yaw_deg": 0,
+      "width": 1024,
+      "height": 1024,
+      "n_frames": 1,
+      "camera_distance_multiplier": 1.5,
+      "ground_plane": true
+    }
+  },
+  "usage": {
+    "purpose": "depth-disambiguated single-image quadruped pose template for comparing Pixal3D and TRELLIS limb reconstruction",
+    "pose_contract": "straight neutral torso viewed at a fixed 20-degree three-quarter yaw; four lower-leg and paw silhouettes remain visible; far-side limb chains use deterministic opposite 30-percent fore-aft offsets; every paw remains grounded",
+    "appearance_contract": "one uniform clay material and smooth polygon shading remove source material-region leakage while preserving authored geometry",
+    "direction_contract": "the 20-degree source-view yaw is image evidence only; exported assets still require whole-torso cardinal-axis normalization",
+    "formal_dataset_registration_authorized": false
+  }
+}

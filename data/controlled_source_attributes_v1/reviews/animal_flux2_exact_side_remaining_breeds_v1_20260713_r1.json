@@ -1,0 +1,52 @@
+{
+  "schema": "avengine_controlled_animal_2d_review_decisions_v1",
+  "flux2_batch_sha256": "368e70ab10600d71d430595369daec30f9292fdeb2535ad2e5632f19e7764b18",
+  "reviewer": "codex_visual_review_2026_07_13",
+  "decisions": [
+    {
+      "instance_id": "cat_siamese_four_limb_rest_side_da6be693e10f",
+      "candidate_sha256": "e6ee750ef398c19dca7678581dc812a99fcdd3a040b776a63210e145ff870973",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "point_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Exact-side Siamese canary passed: the head and torso share one longitudinal axis, all four limb chains and paws are visible, and all paws meet one level ground plane. Metric size remains deferred."
+    },
+    {
+      "instance_id": "dog_golden_retriever_four_limb_rest_side_clay_2ae899f41a1e",
+      "candidate_sha256": "7282e92341c68d9bcbde0193bee8b151217dbc3ffa2ba7ebb412c0f381e9c803",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Uniform-clay Golden Retriever canary passed: the dark-golden coat covers the full guide, the torso remains side-on, the four paws are individually usable and grounded, and the compact far-limb offsets do not lift a paw. Metric size remains deferred."
+    },
+    {
+      "instance_id": "dog_pug_four_limb_rest_side_clay_1616bd4f9e1e",
+      "candidate_sha256": "071d9706cb8374a86dd0f06929457c3d2a35904d71b85754d76c7b607f3a88da",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_color": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Uniform-clay Pug canary passed: the apricot coat and dark facial mask cover the guide coherently, the short muzzle remains aligned with the side-on torso, and four distinct grounded paws are visible. Metric size remains deferred."
+    }
+  ]
+}

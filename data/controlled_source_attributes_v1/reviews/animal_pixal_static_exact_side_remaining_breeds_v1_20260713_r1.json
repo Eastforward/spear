@@ -1,0 +1,69 @@
+{
+  "schema": "avengine_controlled_animal_static_decisions_v1",
+  "static_review_batch_sha256": "d2931fc01a2ca0bfab074e14ad111e564c1d8b0df1f56733511e3d5e688bea87",
+  "decisions": [
+    {
+      "instance_id": "cat_siamese_four_limb_rest_side_da6be693e10f",
+      "review_sha256": "a67036939d39b10170e2b511b72dc3bae8b5c343ea4045f07a0e2e079cf33c39",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "point_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "The raw Pixal3D mesh remains a high-polygon research candidate and requires the normal LOD gate before Unreal import."
+      ],
+      "notes": "Multiview evidence shows a coherent blue-point Siamese, straight top-view body axis, head aligned with the torso, four distinct grounded limbs, one attached tail, and no large holes. Animation remains a separate gate."
+    },
+    {
+      "instance_id": "dog_golden_retriever_four_limb_rest_side_clay_2ae899f41a1e",
+      "review_sha256": "d807c82454fc1029bb7471b1478a5b8d2f9aa171ffa20f7468abc57d5be11ec6",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "The raw Pixal3D mesh remains a high-polygon research candidate and requires the normal LOD gate before Unreal import."
+      ],
+      "notes": "Multiview evidence shows one coherent long-coated Golden Retriever, straight top-view body axis, aligned head and torso, four usable grounded limbs, one attached feathered tail, and no large holes. Animation remains a separate gate."
+    },
+    {
+      "instance_id": "dog_pug_four_limb_rest_side_clay_1616bd4f9e1e",
+      "review_sha256": "73ab8a65df25347b60cecd9b2b0de2d1a246a41ff372d2fa1b2a02f52d7b2c08",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "The raw Pixal3D mesh remains a high-polygon research candidate and requires the normal LOD gate before Unreal import."
+      ],
+      "notes": "Multiview evidence shows one coherent apricot Pug with a dark facial mask, straight top-view body axis, aligned short muzzle and torso, four usable grounded limbs, one attached curled tail, and no large holes. Animation remains a separate gate."
+    }
+  ]
+}

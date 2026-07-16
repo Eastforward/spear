@@ -1,0 +1,69 @@
+{
+  "schema": "avengine_controlled_animal_static_decisions_v1",
+  "static_review_batch_sha256": "7886fd91f4d489bf8d986bd5aadbeb6b021e5891ad5f91c02f697196fc3309d9",
+  "decisions": [
+    {
+      "instance_id": "dog_beagle_four_limb_rest_side_clay_91ee0825e6b1",
+      "review_sha256": "8e78a7f8b5ffeea3efc3ae3151caf5bf2cffee25e48c8a6fb67d36108bb7cf54",
+      "decision": "rejected",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": false,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_tone": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "Prebind geometry audit measured 8.55 degrees of top-view torso twist."
+      ],
+      "notes": "The v8 input fixes limb separation and the raw mesh has no position-indexed boundary edges, but the top-view torso remains too diagonal for unattended binding; regenerate instead of correcting it with a display yaw."
+    },
+    {
+      "instance_id": "dog_beagle_four_limb_rest_side_clay_ec17a640ceb9",
+      "review_sha256": "82268515be5afa66b3c357dfd1bc4c61234fd6119a56a225032c8e5844ca7baa",
+      "decision": "rejected",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": false,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_tone": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "Prebind geometry audit measured 5.95 degrees of top-view torso twist and three position-indexed boundary edges."
+      ],
+      "notes": "The mesh is much better than the rejected v6 canary but remains outside the unattended torso-alignment pass band; regenerate before binding."
+    },
+    {
+      "instance_id": "dog_beagle_four_limb_rest_side_clay_f667fd32c163",
+      "review_sha256": "fc9259544aaec64818b54a7bc52d5ca4ae50694f474ed4f6a305f280b66f3533",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_tone": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "The raw Pixal mesh has a 0.000314 nonmanifold-edge ratio and must retain the no-face-deletion, no-new-boundary LOD/binding policy."
+      ],
+      "notes": "Multiview and prebind audit agree: 2.76-degree torso yaw, zero position-indexed boundary edges, four distinct grounded limbs, coherent texture, and no large holes. Approved for the repaired LOD and binding canary only."
+    }
+  ]
+}

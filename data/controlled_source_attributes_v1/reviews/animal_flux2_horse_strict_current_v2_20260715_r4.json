@@ -1,0 +1,22 @@
+{
+  "schema": "avengine_controlled_animal_2d_review_decisions_v1",
+  "flux2_batch_sha256": "d91989298ebcc70112077ffe4fc280692456fc062f02d2f3d8c48bc00e3512f1",
+  "reviewer": "codex_visual_canary_v1",
+  "decisions": [
+    {
+      "instance_id": "horse_bay_native_action_composite_side_clay_1b26a23050d9",
+      "candidate_sha256": "8595b6ee03ec3ca12f267c29d41dae68f130a1ea87f4bc4b6b21871709fdaa35",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_tone": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Exact lateral horse torso facing image-right; four distinct legs and four hoof silhouettes are visible and grounded. No white or black stretched leg patches, missing surfaces, tack, or accessory are visible. Approved only for exact-hash Pixal3D/TRELLIS static canaries, not formal registration."
+    }
+  ]
+}

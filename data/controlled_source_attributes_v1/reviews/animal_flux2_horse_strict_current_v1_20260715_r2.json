@@ -1,0 +1,22 @@
+{
+  "schema": "avengine_controlled_animal_2d_review_decisions_v1",
+  "flux2_batch_sha256": "75f5d3d6fcb3ac9253d1425b19287ff3278204821fcac6e3fd4a7b9f969c4d17",
+  "reviewer": "codex_visual_canary_v1",
+  "decisions": [
+    {
+      "instance_id": "horse_bay_four_limb_rest_side_clay_ada55dadba5b",
+      "candidate_sha256": "c12bd0569318e1b619e173455dff4647ee2c14355913d1b42ea67b48e86422fc",
+      "decision": "rejected",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "rejected",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_tone": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Clean bay appearance and level side torso, but the far foreleg collapses behind the near foreleg so only three independent leg silhouettes remain. Rejected before I2I-to-3D."
+    }
+  ]
+}

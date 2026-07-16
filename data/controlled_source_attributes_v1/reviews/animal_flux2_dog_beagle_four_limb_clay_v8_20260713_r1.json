@@ -1,0 +1,52 @@
+{
+  "schema": "avengine_controlled_animal_2d_review_decisions_v1",
+  "flux2_batch_sha256": "d002a801449c25b1e46ad4d4987489f8a9b36238fcccaf18850a2983aafa813a",
+  "reviewer": "codex_visual_canary_v1",
+  "decisions": [
+    {
+      "instance_id": "dog_beagle_four_limb_rest_side_clay_91ee0825e6b1",
+      "candidate_sha256": "5348f4405b7b53e59c134f37806f75ae72d816bde9b480a8d8e0ac1811c74a59",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_tone": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Strict lateral torso silhouette; all four lower limbs and paws remain independently visible. Approved only for Pixal topology/twist canary, not formal registration."
+    },
+    {
+      "instance_id": "dog_beagle_four_limb_rest_side_clay_ec17a640ceb9",
+      "candidate_sha256": "093eeb03d85e69f5dd6e38ef66e3f374488994172c2532ac62d85c9936fb9b7b",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_tone": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Strict lateral torso silhouette; the authored fore-aft offsets preserve four grounded limb silhouettes. Approved only for Pixal topology/twist canary, not formal registration."
+    },
+    {
+      "instance_id": "dog_beagle_four_limb_rest_side_clay_f667fd32c163",
+      "candidate_sha256": "2b1d634b8527a20f7e336074e9a2f39daa0771587eeac13bf18be922829da8f2",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_tone": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Best lateral-silhouette canary of the batch; four grounded paws are distinct. Approved only for Pixal topology/twist canary, not formal registration."
+    }
+  ]
+}

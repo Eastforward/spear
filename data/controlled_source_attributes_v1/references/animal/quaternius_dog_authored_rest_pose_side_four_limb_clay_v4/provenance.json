@@ -1,0 +1,54 @@
+{
+  "schema": "avengine_controlled_reference_provenance_v1",
+  "reference_id": "quaternius_dog_authored_rest_pose_side_four_limb_clay_v4",
+  "state_classification": "research_candidate",
+  "reference": {
+    "path": "data/controlled_source_attributes_v1/references/animal/quaternius_dog_authored_rest_pose_side_four_limb_clay_v4/frame_0000.png",
+    "sha256": "cc92fe7adbee7b75b4d5b1ec3c6f79002e8ebd3194d68c2dbec0ec5ea5f4a0be",
+    "size_bytes": 1036153,
+    "canvas": [1024, 1024]
+  },
+  "source_rig": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/quaternius_animalpack/Dog.glb",
+    "sha256": "bf9d2fdaf74a36be453edf4516a0b13b042cfce2d2614e0bf3ee24d40d553032",
+    "size_bytes": 143692,
+    "pose": "authored_armature_rest_pose_with_deterministic_far_limb_offset"
+  },
+  "license_snapshot": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/README.md",
+    "sha256": "5887c71ec9a300997bee4445def8f4fb9014ea4e09b36522c1efb9b8eb3a5aef",
+    "size_bytes": 1347,
+    "declared_license": "CC0-1.0",
+    "upstream_url": "https://quaternius.com/packs/animatedanimals.html"
+  },
+  "render": {
+    "spear_base_revision": "10facd9cbe0aa184a2f65a9393334faff86f881a",
+    "renderer_path": "tools/blender_render_glb_animation.py",
+    "renderer_sha256": "e70613cb998441c938248714452fd02f1ad59b4734eb45ebc347bee65510877c",
+    "blender_version": "4.2.1 LTS",
+    "parameters": {
+      "rest_pose": true,
+      "orthographic": true,
+      "view": "side",
+      "quadruped_far_limb_offset_ratio": 0.3,
+      "pose_template_clay_color": "#b88b6a",
+      "smooth_shading": true,
+      "torso_transform": "identity",
+      "camera_yaw_deg": 0,
+      "ground_delta": 0,
+      "width": 1024,
+      "height": 1024,
+      "n_frames": 1,
+      "camera_distance_multiplier": 1.5,
+      "ground_plane": true
+    }
+  },
+  "usage": {
+    "purpose": "license-authenticated uniform-clay four-limb pose template with larger depth-disambiguating limb offsets for FLUX.2 dog appearance generation",
+    "pose_contract": "orthographic side torso/head; only the far-side limb chains use opposite 30-percent fore-aft offsets; every paw remains grounded and each lower-limb silhouette is separated by visible background",
+    "appearance_contract": "one uniform clay material and smooth polygon shading remove source material-region leakage while preserving authored geometry",
+    "formal_dataset_registration_authorized": false
+  }
+}

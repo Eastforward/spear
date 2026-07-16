@@ -1,0 +1,22 @@
+{
+  "schema": "avengine_controlled_animal_2d_review_decisions_v1",
+  "flux2_batch_sha256": "8c183d5ad6a675c63217848c5c297b292771941eff9dc41673b2b7cb0778fb25",
+  "reviewer": "codex_visual_canary_v1",
+  "decisions": [
+    {
+      "instance_id": "horse_bay_four_limb_rest_side_clay_23ee37aae017",
+      "candidate_sha256": "9b54cf9ae1e536187dd62b9ff0f577e47639ef4488c632708c05e98b9bb9f950",
+      "decision": "rejected",
+      "species_breed": "passed",
+      "anatomy": "rejected",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_tone": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Four grounded leg silhouettes remain visible, but the same high-contrast foreleg artifacts recur across a different sampled instance. This confirms a pose-guide deformation artifact rather than a one-seed FLUX failure; rejected before I2I-to-3D."
+    }
+  ]
+}

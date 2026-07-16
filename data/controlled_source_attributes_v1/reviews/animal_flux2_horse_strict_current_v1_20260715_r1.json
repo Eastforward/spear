@@ -1,0 +1,22 @@
+{
+  "schema": "avengine_controlled_animal_2d_review_decisions_v1",
+  "flux2_batch_sha256": "46d480e8b518f9ca093e442c053af3dc479bd51dc91404b9bee75d26de4ef14b",
+  "reviewer": "codex_visual_canary_v1",
+  "decisions": [
+    {
+      "instance_id": "horse_bay_four_limb_rest_side_clay_43f26d6f3699",
+      "candidate_sha256": "7b9bb10fac82cf6606ec1f8b52d33be6b71f5e1127d5383b324f2ac1ab5bb8b3",
+      "decision": "rejected",
+      "species_breed": "passed",
+      "anatomy": "rejected",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_tone": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Current strict side pose is preserved with four separated grounded legs, but two high-contrast white/black surface artifacts appear on the foreleg. Rejected before segmentation/I2I-to-3D so they cannot become a crater, hole, or detached texture artifact."
+    }
+  ]
+}

@@ -1,0 +1,209 @@
+{
+  "schema": "avengine_attribute_profile_v1",
+  "profile_schema_id": "horse_bay_native_action_composite_side_clay_v3",
+  "profile_revision": "2026_07_15_v3_tail_hind_limb_clearance",
+  "asset_class": "animal",
+  "lineage_group_id": "quaternius_horse_native_action_composite_side_clay_565c18aa",
+  "state_classification": "research_candidate",
+  "taxonomy": {
+    "species": "horse",
+    "breed": "bay_horse"
+  },
+  "base_template": {
+    "template_id": "quaternius_horse_native_action_composite_side_four_limb_clay_v2",
+    "kind": "reference_image",
+    "artifact": {
+      "root_id": "spear_repo",
+      "path": "data/controlled_source_attributes_v1/references/animal/quaternius_horse_native_action_composite_side_four_limb_clay_v2/frame_0000.png",
+      "sha256": "565c18aa24c3a0fdc8e56938b7b72468784cb804a5dd667b422faf830cec6a4e",
+      "size_bytes": 1053924
+    },
+    "provenance_status": "verified",
+    "usage_scope": "research_candidate"
+  },
+  "fixed_attributes": {
+    "life_stage": "adult",
+    "coat_length": "short",
+    "coat_pattern": "bay_solid_with_dark_points",
+    "ear_shape": "upright_equine",
+    "tail_shape": "long_flowing"
+  },
+  "sampled_attribute_domains": {
+    "size": [
+      "small",
+      "medium",
+      "large"
+    ],
+    "coat_tone": [
+      "light_bay",
+      "standard_bay",
+      "dark_bay"
+    ],
+    "body_build": [
+      "slim",
+      "standard",
+      "stocky"
+    ]
+  },
+  "forbidden_combinations": [],
+  "generation_contract": {
+    "route": "flux2_pixal3d_animal_v1",
+    "prompt_template_id": "quadruped_four_limb_uniform_clay_side_i2i_v11_tail_leg_clearance",
+    "positive_template": "Transform the uniform clay pose guide into one {size} {life_stage} {breed} {species} with a {body_build} anatomically normal body, a coherent {coat_tone} {coat_length} coat with a {coat_pattern} pattern, {ear_shape} ears, and a {tail_shape} tail.",
+    "pose_guard_prompt": "The input is an untextured uniform-clay anatomical pose guide, not an appearance reference. Replace every clay surface with one coherent photorealistic bay horse coat while preserving the exact torso, head, silhouette, and four native-joint leg poses. Keep a strict orthographic lateral silhouette with the horse facing exactly image-right, the nose-neck-spine-pelvis axis parallel to the image plane, and exactly one visible eye. Preserve all four individually visible legs and both compact fore-aft gaps between the near and far lower legs and hooves. Never merge, cross, hide, duplicate, or fuse a leg. Keep all four hooves planted on the same level ground plane. Preserve a straight level torso, an aligned head and neck, a separated mane and tail silhouette, full-body framing, and a plain background. This is a static neutral rigging reference assembled only from the source rig's native joint rotations; it is not a walking, running, grazing, rearing, or show-stack pose. Keep the tail attached only at its anatomical base. From just beyond the base through the tip, keep the free tail visibly separated from both hind legs and every hoof, with a clear plain-background gap. The tail may hang naturally or extend gently backward and does not need to point upward. No part of the free tail may touch, cross, overlap, wrap around, or merge with a leg or hoof.",
+    "negative_prompt": "three-quarter view, front view, rear view, perspective view, visible front of chest, foreshortened torso, camera yaw, torso yaw, twisted spine, curved body axis, two visible eyes, head turned, tilted head, walking, running, galloping, grazing, rearing, show stack, lifted hoof, uneven ground, crossed legs, overlapping legs, merged legs, fused hooves, hidden legs, extra limbs, cropped body, saddle, bridle, reins, rider, blanket, harness, collar, accessory, gray clay patch, plastic patch, untextured patch, background geometry, text, tail touching hind leg, tail overlapping leg, fused tail and leg, tail wrapped around leg, tail obscuring hoof, tail merged with foot",
+    "value_labels": {
+      "species": {
+        "horse": "horse"
+      },
+      "breed": {
+        "bay_horse": "bay horse"
+      },
+      "life_stage": {
+        "adult": "adult"
+      },
+      "coat_length": {
+        "short": "short"
+      },
+      "coat_pattern": {
+        "bay_solid_with_dark_points": "solid bay with dark mane, tail, and lower legs"
+      },
+      "ear_shape": {
+        "upright_equine": "upright equine"
+      },
+      "tail_shape": {
+        "long_flowing": "long flowing"
+      },
+      "size": {
+        "small": "small",
+        "medium": "medium-sized",
+        "large": "large"
+      },
+      "coat_tone": {
+        "light_bay": "light bay",
+        "standard_bay": "standard bay",
+        "dark_bay": "dark bay"
+      },
+      "body_build": {
+        "slim": "slim",
+        "standard": "standard",
+        "stocky": "stocky"
+      }
+    },
+    "model_revisions": {
+      "flux2": "e7b7dc27f91deacad38e78976d1f2b499d76a294",
+      "pixal3d": "0b31f9160aa400719af409098bff7936a932f726",
+      "dino": "3c276edd87d6f6e569ff0c4400e086807d0f3881"
+    }
+  },
+  "target_physical_profiles": {
+    "profile_id": "horse_bay_physical_candidate_v3",
+    "control_attribute": "size",
+    "measurement": "withers_height_cm",
+    "mode": "relative_to_profile_reference",
+    "reference_value_cm": 160,
+    "reference_provenance": {
+      "status": "provisional",
+      "source_id": "horse_pipeline_calibration_pending_v1",
+      "artifact": null,
+      "notes": "Provisional pipeline target only; replace with a license-snapshotted reference and measured canary before formal registration."
+    },
+    "values": {
+      "small": {
+        "scale_ratio": 0.9,
+        "tolerance_cm": 10
+      },
+      "medium": {
+        "scale_ratio": 1,
+        "tolerance_cm": 10
+      },
+      "large": {
+        "scale_ratio": 1.1,
+        "tolerance_cm": 10
+      }
+    }
+  },
+  "rig_profile": {
+    "profile_id": "quadruped_equid_v1",
+    "skeleton_family": "quaternius_horse",
+    "actions": [
+      "Walking",
+      "Idle"
+    ],
+    "front_axis": "positive_x"
+  },
+  "acoustic_profile": {
+    "profile_id": "horse_vocalization_v1",
+    "default_event_class": "horse_neigh",
+    "allowed_event_classes": [
+      "horse_neigh",
+      "horse_snort",
+      "horse_nicker",
+      "horse_clip_clop",
+      "silent"
+    ],
+    "selection_attributes": [
+      "species",
+      "life_stage"
+    ]
+  },
+  "locked_attributes": [
+    "species",
+    "breed",
+    "life_stage",
+    "coat_length",
+    "coat_pattern",
+    "ear_shape",
+    "tail_shape"
+  ],
+  "qa_contract": {
+    "subject_label": "bay horse",
+    "attributes": {
+      "size": {
+        "kind": "ordered",
+        "label": "size",
+        "value_order": [
+          "small",
+          "medium",
+          "large"
+        ],
+        "value_labels": {
+          "small": "small",
+          "medium": "medium-sized",
+          "large": "large"
+        },
+        "comparison_question": "Which bay horse is larger?"
+      },
+      "coat_tone": {
+        "kind": "ordered",
+        "label": "coat tone",
+        "value_order": [
+          "light_bay",
+          "standard_bay",
+          "dark_bay"
+        ],
+        "value_labels": {
+          "light_bay": "light bay",
+          "standard_bay": "standard bay",
+          "dark_bay": "dark bay"
+        },
+        "comparison_question": "Which bay horse has the darker coat?"
+      },
+      "body_build": {
+        "kind": "ordered",
+        "label": "body build",
+        "value_order": [
+          "slim",
+          "standard",
+          "stocky"
+        ],
+        "value_labels": {
+          "slim": "slim",
+          "standard": "standard",
+          "stocky": "stocky"
+        },
+        "comparison_question": "Which bay horse has the stockier build?"
+      }
+    }
+  }
+}

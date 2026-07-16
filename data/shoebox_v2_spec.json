@@ -1,0 +1,93 @@
+{
+  "spec_version": "v2",
+  "description": "Shoebox v2 scene for RLR-vs-GPURIR spike (2026-07-07). Room deepened to 6.0m along Y to leave room for husky 4-segment detour around sofa. All backends (SPEAR/UE + GPURIR, SPEAR/UE + RLR swap-in, Habitat + RLR) read this file as SSOT.",
+  "coordinate_frame": {
+    "system": "right-handed Y-up (meters). Origin at room corner (X=0, Y=0, Z=0=floor).",
+    "notes": "UE side must convert to Z-up left-handed cm. Habitat side ingests as-is."
+  },
+  "room_size_m": [5.2, 6.0, 2.8],
+  "wall_clearance_m": 0.5,
+  "mic": {
+    "pos_m": [2.6, 2.2, 1.2],
+    "forward": [0.0, 1.0, 0.0],
+    "type_gpurir": "tetrahedral_4ch",
+    "type_rlr": "ambisonic_foa_order1"
+  },
+  "camera_configs": [
+    {"name": "view0", "pos_m": [2.6, 2.2, 1.2], "yaw_deg": 90,  "fov_deg": 120},
+    {"name": "view1", "pos_m": [2.6, 2.2, 1.2], "yaw_deg": 180, "fov_deg": 120},
+    {"name": "view2", "pos_m": [2.6, 2.2, 1.2], "yaw_deg": 270, "fov_deg": 120},
+    {"name": "view3", "pos_m": [2.6, 2.2, 1.2], "yaw_deg": 0,   "fov_deg": 120}
+  ],
+  "render_config": {
+    "width": 640,
+    "height": 480,
+    "fps": 15,
+    "n_frames": 75,
+    "duration_s": 5.0
+  },
+  "audio_config": {
+    "sample_rate_hz": 16000,
+    "duration_s": 5.0,
+    "n_samples": 80000,
+    "output_channels": 4
+  },
+  "surfaces": {
+    "wall_north": "drywall_painted",
+    "wall_south": "drywall_painted",
+    "wall_east":  "drywall_painted",
+    "wall_west":  "drywall_painted",
+    "floor":      "hardwood_oak",
+    "ceiling":    "painted_plaster"
+  },
+  "furniture": [
+    {
+      "name": "sofa",
+      "shape": "box",
+      "center_m": [2.6, 4.45, 0.45],
+      "size_m":   [2.0, 0.9, 0.9],
+      "material": "fabric_upholstery",
+      "notes": "Long edge along X. Occupies X:[1.6,3.6] Y:[4.00,4.90] Z:[0,0.9]. Sofa pushed +1m Y (deeper into room) so husky loop is fully visible in camera FOV."
+    }
+  ],
+  "source_height_m": 0.45,
+  "sources": [
+    {
+      "tag": "dog_golden",
+      "audio_lookup": "dog_bark",
+      "kind": "moving",
+      "start_pos_m": [0.8, 0.9, 0.45],
+      "end_pos_m":   [4.4, 0.9, 0.45],
+      "motion": "linear_uniform",
+      "wanted_anim": "Walking",
+      "notes": "Behind camera (Y=0.9 < mic Y=2.2, 1.3m behind camera). Uniform L to R across camera-back to test spatial audio azimuth. Pushed further from camera to make husky more visible in front FOV."
+    },
+    {
+      "tag": "dog_husky",
+      "audio_lookup": "wolf_howl",
+      "kind": "moving_6segment_loop",
+      "trajectory_m": [
+        {"frame_start": 0,  "frame_end": 12, "phase": "A_right_+X",    "start_m": [2.6, 3.5, 0.45], "end_m": [3.9, 3.5, 0.45]},
+        {"frame_start": 13, "frame_end": 25, "phase": "B_back_+Y",     "start_m": [3.9, 3.5, 0.45], "end_m": [3.9, 5.3, 0.45]},
+        {"frame_start": 26, "frame_end": 38, "phase": "C_across_-X_occl_start", "start_m": [3.9, 5.3, 0.45], "end_m": [2.6, 5.3, 0.45]},
+        {"frame_start": 39, "frame_end": 50, "phase": "D_across_-X_occl_end",   "start_m": [2.6, 5.3, 0.45], "end_m": [1.3, 5.3, 0.45]},
+        {"frame_start": 51, "frame_end": 62, "phase": "E_front_-Y",    "start_m": [1.3, 5.3, 0.45], "end_m": [1.3, 3.5, 0.45]},
+        {"frame_start": 63, "frame_end": 74, "phase": "F_return_+X",   "start_m": [1.3, 3.5, 0.45], "end_m": [2.6, 3.5, 0.45]}
+      ],
+      "wanted_anim": "Walking",
+      "notes": "6-segment full loop around sofa, returning to start. Husky orbits: right → back-right → across-behind-sofa (occluded mid-loop) → back-left → left → return to front-center. All positions pushed +1m Y (loop closer to back wall) so full loop is visible in front-view camera without cropping. Nearest husky point to mic = 1.3m (Y=3.5)."
+    }
+  ],
+  "occlusion_event": {
+    "start_frame": 26,
+    "end_frame": 50,
+    "start_time_s": 1.73,
+    "end_time_s": 3.33,
+    "fully_occluded_from_frame": 30,
+    "fully_occluded_from_time_s": 2.0,
+    "fully_occluded_until_frame": 45,
+    "fully_occluded_until_time_s": 3.0,
+    "expected_energy_drop_dB_min": 3.0,
+    "notes": "During segments C+D husky is behind sofa. RLR should show ≥3dB energy drop between mean(t=2.0-3.0s occluded) vs mean(t=0-1.5s pre-occlusion). GPURIR should show ~0dB change (no occlusion modeling)."
+  }
+}
