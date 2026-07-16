@@ -49,6 +49,12 @@ BLENDER = Path("/data/jzy/.local/bin/blender")
 GNU_TIME = Path("/usr/bin/time")
 LOD_SCRIPT = SPEAR_ROOT / "tools/blender_create_runtime_proxy_mesh.py"
 BIND_SCRIPT = SPEAR_ROOT / "tools/blender_robust_swap_mesh_keep_rig.py"
+ANIMATION_TRANSPLANT_SCRIPT = (
+    SPEAR_ROOT / "tools/transplant_compatible_glb_animations.py"
+)
+LATERAL_GAIT_AUDIT_SCRIPT = (
+    SPEAR_ROOT / "tools/blender_audit_quadruped_lateral_gait.py"
+)
 LICENSE_SNAPSHOT = AVENGINE_ROOT / "assets/mesh_library/README.md"
 LICENSE_SNAPSHOT_SHA256 = (
     "5887c71ec9a300997bee4445def8f4fb9014ea4e09b36522c1efb9b8eb3a5aef"
@@ -68,6 +74,22 @@ RIG_SPECS = {
     },
 }
 APPROVED_ACTIONS = ["Idle", "Walking"]
+LOCKED_PAW_MOTION_PROFILES = {
+    "quadruped_dog_locked_paws_v2": {
+        "skeleton_family": "quaternius_dog",
+        "path": SPEAR_ROOT
+        / "tmp/controlled_source_asset_execution_v1/"
+        "generated_animal_motion_basis_approved_retarget_foot_ik_v12_post_attachment_20260714/"
+        "dog_beagle_three_quarter_seed6102_trellis2/animated_walk_idle.glb",
+        "sha256": "083cafc7d99ae1e9e752b512adedef71bf3a124f1d648493874fddc8abc62117",
+        "size_bytes": 11_800_824,
+        "front_axis": "positive-x",
+        "actions": APPROVED_ACTIONS,
+        "foot_orientation_policy": "lock_target_rest_world_v1",
+        "maximum_lateral_excursion_ratio": 0.005,
+        "maximum_terminal_yaw_excursion_degrees": 0.1,
+    }
+}
 
 
 def _utc_now() -> str:
@@ -130,6 +152,21 @@ def _decision_binding_yaw(decision: Mapping[str, Any]) -> float:
     if decision.get("schema") == DIRECTION_DECISION_SCHEMA_V3:
         return float(decision["manual_total_yaw_about_gltf_positive_y_deg"])
     return float(decision["manual_cardinal_yaw_about_gltf_positive_y_deg"])
+
+
+def _locked_paw_motion_spec(profile_id: str | None) -> dict[str, Any] | None:
+    if profile_id is None:
+        return None
+    if profile_id not in LOCKED_PAW_MOTION_PROFILES:
+        raise contracts.ContractError(
+            f"unknown locked-paw motion profile: {profile_id}"
+        )
+    spec = copy.deepcopy(LOCKED_PAW_MOTION_PROFILES[profile_id])
+    path = Path(spec["path"]).resolve()
+    _verify_file(path, spec, label="locked-paw motion carrier")
+    spec["profile_id"] = profile_id
+    spec["path"] = path
+    return spec
 
 
 def load_direction_decision(
@@ -431,11 +468,19 @@ def load_jobs(
 
 
 def build_commands(
-    job: Mapping[str, Any], job_root: Path, *, target_faces: int
+    job: Mapping[str, Any],
+    job_root: Path,
+    *,
+    target_faces: int,
+    bind_output: Path | None = None,
 ) -> tuple[list[str], list[str]]:
     lod = job_root / "runtime_lod/mesh_runtime_100000_double_sided.glb"
     metadata = job_root / "runtime_lod/mesh_runtime_100000_double_sided.json"
-    rigged = job_root / "rigged/animated_100000_double_sided.glb"
+    rigged = (
+        Path(bind_output)
+        if bind_output is not None
+        else job_root / "rigged/animated_100000_double_sided.glb"
+    )
     lod_command = [
         str(BLENDER),
         "-b",
@@ -488,6 +533,98 @@ def build_commands(
         "walk-idle",
     ]
     return lod_command, bind_command
+
+
+def build_locked_paw_commands(
+    target_glb: Path,
+    output_glb: Path,
+    transplant_manifest: Path,
+    lateral_audit: Path,
+    spec: Mapping[str, Any],
+) -> tuple[list[str], list[str]]:
+    transplant = [
+        str(Path(sys.executable).resolve()),
+        str(ANIMATION_TRANSPLANT_SCRIPT),
+        "--target-glb",
+        str(target_glb),
+        "--source-glb",
+        str(spec["path"]),
+        "--output-glb",
+        str(output_glb),
+        "--manifest",
+        str(transplant_manifest),
+    ]
+    for action in spec["actions"]:
+        transplant.extend(("--action", str(action)))
+    lateral = [
+        str(BLENDER),
+        "-b",
+        "--python",
+        str(LATERAL_GAIT_AUDIT_SCRIPT),
+        "--",
+        "--input",
+        str(output_glb),
+        "--output",
+        str(lateral_audit),
+        "--front-axis",
+        str(spec["front_axis"]),
+        "--action",
+        "Walking",
+        "--samples",
+        "41",
+    ]
+    return transplant, lateral
+
+
+def validate_locked_paw_audit(
+    payload: Mapping[str, Any], output_glb: Path, spec: Mapping[str, Any]
+) -> dict[str, Any]:
+    if (
+        payload.get("schema") != "avengine_quadruped_lateral_gait_audit_v1"
+        or payload.get("input", {}).get("sha256") != _sha256_file(output_glb)
+        or payload.get("coordinate_contract", {}).get("front_axis")
+        != spec["front_axis"]
+        or not (
+            str(payload.get("action", "")).lower() == "walking"
+            or str(payload.get("action", "")).lower().startswith("walking_")
+        )
+    ):
+        raise contracts.ContractError("locked-paw lateral gait audit identity changed")
+    summary = payload.get("summary")
+    expected_limbs = {
+        "front_side_negative",
+        "front_side_positive",
+        "hind_side_negative",
+        "hind_side_positive",
+    }
+    if not isinstance(summary, dict) or set(summary) != expected_limbs:
+        raise contracts.ContractError("locked-paw audit limb coverage changed")
+    maximum_lateral = max(
+        float(record["paw_relative_to_hip_lateral_excursion_ratio_of_mesh_diagonal"])
+        for record in summary.values()
+    )
+    maximum_yaw = max(
+        float(record["paw_yaw_excursion_degrees"])
+        for record in summary.values()
+    )
+    if (
+        maximum_lateral > float(spec["maximum_lateral_excursion_ratio"])
+        or maximum_yaw
+        > float(spec["maximum_terminal_yaw_excursion_degrees"])
+    ):
+        raise contracts.ContractError(
+            "locked-paw gait exceeds pinned lateral/yaw thresholds: "
+            f"lateral={maximum_lateral:.9g} yaw={maximum_yaw:.9g}"
+        )
+    return {
+        "maximum_lateral_excursion_ratio": maximum_lateral,
+        "maximum_terminal_yaw_excursion_degrees": maximum_yaw,
+        "lateral_threshold": spec["maximum_lateral_excursion_ratio"],
+        "yaw_threshold_degrees": spec[
+            "maximum_terminal_yaw_excursion_degrees"
+        ],
+        "overall": "passed",
+    }
 
 
 def _parse_time_metrics(log_path: Path) -> dict[str, Any]:
@@ -702,10 +839,25 @@ def _run_job(
         "lod_metadata": job_root
         / "runtime_lod/mesh_runtime_100000_double_sided.json",
         "lod_log": job_root / "runtime_lod/blender.log",
+        "rigged_prelock_glb": job_root
+        / "rigged/animated_100000_double_sided_pre_locked_paws.glb",
         "rigged_glb": job_root / "rigged/animated_100000_double_sided.glb",
         "binding_log": job_root / "rigged/rig.log",
+        "animation_transplant_manifest": job_root
+        / "rigged/locked_paw_animation_transplant_manifest.json",
+        "animation_transplant_log": job_root
+        / "rigged/locked_paw_animation_transplant.log",
+        "lateral_gait_audit": job_root / "rigged/lateral_gait_audit.json",
+        "lateral_gait_audit_log": job_root / "rigged/lateral_gait_audit.log",
     }
-    lod_command, bind_command = build_commands(job, job_root, target_faces=target_faces)
+    locked_paw = job.get("locked_paw_motion")
+    bind_output = paths["rigged_prelock_glb"] if locked_paw else paths["rigged_glb"]
+    lod_command, bind_command = build_commands(
+        job,
+        job_root,
+        target_faces=target_faces,
+        bind_output=bind_output,
+    )
     base = {
         "asset_id": asset_id,
         "profile_schema_id": job["profile_schema_id"],
@@ -728,6 +880,17 @@ def _run_job(
         "raw_mesh_readback": job["raw_stats"],
         "direction_gate": _direction_gate_record(job),
     }
+    if locked_paw:
+        base["locked_paw_motion"] = {
+            "profile_id": locked_paw["profile_id"],
+            "skeleton_family": locked_paw["skeleton_family"],
+            "source": {
+                "path": str(locked_paw["path"]),
+                "sha256": locked_paw["sha256"],
+                "size_bytes": locked_paw["size_bytes"],
+            },
+            "foot_orientation_policy": locked_paw["foot_orientation_policy"],
+        }
     try:
         paths["prebind_geometry_audit"].parent.mkdir(parents=True, exist_ok=True)
         geometry_record = audit_quadruped_i23d_geometry.audit(
@@ -780,6 +943,74 @@ def _run_job(
                 "timings": {"lod": lod_timing, "binding": bind_timing},
                 "artifacts": _available_artifacts(paths, staging),
             }
+        timings = {"lod": lod_timing, "binding": bind_timing}
+        if locked_paw:
+            _prelock_lod, _prelock_rigged = validate_lod_and_binding(
+                job["raw_stats"],
+                paths["lod_glb"],
+                paths["rigged_prelock_glb"],
+                target_faces,
+            )
+            transplant_command, lateral_command = build_locked_paw_commands(
+                paths["rigged_prelock_glb"],
+                paths["rigged_glb"],
+                paths["animation_transplant_manifest"],
+                paths["lateral_gait_audit"],
+                locked_paw,
+            )
+            transplant_timing = _run_timed(
+                transplant_command,
+                paths["animation_transplant_log"],
+                timeout=300,
+            )
+            timings["locked_paw_animation_transplant"] = transplant_timing
+            if transplant_timing["returncode"] != 0:
+                return {
+                    **base,
+                    "status": "failed_locked_paw_animation_transplant",
+                    "timings": timings,
+                    "artifacts": _available_artifacts(paths, staging),
+                }
+            transplant_manifest = contracts.load_json(
+                paths["animation_transplant_manifest"]
+            )
+            if (
+                transplant_manifest.get("schema")
+                != "avengine_compatible_glb_animation_transplant_v1"
+                or transplant_manifest.get("target", {}).get("sha256")
+                != _sha256_file(paths["rigged_prelock_glb"])
+                or transplant_manifest.get("animation_source", {}).get("sha256")
+                != locked_paw["sha256"]
+                or transplant_manifest.get("output", {}).get("sha256")
+                != _sha256_file(paths["rigged_glb"])
+                or transplant_manifest.get("transplant", {})
+                .get("preservation", {})
+                .get("target_binary_prefix_unchanged")
+                is not True
+            ):
+                raise contracts.ContractError(
+                    "locked-paw animation transplant manifest changed"
+                )
+            lateral_timing = _run_timed(
+                lateral_command,
+                paths["lateral_gait_audit_log"],
+                timeout=900,
+            )
+            timings["locked_paw_lateral_gait_audit"] = lateral_timing
+            if lateral_timing["returncode"] != 0:
+                return {
+                    **base,
+                    "status": "failed_locked_paw_lateral_gait_audit",
+                    "timings": timings,
+                    "artifacts": _available_artifacts(paths, staging),
+                }
+            base["locked_paw_motion"]["quantitative_audit"] = (
+                validate_locked_paw_audit(
+                    contracts.load_json(paths["lateral_gait_audit"]),
+                    paths["rigged_glb"],
+                    locked_paw,
+                )
+            )
         lod_stats, rigged_stats = validate_lod_and_binding(
             job["raw_stats"], paths["lod_glb"], paths["rigged_glb"], target_faces
         )
@@ -788,7 +1019,7 @@ def _run_job(
             "status": "passed_lod_binding_glb_readback",
             "runtime_lod_readback": lod_stats,
             "rigged_runtime_readback": rigged_stats,
-            "timings": {"lod": lod_timing, "binding": bind_timing},
+            "timings": timings,
             "artifacts": _available_artifacts(paths, staging),
             "next_gate": "walking_idle_visual_and_contact_qa",
         }
@@ -815,7 +1046,9 @@ def _tool_record(path: Path) -> dict[str, Any]:
     }
 
 
-def _pinned_provenance() -> dict[str, Any]:
+def _pinned_provenance(
+    locked_paw_motion: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     if (
         not LICENSE_SNAPSHOT.is_file()
         or _sha256_file(LICENSE_SNAPSHOT) != LICENSE_SNAPSHOT_SHA256
@@ -833,7 +1066,7 @@ def _pinned_provenance() -> dict[str, Any]:
             "size_bytes": path.stat().st_size,
             "license": "CC0-1.0",
         }
-    return {
+    result = {
         "license_snapshot": {
             "root_id": "avengine_repo",
             "path": LICENSE_SNAPSHOT.relative_to(AVENGINE_ROOT).as_posix(),
@@ -849,6 +1082,28 @@ def _pinned_provenance() -> dict[str, Any]:
             "binding": _tool_record(BIND_SCRIPT),
         },
     }
+    if locked_paw_motion:
+        result["locked_paw_motion"] = {
+            "profile_id": locked_paw_motion["profile_id"],
+            "skeleton_family": locked_paw_motion["skeleton_family"],
+            "source": {
+                "path": str(locked_paw_motion["path"]),
+                "sha256": locked_paw_motion["sha256"],
+                "size_bytes": locked_paw_motion["size_bytes"],
+            },
+            "foot_orientation_policy": locked_paw_motion[
+                "foot_orientation_policy"
+            ],
+            "tools": {
+                "animation_transplant": _tool_record(
+                    ANIMATION_TRANSPLANT_SCRIPT
+                ),
+                "lateral_gait_audit": _tool_record(
+                    LATERAL_GAIT_AUDIT_SCRIPT
+                ),
+            },
+        }
+    return result
 
 
 def run_batch(
@@ -859,6 +1114,7 @@ def run_batch(
     target_faces: int = 100_000,
     asset_ids: Sequence[str] = (),
     direction_decision_root: Path | None = None,
+    locked_paw_motion_profile: str | None = None,
 ) -> Path:
     if not 1 <= workers <= 16:
         raise contracts.ContractError("workers must be between 1 and 16")
@@ -866,12 +1122,22 @@ def run_batch(
         raise contracts.ContractError("controlled close LOD is pinned to 100000 faces")
     if not BLENDER.is_file() or not GNU_TIME.is_file():
         raise contracts.ContractError("pinned Blender or GNU time is missing")
-    provenance = _pinned_provenance()
+    locked_paw_motion = _locked_paw_motion_spec(locked_paw_motion_profile)
+    provenance = _pinned_provenance(locked_paw_motion)
     registries, jobs = load_jobs(
         registry_paths,
         asset_ids,
         direction_decision_root=direction_decision_root,
     )
+    if locked_paw_motion:
+        for job in jobs:
+            if job["rig"]["skeleton_family"] != locked_paw_motion[
+                "skeleton_family"
+            ]:
+                raise contracts.ContractError(
+                    "locked-paw motion profile and selected skeleton family differ"
+                )
+            job["locked_paw_motion"] = copy.deepcopy(locked_paw_motion)
     output_root = Path(output_root).absolute()
     if output_root.exists() or output_root.is_symlink():
         raise contracts.ContractError(f"refusing to replace output: {output_root}")
@@ -938,6 +1204,8 @@ def run_batch(
                 "tail_rotation_dampening": 0.0,
                 "foot_rotation_dampening": 1.0,
                 "export_actions": APPROVED_ACTIONS,
+                "locked_paw_motion_profile": locked_paw_motion_profile,
+                "locked_paw_motion_required": locked_paw_motion is not None,
                 "ue_animation_channel_paths": ["translation", "rotation"],
             },
             "job_count": len(attempts),
@@ -957,6 +1225,12 @@ def run_batch(
                 "all_successful_runtimes_have_only_idle_and_walking": passed > 0,
                 "all_successful_runtimes_have_only_ue_safe_animation_channels": passed
                 > 0,
+                "all_successful_locked_paw_transplants_preserved_target_geometry": (
+                    passed > 0 if locked_paw_motion else None
+                ),
+                "all_successful_locked_paw_lateral_and_yaw_audits_passed": (
+                    passed > 0 if locked_paw_motion else None
+                ),
                 "visual_animation_and_foot_contact_qa_pending": True,
                 "overall": "passed" if failed == 0 else "needs_failure_review",
             },
@@ -989,6 +1263,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "decisions produced by the direction review UI."
         ),
     )
+    parser.add_argument(
+        "--locked-paw-motion-profile",
+        choices=tuple(sorted(LOCKED_PAW_MOTION_PROFILES)),
+        help=(
+            "Optional pinned skeleton-family motion carrier. It replaces only "
+            "animations after binding and runs lateral/yaw gait QA."
+        ),
+    )
     return parser
 
 
@@ -1002,6 +1284,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             target_faces=args.target_faces,
             asset_ids=args.asset_id,
             direction_decision_root=args.direction_decision_root,
+            locked_paw_motion_profile=args.locked_paw_motion_profile,
         )
         manifest = contracts.load_json(manifest_path)
     except (contracts.ContractError, OSError, subprocess.SubprocessError) as error:

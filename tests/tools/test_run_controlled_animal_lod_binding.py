@@ -35,6 +35,83 @@ def test_build_commands_pins_approved_lod_and_binding_contract(tmp_path):
     assert bind[bind.index("--export-action-policy") + 1] == "walk-idle"
 
 
+def test_build_commands_can_keep_prelock_binding_as_evidence(tmp_path):
+    prelock = tmp_path / "prelock.glb"
+
+    _lod, bind = runner.build_commands(
+        _job(tmp_path),
+        tmp_path / "job",
+        target_faces=100_000,
+        bind_output=prelock,
+    )
+
+    assert bind[bind.index("--output") + 1] == str(prelock)
+
+
+def test_locked_paw_profile_pins_approved_motion_carrier_and_commands(tmp_path):
+    spec = runner._locked_paw_motion_spec("quadruped_dog_locked_paws_v2")
+    target = tmp_path / "prelock.glb"
+    output = tmp_path / "locked.glb"
+    manifest = tmp_path / "transplant.json"
+    audit = tmp_path / "lateral.json"
+
+    transplant, lateral = runner.build_locked_paw_commands(
+        target, output, manifest, audit, spec
+    )
+
+    assert spec["sha256"] == (
+        "083cafc7d99ae1e9e752b512adedef71bf3a124f1d648493874fddc8abc62117"
+    )
+    assert transplant[transplant.index("--source-glb") + 1] == str(spec["path"])
+    assert [
+        transplant[index + 1]
+        for index, value in enumerate(transplant)
+        if value == "--action"
+    ] == ["Idle", "Walking"]
+    assert lateral[lateral.index("--front-axis") + 1] == "positive-x"
+    assert lateral[lateral.index("--samples") + 1] == "41"
+
+
+def test_locked_paw_audit_requires_all_four_limbs_below_threshold(tmp_path):
+    output = tmp_path / "locked.glb"
+    output.write_bytes(b"locked motion fixture")
+    spec = runner._locked_paw_motion_spec("quadruped_dog_locked_paws_v2")
+    limb = {
+        "paw_relative_to_hip_lateral_excursion_ratio_of_mesh_diagonal": 0.001,
+        "paw_yaw_excursion_degrees": 0.01,
+    }
+    payload = {
+        "schema": "avengine_quadruped_lateral_gait_audit_v1",
+        "input": {"sha256": runner._sha256_file(output)},
+        "coordinate_contract": {"front_axis": "positive-x"},
+        "action": "Walking",
+        "summary": {
+            name: dict(limb)
+            for name in (
+                "front_side_negative",
+                "front_side_positive",
+                "hind_side_negative",
+                "hind_side_positive",
+            )
+        },
+    }
+
+    result = runner.validate_locked_paw_audit(payload, output, spec)
+
+    assert result["overall"] == "passed"
+    payload["summary"]["hind_side_positive"][
+        "paw_relative_to_hip_lateral_excursion_ratio_of_mesh_diagonal"
+    ] = 0.01
+    with pytest.raises(contracts.ContractError, match="exceeds pinned"):
+        runner.validate_locked_paw_audit(payload, output, spec)
+
+    payload["summary"]["hind_side_positive"] = dict(limb)
+    payload["action"] = "Walking_Armature"
+    assert runner.validate_locked_paw_audit(payload, output, spec)["overall"] == (
+        "passed"
+    )
+
+
 def test_rig_spec_rejects_profile_and_species_mismatch():
     source = {
         "asset_id": "animal_x",
