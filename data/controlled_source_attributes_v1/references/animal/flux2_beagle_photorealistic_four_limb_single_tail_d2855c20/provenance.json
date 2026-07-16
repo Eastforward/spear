@@ -1,0 +1,68 @@
+{
+  "schema": "avengine_controlled_reference_provenance_v1",
+  "reference_id": "flux2_beagle_photorealistic_four_limb_single_tail_d2855c20",
+  "state_classification": "research_candidate",
+  "reference": {
+    "path": "data/controlled_source_attributes_v1/references/animal/flux2_beagle_photorealistic_four_limb_single_tail_d2855c20/frame_0000.png",
+    "sha256": "d2855c20cb1b0c6d5947381fe5823ec11b40e4a3d2a74f9a8b07fbfe396c732d",
+    "size_bytes": 1097914,
+    "canvas": [
+      1024,
+      1024
+    ]
+  },
+  "source_candidate_manifest": {
+    "path": "data/controlled_source_attributes_v1/references/animal/flux2_beagle_photorealistic_four_limb_single_tail_d2855c20/source_candidate_manifest.json",
+    "sha256": "91797e3c6530ae9ca33086594fdae87f5ec6a72bd22e3284bdd37106289bd775",
+    "size_bytes": 6956,
+    "manifest_sha256": "6cd64a6d24ce39293787038f99a332dab3e4ea5ad97d920dc6b68d334ba3f225",
+    "request_sha256": "65717788100d12ba9291a3ccac89062587b3af3ad45cc0009ef709e8de78d1d8"
+  },
+  "source_pose_guide": {
+    "root_id": "spear_repo",
+    "path": "data/controlled_source_attributes_v1/references/animal/quaternius_dog_authored_rest_pose_three_quarter_30deg_four_limb_clay_v2/frame_0000.png",
+    "sha256": "eeba4cd108981d89c3b2da53d9f0069b814801ffd08243bf60434a47efbccf83",
+    "size_bytes": 1045387,
+    "license": "CC0-1.0"
+  },
+  "generation": {
+    "model": "black-forest-labs/FLUX.2-klein-4B",
+    "revision": "e7b7dc27f91deacad38e78976d1f2b499d76a294",
+    "seed": 2683441954585228182,
+    "width": 1024,
+    "height": 1024,
+    "num_inference_steps": 28,
+    "guidance_scale": 1,
+    "flux_invocations": 1
+  },
+  "license_snapshots": [
+    {
+      "root_id": "models_root",
+      "path": "hub/models--black-forest-labs--FLUX.2-klein-4B/snapshots/e7b7dc27f91deacad38e78976d1f2b499d76a294/LICENSE.md",
+      "sha256": "ca02bc51900ab07789d1b70283329e7137f5af98f5161c23a1c81fc38a4af1fe",
+      "size_bytes": 52,
+      "scope": "FLUX.2 model and generated reference"
+    },
+    {
+      "root_id": "avengine_repo",
+      "path": "assets/mesh_library/README.md",
+      "sha256": "5887c71ec9a300997bee4445def8f4fb9014ea4e09b36522c1efb9b8eb3a5aef",
+      "size_bytes": 1347,
+      "declared_license": "CC0-1.0",
+      "scope": "Quaternius dog pose guide"
+    }
+  ],
+  "review": {
+    "anatomy_gate": "approved_for_i23d_bakeoff",
+    "exactly_four_connected_legs": true,
+    "exactly_four_complete_grounded_paws": true,
+    "exactly_one_tail": true,
+    "closed_belly": true,
+    "photorealistic_short_fur": true
+  },
+  "usage": {
+    "purpose": "pixel-level identity, anatomy, camera, pose and photorealistic-style authority for controlled coat-only FLUX.2 edits",
+    "allowed_edit_scope": "coat colour and breed-valid coat distribution only",
+    "formal_dataset_registration_authorized": false
+  }
+}

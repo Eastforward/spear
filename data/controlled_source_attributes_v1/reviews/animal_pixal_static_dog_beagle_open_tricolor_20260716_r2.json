@@ -1,0 +1,29 @@
+{
+  "schema": "avengine_controlled_animal_static_decisions_v1",
+  "static_review_batch_sha256": "752af1b17221a85a9514ee137c873e8ef858a455f63f9e96c980ea6c2ce5f2bd",
+  "decisions": [
+    {
+      "instance_id": "dog_beagle_open_tricolor_three_quarter_30deg_canary_62a2514cc90d",
+      "review_sha256": "c0fcd9aef65105effd0511d71a49c6c55980ad68ec7cfed6bc50de4322c1851f",
+      "decision": "rejected",
+      "checks": {
+        "complete_silhouette": false,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": false,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_tone": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "The upstream FLUX.2 reference was already invalid because it was illustration-styled and contained a second tail-like appendage.",
+        "The Pixal3D result inherits the ambiguous extra appendage and therefore cannot be treated as a clean riggable subject.",
+        "This candidate-specific stop is not evidence of a Pixal3D backend failure."
+      ],
+      "notes": "Supersedes the causal interpretation in r1. The downstream Pixal3D reconstruction is preserved as faithful-inheritance evidence, but the first failing gate is upstream_flux2_reference_invalid. A photorealistic single-tail coat-only v2 reference must be reviewed before Pixal3D is run again."
+    }
+  ]
+}

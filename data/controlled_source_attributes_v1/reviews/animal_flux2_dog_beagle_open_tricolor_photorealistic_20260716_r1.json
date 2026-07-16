@@ -1,0 +1,32 @@
+{
+  "schema": "avengine_controlled_animal_2d_review_decisions_v2",
+  "flux2_batch_sha256": "9e94790bd29e59b3fb1a4a633fe5e22d4e2c984dd4c356e08206d452c42ad832",
+  "reviewer": "human_approved_in_chat_20260716_v1",
+  "decisions": [
+    {
+      "instance_id": "dog_beagle_open_tricolor_photorealistic_recolor_canary_169a0af3c610",
+      "candidate_sha256": "acc3725f33c7d2be8bab99612cf42cccd2b814ed274327b18fec15598828d5a4",
+      "decision": "approved_for_pixal3d",
+      "species_breed": "passed",
+      "anatomy": "passed",
+      "pose_and_limb_separation": "passed",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "passed",
+        "coat_tone": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "hard_gates": {
+        "single_subject": "passed",
+        "photorealistic_pbr_style": "passed",
+        "species_correct_tail": "passed",
+        "anatomically_connected_limbs": "passed",
+        "complete_extremities": "passed",
+        "closed_body_surface": "passed",
+        "pose_and_camera_preserved": "passed",
+        "target_attribute_only": "passed"
+      },
+      "notes": "Human reviewer stated that this replacement Beagle is acceptable and has no visible issue. The exact candidate preserves a photorealistic single-tail Beagle with four readable grounded paws while reducing black coverage to one compact central saddle. Approval is limited to this exact image hash and authorizes only foreground segmentation and the deterministic Pixal3D static canary; formal dataset registration remains blocked on all downstream gates."
+    }
+  ]
+}

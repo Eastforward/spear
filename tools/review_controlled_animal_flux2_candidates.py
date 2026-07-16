@@ -22,6 +22,7 @@ from tools import run_controlled_animal_flux2_jobs as flux_runner
 
 
 DECISIONS_SCHEMA = "avengine_controlled_animal_2d_review_decisions_v1"
+DECISIONS_SCHEMA_V2 = "avengine_controlled_animal_2d_review_decisions_v2"
 REVIEW_SCHEMA = "avengine_controlled_animal_2d_review_v1"
 BATCH_REVIEW_SCHEMA = "avengine_controlled_animal_2d_review_batch_v1"
 ATTRIBUTE_STATUSES = {
@@ -29,6 +30,17 @@ ATTRIBUTE_STATUSES = {
     "deferred_to_3d_physical_scale",
     "rejected",
 }
+HARD_GATE_FIELDS = {
+    "single_subject",
+    "photorealistic_pbr_style",
+    "species_correct_tail",
+    "anatomically_connected_limbs",
+    "complete_extremities",
+    "closed_body_surface",
+    "pose_and_camera_preserved",
+    "target_attribute_only",
+}
+HARD_GATE_STATUSES = {"passed", "rejected", "not_applicable"}
 
 
 def _json_sha256(value: Any) -> str:
@@ -130,7 +142,7 @@ def load_decisions(path: Path, batch: Mapping[str, Any]) -> dict[str, dict[str, 
     if (
         not isinstance(payload, dict)
         or set(payload) != {"schema", "flux2_batch_sha256", "reviewer", "decisions"}
-        or payload.get("schema") != DECISIONS_SCHEMA
+        or payload.get("schema") not in {DECISIONS_SCHEMA, DECISIONS_SCHEMA_V2}
         or payload.get("flux2_batch_sha256") != batch["batch_sha256"]
         or not isinstance(payload.get("reviewer"), str)
         or not payload["reviewer"].strip()
@@ -138,6 +150,7 @@ def load_decisions(path: Path, batch: Mapping[str, Any]) -> dict[str, dict[str, 
     ):
         raise contracts.ContractError("review decisions contract is invalid")
     decisions = {}
+    decisions_schema = payload["schema"]
     for decision in payload["decisions"]:
         fields = {
             "instance_id",
@@ -150,6 +163,8 @@ def load_decisions(path: Path, batch: Mapping[str, Any]) -> dict[str, dict[str, 
             "sampled_attribute_checks",
             "notes",
         }
+        if decisions_schema == DECISIONS_SCHEMA_V2:
+            fields.add("hard_gates")
         if not isinstance(decision, dict) or set(decision) != fields:
             raise contracts.ContractError("review decision fields are invalid")
         instance_id = decision["instance_id"]
@@ -170,10 +185,17 @@ def load_decisions(path: Path, batch: Mapping[str, Any]) -> dict[str, dict[str, 
             for key, value in attribute_checks.items()
         ):
             raise contracts.ContractError("only size may defer to physical 3D scaling")
+        hard_gates = decision.get("hard_gates", {})
+        if decisions_schema == DECISIONS_SCHEMA_V2 and (
+            not isinstance(hard_gates, dict)
+            or set(hard_gates) != HARD_GATE_FIELDS
+            or any(value not in HARD_GATE_STATUSES for value in hard_gates.values())
+        ):
+            raise contracts.ContractError("review hard gates are invalid")
         rejected = any(
             decision[key] == "rejected"
             for key in ("species_breed", "anatomy", "pose_and_limb_separation", "background")
-        ) or "rejected" in attribute_checks.values()
+        ) or "rejected" in attribute_checks.values() or "rejected" in hard_gates.values()
         if (decision["decision"] == "rejected") != rejected:
             raise contracts.ContractError("review decision disagrees with its checks")
         if not isinstance(decision["notes"], str):
@@ -256,6 +278,10 @@ def publish_reviews(
                     else "blocked_rejected"
                 ),
             }
+            if "hard_gates" in decision:
+                review["checks"]["hard_gates"] = copy.deepcopy(
+                    decision["hard_gates"]
+                )
             review["review_sha256"] = _json_sha256(review)
             review_path = reviews_dir / f"{instance_id}.json"
             contracts.write_json_no_replace(review_path, review)
@@ -321,6 +347,12 @@ def publish_reviews(
                 "all_sampled_attributes_reviewed": True,
                 "size_deferment_only_to_3d_physical_scale": True,
                 "pixal3d_not_started_before_review": True,
+                "v2_hard_gates_enforced": all(
+                    "hard_gates" not in decision
+                    or decision["decision"] == "rejected"
+                    or "rejected" not in decision["hard_gates"].values()
+                    for decision in decisions.values()
+                ),
                 "overall": "passed",
             },
         }

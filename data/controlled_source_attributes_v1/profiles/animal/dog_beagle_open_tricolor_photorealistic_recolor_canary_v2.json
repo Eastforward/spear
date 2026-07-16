@@ -1,0 +1,181 @@
+{
+  "schema": "avengine_attribute_profile_v1",
+  "profile_schema_id": "dog_beagle_open_tricolor_photorealistic_recolor_canary_v2",
+  "profile_revision": "2026_07_16_v2_recolor_approved_photorealistic_single_tail_reference",
+  "asset_class": "animal",
+  "lineage_group_id": "flux2_beagle_photorealistic_d2855c20",
+  "state_classification": "research_candidate",
+  "taxonomy": {
+    "species": "dog",
+    "breed": "beagle"
+  },
+  "base_template": {
+    "template_id": "flux2_beagle_photorealistic_four_limb_single_tail_d2855c20",
+    "kind": "reference_image",
+    "artifact": {
+      "root_id": "spear_repo",
+      "path": "tmp/controlled_source_asset_execution_v1/dog_beagle_three_quarter_30deg_flux2_v10_20260714_r1/candidates/animal_65717788100d12ba/candidate.png",
+      "sha256": "d2855c20cb1b0c6d5947381fe5823ec11b40e4a3d2a74f9a8b07fbfe396c732d",
+      "size_bytes": 1097914
+    },
+    "provenance_status": "verified",
+    "usage_scope": "research_candidate"
+  },
+  "fixed_attributes": {
+    "life_stage": "adult",
+    "coat_length": "short",
+    "coat_pattern": "open_tricolor",
+    "coat_distribution": "white_tan_dominant_compact_black_saddle",
+    "ear_shape": "drop",
+    "tail_shape": "single_upright_white_tipped"
+  },
+  "sampled_attribute_domains": {
+    "size": [
+      "medium"
+    ],
+    "coat_tone": [
+      "light_open_tricolor"
+    ],
+    "body_build": [
+      "standard"
+    ]
+  },
+  "forbidden_combinations": [],
+  "generation_contract": {
+    "route": "flux2_pixal3d_animal_v1",
+    "prompt_template_id": "beagle_photorealistic_coat_only_recolor_i2i_v2",
+    "positive_template": "Edit the coat colors of the one photographed {size} {life_stage} {breed} {species} in the input to a coherent {coat_tone} {coat_length} {coat_pattern} coat with a {coat_distribution} distribution. Preserve the same {body_build} body, {ear_shape} ears, and {tail_shape} tail.",
+    "pose_guard_prompt": "This is a strict photorealistic image-to-image coat recolor, not a redraw and not a new animal. Treat the input pixels as the authority for identity, realistic short-fur detail, anatomy, body silhouette, camera, moderate three-quarter side view, lighting, shadows, neutral background, exact four leg positions, exact four complete grounded paws, closed belly, head direction, and exactly one tail. Modify only coat color distribution. Replace most of the current black blanket on the torso, shoulders, flanks and hindquarters with natural warm tan and clean white fur. Retain only one compact black saddle centered on the upper middle back, covering less than one quarter of the visible coat. Keep a broad white muzzle blaze, white neck, chest, closed belly, lower legs and paws; keep warm tan on the head, ears, shoulders, flanks and hips. Preserve photographic/PBR realism with individual short fur and natural material response. The result must still look like the same real beagle captured by the same camera, never like an illustration, animation frame, painting, clay render, toy, stylized CGI or flat graphic. Keep exactly one anatomically attached tail and no second tail-like silhouette. Keep each leg and paw anatomically connected, distinct, non-overlapping and fully visible with plain-background gaps between lower limbs. Do not add, remove, move, bend, duplicate or reshape any body part.",
+    "negative_prompt": "illustration, animated style, animation frame, cartoon, toon shading, painting, drawing, vector art, flat colors, clay render, plastic toy, stylized CGI, low-detail fur, duplicate animal, extra tail, duplicate tail, second tail, tail-like appendage, abdominal appendage, extra limb, fifth limb, duplicate leg, missing leg, hidden paw, merged legs, fused legs, crossed legs, overlapping paws, lifted paw, walking, running, sitting, crouching, twisted torso, curved spine, head turn, perspective change, camera change, mostly black body, large black blanket, black torso, black chest, black abdomen, black shoulders, black flanks, black hindquarters, gray clay patch, untextured patch, open belly, belly hole, disconnected paw, malformed paw, collar, scarf, accessory, cropped body, text",
+    "value_labels": {
+      "species": {
+        "dog": "dog"
+      },
+      "breed": {
+        "beagle": "beagle"
+      },
+      "life_stage": {
+        "adult": "adult"
+      },
+      "coat_length": {
+        "short": "short"
+      },
+      "coat_pattern": {
+        "open_tricolor": "open tricolor"
+      },
+      "coat_distribution": {
+        "white_tan_dominant_compact_black_saddle": "white-and-tan-dominant compact-black-saddle"
+      },
+      "ear_shape": {
+        "drop": "drop"
+      },
+      "tail_shape": {
+        "single_upright_white_tipped": "single upright white-tipped"
+      },
+      "size": {
+        "medium": "medium-sized"
+      },
+      "coat_tone": {
+        "light_open_tricolor": "light open-tricolor"
+      },
+      "body_build": {
+        "standard": "standard"
+      }
+    },
+    "model_revisions": {
+      "flux2": "e7b7dc27f91deacad38e78976d1f2b499d76a294",
+      "pixal3d": "0b31f9160aa400719af409098bff7936a932f726",
+      "dino": "3c276edd87d6f6e569ff0c4400e086807d0f3881"
+    }
+  },
+  "target_physical_profiles": {
+    "profile_id": "dog_beagle_open_tricolor_physical_candidate_v2",
+    "control_attribute": "size",
+    "measurement": "shoulder_height_cm",
+    "mode": "relative_to_profile_reference",
+    "reference_value_cm": 36,
+    "reference_provenance": {
+      "status": "provisional",
+      "source_id": "beagle_pipeline_calibration_pending_v1",
+      "artifact": null,
+      "notes": "Provisional pipeline target only; replace with a license-snapshotted breed reference and measured canary before formal registration."
+    },
+    "values": {
+      "medium": {
+        "scale_ratio": 1,
+        "tolerance_cm": 3
+      }
+    }
+  },
+  "rig_profile": {
+    "profile_id": "quadruped_dog_locked_paws_v2",
+    "skeleton_family": "quaternius_dog",
+    "actions": [
+      "Walking",
+      "Idle"
+    ],
+    "front_axis": "positive_x"
+  },
+  "acoustic_profile": {
+    "profile_id": "dog_vocalization_v1",
+    "default_event_class": "dog_bark",
+    "allowed_event_classes": [
+      "dog_bark",
+      "dog_growl",
+      "silent"
+    ],
+    "selection_attributes": [
+      "species",
+      "breed",
+      "life_stage"
+    ]
+  },
+  "locked_attributes": [
+    "species",
+    "breed",
+    "life_stage",
+    "coat_length",
+    "coat_pattern",
+    "coat_distribution",
+    "ear_shape",
+    "tail_shape"
+  ],
+  "qa_contract": {
+    "subject_label": "beagle",
+    "attributes": {
+      "size": {
+        "kind": "ordered",
+        "label": "size",
+        "value_order": [
+          "medium"
+        ],
+        "value_labels": {
+          "medium": "medium-sized"
+        },
+        "comparison_question": "Which beagle is larger?"
+      },
+      "coat_tone": {
+        "kind": "ordered",
+        "label": "coat tone",
+        "value_order": [
+          "light_open_tricolor"
+        ],
+        "value_labels": {
+          "light_open_tricolor": "light open-tricolor"
+        },
+        "comparison_question": "Which beagle has the lighter open-tricolor coat?"
+      },
+      "body_build": {
+        "kind": "ordered",
+        "label": "body build",
+        "value_order": [
+          "standard"
+        ],
+        "value_labels": {
+          "standard": "standard"
+        },
+        "comparison_question": "Which beagle has the stockier build?"
+      }
+    }
+  }
+}

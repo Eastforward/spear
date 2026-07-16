@@ -1,0 +1,29 @@
+{
+  "schema": "avengine_controlled_animal_static_decisions_v1",
+  "static_review_batch_sha256": "752af1b17221a85a9514ee137c873e8ef858a455f63f9e96c980ea6c2ce5f2bd",
+  "decisions": [
+    {
+      "instance_id": "dog_beagle_open_tricolor_three_quarter_30deg_canary_62a2514cc90d",
+      "review_sha256": "c0fcd9aef65105effd0511d71a49c6c55980ad68ec7cfed6bc50de4322c1851f",
+      "decision": "rejected",
+      "checks": {
+        "complete_silhouette": false,
+        "four_limbs_usable": false,
+        "texture_coherent": true,
+        "pose_riggable": false,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_tone": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "The generated mouth and muzzle contain fused geometry.",
+        "Detached white fragments are visible beside the hind-leg region.",
+        "This Pixal3D output must not enter rigging or animation."
+      ],
+      "notes": "The requested lighter open-tricolor appearance survived image-to-3D, but the deterministic Pixal3D canary failed the static topology gate. Preserve it as backend-comparison evidence and continue the same authenticated reference through the TRELLIS fallback."
+    }
+  ]
+}

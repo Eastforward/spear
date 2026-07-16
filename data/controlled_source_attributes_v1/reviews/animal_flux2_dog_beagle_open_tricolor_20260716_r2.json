@@ -1,0 +1,22 @@
+{
+  "schema": "avengine_controlled_animal_2d_review_decisions_v1",
+  "flux2_batch_sha256": "e8563460c22a5d357230bb925fdacd81910d90a329c29dbcf531a82a792e7844",
+  "reviewer": "human_correction_transcribed_by_codex_v1",
+  "decisions": [
+    {
+      "instance_id": "dog_beagle_open_tricolor_three_quarter_30deg_canary_62a2514cc90d",
+      "candidate_sha256": "995e2e3d9c75166eb7a22bf9cb5263acaab2dcbebd6ff6a2a8bccb63906b1a48",
+      "decision": "rejected",
+      "species_breed": "passed",
+      "anatomy": "rejected",
+      "pose_and_limb_separation": "rejected",
+      "background": "passed",
+      "sampled_attribute_checks": {
+        "body_build": "rejected",
+        "coat_tone": "passed",
+        "size": "deferred_to_3d_physical_scale"
+      },
+      "notes": "Supersedes the erroneous codex_visual_canary_v1 approval. Human review identified an animation/illustration rendering style and a second tail-like appendage at the rump. The TRELLIS run started from this invalid reference was interrupted before inference/export. The later Pixal3D result is retained only as evidence that downstream image-to-3D inherits upstream ambiguity; it is not evidence of a Pixal3D backend failure."
+    }
+  ]
+}

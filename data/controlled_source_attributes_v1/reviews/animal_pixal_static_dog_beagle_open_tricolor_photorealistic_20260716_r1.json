@@ -1,0 +1,28 @@
+{
+  "schema": "avengine_controlled_animal_static_decisions_v1",
+  "static_review_batch_sha256": "04138b540fbc9a5fe9dedef3db105ccfbdf2ae1d0cd8f13e83569786cec4963b",
+  "decisions": [
+    {
+      "instance_id": "dog_beagle_open_tricolor_photorealistic_recolor_canary_169a0af3c610",
+      "review_sha256": "24a170901f2985393759037d7f84bb9ee571683eb23009dbbdd219ff29a76fca",
+      "decision": "approved_for_lod_and_binding",
+      "checks": {
+        "complete_silhouette": true,
+        "four_limbs_usable": true,
+        "texture_coherent": true,
+        "pose_riggable": true,
+        "no_large_holes": true
+      },
+      "attribute_evidence": {
+        "body_build": "passed_static_visual",
+        "coat_tone": "passed_static_visual",
+        "size": "deferred_to_metric_3d"
+      },
+      "caveats": [
+        "Approval is for the deterministic research canary and does not authorize formal dataset registration.",
+        "Direction, 100k LOD, skeleton binding, locked-paw actions, deformation and Apartment media remain separate gates."
+      ],
+      "notes": "Agent static multiview review after the user's approval of the exact FLUX.2 image. Front, back, side, top and quarter renders preserve one tail, four usable limbs and paws, a coherent white/tan-dominant coat with a compact black saddle, a closed silhouette, and no detached fragments."
+    }
+  ]
+}
