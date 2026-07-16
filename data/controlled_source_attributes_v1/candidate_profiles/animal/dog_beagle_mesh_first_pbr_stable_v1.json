@@ -1,7 +1,7 @@
 {
   "schema": "avengine_attribute_profile_v1",
   "profile_schema_id": "dog_beagle_mesh_first_pbr_stable_v1",
-  "profile_revision": "2026_07_16_v1_generated_mesh_pbr_walk_idle",
+  "profile_revision": "2026_07_16_v2_generated_mesh_pbr_locked_paw_walk_idle",
   "asset_class": "animal",
   "lineage_group_id": "trellis2_beagle_seed6102_meshfirst_b0fd2204",
   "state_classification": "research_candidate",
@@ -10,13 +10,13 @@
     "breed": "beagle"
   },
   "base_template": {
-    "template_id": "trellis2_beagle_seed6102_meshfirst_pbr_walk_idle_v1",
+    "template_id": "trellis2_beagle_seed6102_meshfirst_pbr_locked_paw_walk_idle_v2",
     "kind": "stable_animal_template",
     "artifact": {
       "root_id": "spear_repo",
-      "path": "tmp/controlled_source_asset_execution_v1/dog_beagle_three_quarter_30deg_i23d_bakeoff_v10_20260714_r1_candidate657/trellis2/seed6102_mesh_first_pbr_animation_v22_matte_fixed_weight_transfer_20260715/animated_walk_idle.glb",
-      "sha256": "1af28de3299cde11cc4bbb61730459fd9044e1f4838348bec6d26ad8cdd72426",
-      "size_bytes": 5906848
+      "path": "tmp/controlled_source_asset_execution_v1/dog_beagle_three_quarter_30deg_i23d_bakeoff_v10_20260714_r1_candidate657/trellis2/seed6102_mesh_first_pbr_animation_v24_binary_action_transplant_locked_paws_20260716/animated_walk_idle.glb",
+      "sha256": "90cd41a9d6e19e2ff9c950d8dc2c35672b86d60ec971ae48985336af655125bf",
+      "size_bytes": 5950028
     },
     "provenance_status": "review_required",
     "usage_scope": "research_candidate"
@@ -206,7 +206,7 @@
     }
   },
   "rig_profile": {
-    "profile_id": "mesh_first_beagle_bone20_v1",
+    "profile_id": "mesh_first_beagle_bone20_locked_paws_v2",
     "skeleton_family": "generated_quadruped_bone20",
     "actions": [
       "Walking",
