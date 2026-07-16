@@ -1,7 +1,7 @@
 {
   "schema": "avengine_attribute_profile_v1",
   "profile_schema_id": "dog_beagle_open_tricolor_photorealistic_recolor_canary_v3",
-  "profile_revision": "2026_07_16_v3_published_photorealistic_reference",
+  "profile_revision": "2026_07_16_v3_published_reference_explicit_30deg_view_contract",
   "asset_class": "animal",
   "lineage_group_id": "flux2_beagle_photorealistic_d2855c20",
   "state_classification": "research_candidate",
@@ -44,9 +44,27 @@
   "generation_contract": {
     "route": "flux2_pixal3d_animal_v1",
     "prompt_template_id": "beagle_photorealistic_coat_only_recolor_i2i_v3",
+    "base_acquisition_policy": {
+      "policy_id": "animal_one_shot_no_seed_lottery_v1",
+      "acquisition_unit": "one_frozen_base_asset",
+      "sampled_domains_must_be_singleton": true,
+      "downstream_instance_route": "stable_animal_template_v1",
+      "profile_validation": "all_predeclared_requests_count_zero_hidden_failures"
+    },
+    "source_view_contract": {
+      "pose_guide": "quaternius_dog_authored_rest_pose_three_quarter_30deg_four_limb_clay_v2",
+      "nominal_camera_azimuth_deg": 30,
+      "camera_roll_deg": 0,
+      "camera_pitch_policy": "level_neutral_product_view",
+      "projected_torso_spine_axis": "straight_and_horizontal",
+      "purpose": "keep all four limbs and paws visible with plain-background separation",
+      "expected_raw_i23d_horizontal_yaw": "non_cardinal_due_to_three_quarter_input",
+      "downstream_orientation_gate": "manual_torso_axis_alignment_then_cardinal_head_tail_v3",
+      "automatic_yaw_inference_allowed": false
+    },
     "positive_template": "Edit the coat colors of the one photographed {size} {life_stage} {breed} {species} in the input to a coherent {coat_tone} {coat_length} {coat_pattern} coat with a {coat_distribution} distribution. Preserve the same {body_build} body, {ear_shape} ears, and {tail_shape} tail.",
-    "pose_guard_prompt": "This is a strict photorealistic image-to-image coat recolor, not a redraw and not a new animal. Treat the input pixels as the authority for identity, realistic short-fur detail, anatomy, body silhouette, camera, moderate three-quarter side view, lighting, shadows, neutral background, exact four leg positions, exact four complete grounded paws, closed belly, head direction, and exactly one tail. Modify only coat color distribution. Replace most of the current black blanket on the torso, shoulders, flanks and hindquarters with natural warm tan and clean white fur. Retain only one compact black saddle centered on the upper middle back, covering less than one quarter of the visible coat. Keep a broad white muzzle blaze, white neck, chest, closed belly, lower legs and paws; keep warm tan on the head, ears, shoulders, flanks and hips. Preserve photographic/PBR realism with individual short fur and natural material response. The result must still look like the same real beagle captured by the same camera, never like an illustration, animation frame, painting, clay render, toy, stylized CGI or flat graphic. Keep exactly one anatomically attached tail and no second tail-like silhouette. Keep each leg and paw anatomically connected, distinct, non-overlapping and fully visible with plain-background gaps between lower limbs. Do not add, remove, move, bend, duplicate or reshape any body part.",
-    "negative_prompt": "illustration, animated style, animation frame, cartoon, toon shading, painting, drawing, vector art, flat colors, clay render, plastic toy, stylized CGI, low-detail fur, duplicate animal, extra tail, duplicate tail, second tail, tail-like appendage, abdominal appendage, extra limb, fifth limb, duplicate leg, missing leg, hidden paw, merged legs, fused legs, crossed legs, overlapping paws, lifted paw, walking, running, sitting, crouching, twisted torso, curved spine, head turn, perspective change, camera change, mostly black body, large black blanket, black torso, black chest, black abdomen, black shoulders, black flanks, black hindquarters, gray clay patch, untextured patch, open belly, belly hole, disconnected paw, malformed paw, collar, scarf, accessory, cropped body, text",
+    "pose_guard_prompt": "This is a strict photorealistic image-to-image coat recolor, not a redraw and not a new animal. Treat the input pixels as the authority for identity, realistic short-fur detail, anatomy, body silhouette, lighting, shadows, neutral background, exact four leg positions, exact four complete grounded paws, closed belly, head direction, and exactly one tail. Preserve the authored fixed 30-degree three-quarter side camera: camera roll is exactly zero, the ground plane and horizon stay level, and the projected torso/spine axis stays straight and horizontal. This 30-degree view is deliberate so all four lower limbs and paws remain visible with plain-background gaps; do not convert it to a front view, rear view, or exact side view. Modify only coat color distribution. Replace most of the current black blanket on the torso, shoulders, flanks and hindquarters with natural warm tan and clean white fur. Retain only one compact black saddle centered on the upper middle back, covering less than one quarter of the visible coat. Keep a broad white muzzle blaze, white neck, chest, closed belly, lower legs and paws; keep warm tan on the head, ears, shoulders, flanks and hips. Preserve photographic/PBR realism with individual short fur and natural material response. The result must still look like the same real beagle captured by the same camera, never like an illustration, animation frame, painting, clay render, toy, stylized CGI or flat graphic. Keep exactly one anatomically attached tail and no second tail-like silhouette. Keep each leg and paw anatomically connected, distinct, non-overlapping and fully visible with plain-background gaps between lower limbs. Do not add, remove, move, bend, duplicate or reshape any body part.",
+    "negative_prompt": "illustration, animated style, animation frame, cartoon, toon shading, painting, drawing, vector art, flat colors, clay render, plastic toy, stylized CGI, low-detail fur, duplicate animal, extra tail, duplicate tail, second tail, tail-like appendage, abdominal appendage, extra limb, fifth limb, duplicate leg, missing leg, hidden paw, merged legs, fused legs, crossed legs, overlapping paws, lifted paw, walking, running, sitting, crouching, twisted torso, curved spine, diagonal projected torso, tilted horizon, camera roll, head turn, perspective change, camera change, front view, rear view, exact side view, mostly black body, large black blanket, black torso, black chest, black abdomen, black shoulders, black flanks, black hindquarters, gray clay patch, untextured patch, open belly, belly hole, disconnected paw, malformed paw, collar, scarf, accessory, cropped body, text",
     "value_labels": {
       "species": {
         "dog": "dog"

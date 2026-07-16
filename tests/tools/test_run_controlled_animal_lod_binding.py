@@ -13,6 +13,9 @@ def _job(tmp_path, species="dog"):
     return {
         "raw_path": tmp_path / "raw.glb",
         "rig": {**spec, "path": Path(spec["path"]), "species": species},
+        "direction_decision": {
+            "manual_cardinal_yaw_about_gltf_positive_y_deg": 90,
+        },
     }
 
 
@@ -22,7 +25,8 @@ def test_build_commands_pins_approved_lod_and_binding_contract(tmp_path):
     assert lod[-3:] == ["--target-faces", "100000", "--double-sided"]
     assert "--double-sided" in lod
     assert bind[bind.index("--rig-glb") + 1].endswith("Dog.glb")
-    assert "--flip-x" in bind
+    assert "--flip-x" not in bind
+    assert bind[bind.index("--target-rotate-z-deg") + 1] == "90"
     assert bind[bind.index("--align-mode") + 1] == "uniform"
     assert bind[bind.index("--weight-mode") + 1] == "region"
     assert bind[bind.index("--segmentation-mode") + 1] == "proximity"
@@ -171,3 +175,136 @@ def test_run_batch_rejects_unsafe_worker_counts(tmp_path, workers):
 def test_load_jobs_requires_a_registry():
     with pytest.raises(contracts.ContractError, match="registry"):
         runner.load_jobs([])
+
+
+def _write_approved_direction_decision(
+    tmp_path, *, asset_id="animal_x", yaw=90, automatic=False
+):
+    reviewed_lod = tmp_path / "reviewed_lod.glb"
+    reviewed_lod.write_bytes(b"reviewed deterministic lod")
+    decision = {
+        "schema": "controlled_animal_pose_direction_manual_decision_v2",
+        "asset_id": asset_id,
+        "status": "source_pose_and_cardinal_orientation_approved",
+        "automatic_orientation_inference_used": automatic,
+        "manual_cardinal_yaw_about_gltf_positive_y_deg": yaw,
+        "manual_rotation_matrix_3x3": [
+            [0, 0, 1],
+            [0, 1, 0],
+            [-1, 0, 0],
+        ],
+        "determinant": 1,
+        "source_prebind_lod": {
+            "absolute_path": str(reviewed_lod),
+            "sha256": runner._sha256_file(reviewed_lod),
+            "size_bytes": reviewed_lod.stat().st_size,
+        },
+        "manual_pose_checks_are_advisory": True,
+    }
+    decision["decision_sha256"] = runner._hash_without(
+        decision, "decision_sha256"
+    )
+    path = tmp_path / f"{asset_id}.json"
+    path.write_text(json.dumps(decision))
+    return path, decision
+
+
+def test_direction_decision_gate_authenticates_human_cardinal_choice(tmp_path):
+    path, expected = _write_approved_direction_decision(tmp_path)
+
+    decision = runner.load_direction_decision(path, expected_asset_id="animal_x")
+
+    assert decision == expected
+    assert decision["manual_cardinal_yaw_about_gltf_positive_y_deg"] == 90
+
+
+@pytest.mark.parametrize(
+    ("yaw", "automatic", "message"),
+    [
+        (15, False, "cardinal"),
+        (90, True, "automatic"),
+    ],
+)
+def test_direction_decision_gate_rejects_guess_or_fine_yaw(
+    tmp_path, yaw, automatic, message
+):
+    path, _ = _write_approved_direction_decision(
+        tmp_path, yaw=yaw, automatic=automatic
+    )
+
+    with pytest.raises(contracts.ContractError, match=message):
+        runner.load_direction_decision(path, expected_asset_id="animal_x")
+
+
+def _write_approved_two_stage_direction_decision(
+    tmp_path, *, asset_id="animal_x", axis_yaw=25, cardinal_yaw=180
+):
+    reviewed_lod = tmp_path / "reviewed_lod_v3.glb"
+    reviewed_lod.write_bytes(b"reviewed deterministic lod v3")
+    total_yaw = runner._normalize_yaw(axis_yaw + cardinal_yaw)
+    decision = {
+        "schema": runner.DIRECTION_DECISION_SCHEMA_V3,
+        "asset_id": asset_id,
+        "status": runner.DIRECTION_APPROVED_STATUS_V3,
+        "automatic_orientation_inference_used": False,
+        "manual_axis_alignment_yaw_about_gltf_positive_y_deg": axis_yaw,
+        "manual_cardinal_head_tail_yaw_about_gltf_positive_y_deg": cardinal_yaw,
+        "manual_total_yaw_about_gltf_positive_y_deg": total_yaw,
+        "axis_alignment_authority": "human_visual_torso_spine_axis",
+        "head_tail_authority": "human_visual_head_tail_direction",
+        "manual_rotation_matrix_3x3": runner._yaw_matrix_y_up(total_yaw),
+        "determinant": 1,
+        "source_prebind_lod": {
+            "absolute_path": str(reviewed_lod),
+            "sha256": runner._sha256_file(reviewed_lod),
+            "size_bytes": reviewed_lod.stat().st_size,
+        },
+        "manual_pose_checks_are_advisory": True,
+    }
+    decision["decision_sha256"] = runner._hash_without(
+        decision, "decision_sha256"
+    )
+    path = tmp_path / f"{asset_id}.json"
+    path.write_text(json.dumps(decision))
+    return path, decision
+
+
+def test_direction_decision_gate_authenticates_two_stage_human_yaw(tmp_path):
+    path, expected = _write_approved_two_stage_direction_decision(tmp_path)
+
+    decision = runner.load_direction_decision(path, expected_asset_id="animal_x")
+
+    assert decision == expected
+    assert runner._decision_binding_yaw(decision) == -155
+
+
+def test_two_stage_direction_build_command_uses_composed_yaw(tmp_path):
+    _, decision = _write_approved_two_stage_direction_decision(tmp_path)
+    job = _job(tmp_path)
+    job["direction_decision"] = decision
+
+    _, bind = runner.build_commands(job, tmp_path / "job", target_faces=100_000)
+
+    assert bind[bind.index("--target-rotate-z-deg") + 1] == "-155"
+
+
+def test_two_stage_direction_rejects_tampered_composition(tmp_path):
+    path, decision = _write_approved_two_stage_direction_decision(tmp_path)
+    decision["manual_total_yaw_about_gltf_positive_y_deg"] = -150
+    decision["manual_rotation_matrix_3x3"] = runner._yaw_matrix_y_up(-150)
+    decision["decision_sha256"] = runner._hash_without(
+        decision, "decision_sha256"
+    )
+    path.write_text(json.dumps(decision))
+
+    with pytest.raises(contracts.ContractError, match="composition"):
+        runner.load_direction_decision(path, expected_asset_id="animal_x")
+
+
+def test_reviewed_lod_gate_rejects_regenerated_geometry_change(tmp_path):
+    _, decision = _write_approved_direction_decision(tmp_path)
+    regenerated = tmp_path / "regenerated.glb"
+    regenerated.write_bytes(b"different lod")
+
+    with pytest.raises(contracts.ContractError, match="reviewed LOD"):
+        runner.assert_lod_matches_direction_review(regenerated, decision)

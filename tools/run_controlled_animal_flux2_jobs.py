@@ -20,6 +20,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import controlled_animal_flux2_worker as worker
+from tools import controlled_animal_one_shot_policy as one_shot
 from tools import controlled_source_asset_schema as contracts
 from tools import execute_controlled_rocketbox_material_jobs as material_execution
 from tools import prepare_controlled_source_asset_execution as preparation
@@ -186,6 +187,11 @@ def run_jobs(
         execution_job_ids=execution_job_ids,
         qa_pair_canary=qa_pair_canary,
     )
+    try:
+        for job in jobs:
+            one_shot.validate_flux_job(job)
+    except one_shot.PolicyError as error:
+        raise contracts.ContractError(str(error)) from error
     output_root = Path(output_root).absolute()
     if output_root.exists() or output_root.is_symlink():
         raise contracts.ContractError(
@@ -204,6 +210,7 @@ def run_jobs(
             payload: dict[str, Any] = {
                 "schema": worker.PARTITION_SCHEMA,
                 "execution_preflight_sha256": preflight["preflight_sha256"],
+                "one_shot_execution": one_shot.stage_record("flux2"),
                 "model": MODEL,
                 "parameters": PARAMETERS,
                 "jobs": gpu_jobs,
@@ -284,6 +291,12 @@ def run_jobs(
                 != "pending_2d_review"
             ):
                 raise contracts.ContractError("FLUX.2 candidate manifest readback failed")
+            try:
+                one_shot.validate_stage_record(
+                    manifest.get("one_shot_execution"), "flux2"
+                )
+            except one_shot.PolicyError as error:
+                raise contracts.ContractError(str(error)) from error
             results.append(
                 {
                     "execution_job_id": job["execution_job_id"],
@@ -307,12 +320,14 @@ def run_jobs(
             "status": "pending_2d_review",
             "state_classification": "research_candidate",
             "formal_dataset_registration_authorized": False,
+            "one_shot_execution": one_shot.stage_record("flux2"),
             "execution_preflight": {
                 "path": str(Path(preflight_path).resolve()),
                 "sha256": _sha256_file(Path(preflight_path)),
                 "preflight_sha256": preflight["preflight_sha256"],
             },
             "selection": {
+                "semantics": "predeclared_request_subset_only_not_output_ranking",
                 "profile_ids": sorted(profile_ids) if profile_ids else "all_animal_profiles",
                 "execution_job_ids": sorted(execution_job_ids) if execution_job_ids else None,
                 "qa_pair_canary": qa_pair_canary,
@@ -327,6 +342,10 @@ def run_jobs(
                 "preflight_reauthenticated_before_and_after": True,
                 "one_model_load_per_worker": True,
                 "one_flux_invocation_per_candidate": True,
+                "one_flux_image_per_candidate": True,
+                "seed_retry_forbidden": True,
+                "candidate_ranking_or_best_of_n_forbidden": True,
+                "all_selected_requests_count_in_batch_outcome": True,
                 "all_candidates_pending_visual_review": True,
                 "pixal3d_not_started_before_review": True,
                 "overall": "pending_2d_review",

@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from tools import controlled_source_asset_schema as contracts
+from tools import controlled_animal_one_shot_policy as one_shot
 from tools import pixal_animal_persistent_worker as persistent_worker
 from tools import run_controlled_animal_pixal_jobs as runner
 
@@ -65,6 +66,8 @@ def test_build_worker_job_separates_staging_write_from_public_path(tmp_path):
         "legacy_tag": "dog_x",
         "candidate_tag": "dog_x_pixal_v1",
         "seed": 42,
+        "attempt_ordinal": 0,
+        "one_shot_execution": one_shot.stage_record("pixal3d"),
         "reference": {"pixal_input": {"path": "/input.png"}},
         "controlled_request": {
             "instance_id": "dog_x",
@@ -73,6 +76,7 @@ def test_build_worker_job_separates_staging_write_from_public_path(tmp_path):
             "profile_schema_id": "dog_x_v1",
             "sampled_attributes": {"size": "small"},
             "target_physical_profile": {},
+            "generation_seed": 42,
         },
     }
 
@@ -83,3 +87,17 @@ def test_build_worker_job_separates_staging_write_from_public_path(tmp_path):
     assert Path(worker_job["public_output"]) == public_root / "dog_x/pixal_raw_1024.glb"
     assert Path(worker_job["public_manifest"]) == public_root / "dog_x/pixal_raw_1024.manifest.json"
     assert worker_job["controlled_request"] == job["controlled_request"]
+    assert worker_job["attempt_ordinal"] == 0
+    assert worker_job["one_shot_execution"] == one_shot.stage_record("pixal3d")
+
+
+def test_build_worker_job_reject_contract_detects_seed_change():
+    job = {
+        "seed": 43,
+        "attempt_ordinal": 0,
+        "controlled_request": {"generation_seed": 42},
+        "one_shot_execution": one_shot.stage_record("pixal3d"),
+    }
+
+    with pytest.raises(one_shot.PolicyError, match="frozen request"):
+        one_shot.validate_pixal_job(job)

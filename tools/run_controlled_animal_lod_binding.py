@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -36,6 +37,12 @@ from tools.spike_rlr import runtime_proxy_mesh
 
 
 BATCH_SCHEMA = "avengine_controlled_animal_lod_binding_batch_v1"
+DIRECTION_DECISION_SCHEMA = "controlled_animal_pose_direction_manual_decision_v2"
+DIRECTION_DECISION_SCHEMA_V3 = "controlled_animal_pose_direction_manual_decision_v3"
+DIRECTION_APPROVED_STATUS = "source_pose_and_cardinal_orientation_approved"
+DIRECTION_APPROVED_STATUS_V3 = "source_pose_and_manual_orientation_approved"
+CARDINAL_YAWS = {-90.0, 0.0, 90.0, 180.0}
+MAX_MANUAL_AXIS_ALIGNMENT_DEG = 45.0
 SPEAR_ROOT = Path(__file__).resolve().parents[1]
 AVENGINE_ROOT = SPEAR_ROOT.parents[1]
 BLENDER = Path("/data/jzy/.local/bin/blender")
@@ -93,6 +100,178 @@ def _verify_file(path: Path, record: Mapping[str, Any], *, label: str) -> None:
         or _sha256_file(path) != record.get("sha256")
     ):
         raise contracts.ContractError(f"{label} changed: {path}")
+
+
+def _matrix_determinant_3x3(matrix: Sequence[Sequence[float]]) -> float:
+    a, b, c = matrix
+    return (
+        a[0] * (b[1] * c[2] - b[2] * c[1])
+        - a[1] * (b[0] * c[2] - b[2] * c[0])
+        + a[2] * (b[0] * c[1] - b[1] * c[0])
+    )
+
+
+def _normalize_yaw(value: float) -> float:
+    normalized = (float(value) + 180.0) % 360.0 - 180.0
+    if math.isclose(normalized, -180.0, abs_tol=1.0e-9):
+        return 180.0
+    if math.isclose(normalized, 0.0, abs_tol=1.0e-9):
+        return 0.0
+    return normalized
+
+
+def _yaw_matrix_y_up(yaw_deg: float) -> list[list[float]]:
+    radians = math.radians(float(yaw_deg))
+    c, s = math.cos(radians), math.sin(radians)
+    return [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
+
+
+def _decision_binding_yaw(decision: Mapping[str, Any]) -> float:
+    if decision.get("schema") == DIRECTION_DECISION_SCHEMA_V3:
+        return float(decision["manual_total_yaw_about_gltf_positive_y_deg"])
+    return float(decision["manual_cardinal_yaw_about_gltf_positive_y_deg"])
+
+
+def load_direction_decision(
+    path: Path, *, expected_asset_id: str
+) -> dict[str, Any]:
+    """Authenticate the immutable human direction decision used for binding.
+
+    This is deliberately stricter than accepting a caller-provided ``front_axis``:
+    the reviewed mesh, exact manual rotation, asset identity, and decision body
+    are all content-addressed.  V2 accepts cardinal yaw only.  V3 accepts a
+    reviewer-authored small rigid torso-axis alignment plus a cardinal head/tail
+    choice; automatic orientation guesses remain forbidden.
+    """
+
+    path = Path(path).absolute()
+    if path.is_symlink() or not path.is_file():
+        raise contracts.ContractError(f"direction decision is missing: {path}")
+    decision = contracts.load_json(path)
+    if not isinstance(decision, dict):
+        raise contracts.ContractError("direction decision must be a JSON object")
+    schema = decision.get("schema")
+    if schema not in {DIRECTION_DECISION_SCHEMA, DIRECTION_DECISION_SCHEMA_V3}:
+        raise contracts.ContractError("direction decision schema changed")
+    if decision.get("asset_id") != expected_asset_id:
+        raise contracts.ContractError("direction decision asset identity changed")
+    expected_status = (
+        DIRECTION_APPROVED_STATUS_V3
+        if schema == DIRECTION_DECISION_SCHEMA_V3
+        else DIRECTION_APPROVED_STATUS
+    )
+    if decision.get("status") != expected_status:
+        raise contracts.ContractError("source pose/manual direction is not approved")
+    if decision.get("automatic_orientation_inference_used") is not False:
+        raise contracts.ContractError(
+            "automatic direction inference is forbidden at the manual direction gate"
+        )
+    if decision.get("decision_sha256") != _hash_without(
+        decision, "decision_sha256"
+    ):
+        raise contracts.ContractError("direction decision hash is invalid")
+
+    if schema == DIRECTION_DECISION_SCHEMA_V3:
+        try:
+            axis_yaw = float(
+                decision["manual_axis_alignment_yaw_about_gltf_positive_y_deg"]
+            )
+            cardinal_yaw = float(
+                decision[
+                    "manual_cardinal_head_tail_yaw_about_gltf_positive_y_deg"
+                ]
+            )
+            yaw = float(decision["manual_total_yaw_about_gltf_positive_y_deg"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise contracts.ContractError(
+                "manual two-stage yaw fields are missing"
+            ) from error
+        if (
+            abs(axis_yaw) > MAX_MANUAL_AXIS_ALIGNMENT_DEG
+            or cardinal_yaw not in CARDINAL_YAWS
+            or not math.isclose(
+                yaw, _normalize_yaw(axis_yaw + cardinal_yaw), abs_tol=1.0e-6
+            )
+        ):
+            raise contracts.ContractError("manual two-stage yaw composition is invalid")
+        if (
+            decision.get("axis_alignment_authority")
+            != "human_visual_torso_spine_axis"
+            or decision.get("head_tail_authority")
+            != "human_visual_head_tail_direction"
+        ):
+            raise contracts.ContractError("manual two-stage review authority is invalid")
+    else:
+        try:
+            yaw = float(
+                decision["manual_cardinal_yaw_about_gltf_positive_y_deg"]
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise contracts.ContractError("manual cardinal yaw is missing") from error
+        if yaw not in CARDINAL_YAWS:
+            raise contracts.ContractError(
+                f"manual direction must be cardinal, not fine yaw: {yaw}"
+            )
+
+    matrix = decision.get("manual_rotation_matrix_3x3")
+    if (
+        not isinstance(matrix, list)
+        or len(matrix) != 3
+        or any(not isinstance(row, list) or len(row) != 3 for row in matrix)
+    ):
+        raise contracts.ContractError("manual rotation matrix is invalid")
+    try:
+        numeric_matrix = [[float(value) for value in row] for row in matrix]
+        determinant = _matrix_determinant_3x3(numeric_matrix)
+        row_norms = [sum(value * value for value in row) for row in numeric_matrix]
+        row_dots = [
+            sum(numeric_matrix[i][k] * numeric_matrix[j][k] for k in range(3))
+            for i in range(3)
+            for j in range(i + 1, 3)
+        ]
+    except (TypeError, ValueError) as error:
+        raise contracts.ContractError(
+            "manual rotation matrix is not numeric"
+        ) from error
+    if (
+        abs(determinant - 1.0) > 1.0e-6
+        or abs(float(decision.get("determinant", 0.0)) - 1.0) > 1.0e-6
+        or any(abs(norm - 1.0) > 1.0e-6 for norm in row_norms)
+        or any(abs(dot) > 1.0e-6 for dot in row_dots)
+    ):
+        raise contracts.ContractError(
+            "manual rotation must be a proper orthonormal rotation"
+        )
+    expected_matrix = _yaw_matrix_y_up(yaw)
+    if any(
+        abs(numeric_matrix[row][column] - expected_matrix[row][column]) > 1.0e-6
+        for row in range(3)
+        for column in range(3)
+    ):
+        raise contracts.ContractError("manual rotation matrix does not match saved yaw")
+
+    reviewed = decision.get("source_prebind_lod")
+    if not isinstance(reviewed, dict):
+        raise contracts.ContractError("direction decision has no reviewed LOD")
+    reviewed_path = Path(str(reviewed.get("absolute_path", ""))).absolute()
+    _verify_file(reviewed_path, reviewed, label="direction-reviewed LOD")
+    return copy.deepcopy(decision)
+
+
+def assert_lod_matches_direction_review(
+    regenerated_lod: Path, direction_decision: Mapping[str, Any]
+) -> None:
+    """Prevent a decision for one mesh from authorizing a changed mesh."""
+
+    reviewed = direction_decision.get("source_prebind_lod", {})
+    try:
+        _verify_file(
+            Path(regenerated_lod).absolute(), reviewed, label="reviewed LOD"
+        )
+    except contracts.ContractError as error:
+        raise contracts.ContractError(
+            "regenerated LOD does not match the direction-reviewed LOD"
+        ) from error
 
 
 def _rig_spec(source_asset: Mapping[str, Any]) -> dict[str, Any]:
@@ -197,7 +376,9 @@ def _load_registry(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
 
 
 def load_jobs(
-    registry_paths: Sequence[Path], asset_ids: Sequence[str] = ()
+    registry_paths: Sequence[Path],
+    asset_ids: Sequence[str] = (),
+    direction_decision_root: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if not registry_paths:
         raise contracts.ContractError("at least one source registry is required")
@@ -230,6 +411,22 @@ def load_jobs(
         }
     if not jobs_by_id:
         raise contracts.ContractError("no controlled animal jobs selected")
+    if direction_decision_root is None:
+        raise contracts.ContractError(
+            "a human direction decision root is required before binding"
+        )
+    decision_root = Path(direction_decision_root).absolute()
+    if decision_root.is_symlink() or not decision_root.is_dir():
+        raise contracts.ContractError(
+            f"direction decision root is missing: {decision_root}"
+        )
+    for asset_id, job in jobs_by_id.items():
+        decision_path = decision_root / f"{asset_id}.json"
+        decision = load_direction_decision(
+            decision_path, expected_asset_id=asset_id
+        )
+        job["direction_decision"] = decision
+        job["direction_decision_path"] = decision_path
     return registries, [jobs_by_id[key] for key in sorted(jobs_by_id)]
 
 
@@ -267,7 +464,8 @@ def build_commands(
         str(lod),
         "--output",
         str(rigged),
-        "--flip-x",
+        "--target-rotate-z-deg",
+        f"{_decision_binding_yaw(job['direction_decision']):g}",
         "--align-mode",
         "uniform",
         "--weight-mode",
@@ -459,6 +657,40 @@ def _enforce_prebind_geometry_audit(record: Mapping[str, Any]) -> None:
         raise contracts.ContractError("prebind geometry audit status is invalid")
 
 
+def _direction_gate_record(job: Mapping[str, Any]) -> dict[str, Any]:
+    decision = job["direction_decision"]
+    schema = decision["schema"]
+    record: dict[str, Any] = {
+        "schema": schema,
+        "status": decision["status"],
+        "decision": _relative_artifact(
+            Path(job["direction_decision_path"]), SPEAR_ROOT
+        ),
+        "decision_sha256": decision["decision_sha256"],
+        "manual_total_yaw_about_gltf_positive_y_deg": _decision_binding_yaw(
+            decision
+        ),
+        "automatic_orientation_inference_used": False,
+        "reviewed_lod": copy.deepcopy(decision["source_prebind_lod"]),
+    }
+    if schema == DIRECTION_DECISION_SCHEMA_V3:
+        record.update(
+            manual_axis_alignment_yaw_about_gltf_positive_y_deg=decision[
+                "manual_axis_alignment_yaw_about_gltf_positive_y_deg"
+            ],
+            manual_cardinal_head_tail_yaw_about_gltf_positive_y_deg=decision[
+                "manual_cardinal_head_tail_yaw_about_gltf_positive_y_deg"
+            ],
+            axis_alignment_authority=decision["axis_alignment_authority"],
+            head_tail_authority=decision["head_tail_authority"],
+        )
+    else:
+        record["manual_cardinal_yaw_about_gltf_positive_y_deg"] = decision[
+            "manual_cardinal_yaw_about_gltf_positive_y_deg"
+        ]
+    return record
+
+
 def _run_job(
     job: Mapping[str, Any], staging: Path, public_root: Path, target_faces: int
 ) -> dict[str, Any]:
@@ -494,6 +726,7 @@ def _run_job(
             "sha256": job["rig"]["sha256"],
         },
         "raw_mesh_readback": job["raw_stats"],
+        "direction_gate": _direction_gate_record(job),
     }
     try:
         paths["prebind_geometry_audit"].parent.mkdir(parents=True, exist_ok=True)
@@ -535,6 +768,9 @@ def _run_job(
             paths["lod_metadata"],
             public_runtime,
             source_sha256=job["raw_record"]["sha256"],
+        )
+        assert_lod_matches_direction_review(
+            paths["lod_glb"], job["direction_decision"]
         )
         bind_timing = _run_timed(bind_command, paths["binding_log"], timeout=1800)
         if bind_timing["returncode"] != 0:
@@ -622,6 +858,7 @@ def run_batch(
     workers: int = 8,
     target_faces: int = 100_000,
     asset_ids: Sequence[str] = (),
+    direction_decision_root: Path | None = None,
 ) -> Path:
     if not 1 <= workers <= 16:
         raise contracts.ContractError("workers must be between 1 and 16")
@@ -630,7 +867,11 @@ def run_batch(
     if not BLENDER.is_file() or not GNU_TIME.is_file():
         raise contracts.ContractError("pinned Blender or GNU time is missing")
     provenance = _pinned_provenance()
-    registries, jobs = load_jobs(registry_paths, asset_ids)
+    registries, jobs = load_jobs(
+        registry_paths,
+        asset_ids,
+        direction_decision_root=direction_decision_root,
+    )
     output_root = Path(output_root).absolute()
     if output_root.exists() or output_root.is_symlink():
         raise contracts.ContractError(f"refusing to replace output: {output_root}")
@@ -679,7 +920,12 @@ def run_batch(
                 "double_sided": True,
                 "workers": min(workers, len(jobs)),
                 "alignment": "uniform",
-                "flip_x": True,
+                "orientation_source": (
+                    "per_asset_authenticated_manual_direction_decision_v2_or_v3"
+                ),
+                "automatic_orientation_inference": False,
+                "manual_binding_yaw": "per_asset_authenticated_decision",
+                "flip_x": False,
                 "weight_mode": "region",
                 "segmentation_mode": "proximity",
                 "semantic_forward_axis": "positive-x",
@@ -702,6 +948,8 @@ def run_batch(
                 "all_source_registries_reauthenticated": True,
                 "all_source_asset_v2_records_reauthenticated": True,
                 "all_pixal_raw_glbs_reauthenticated": True,
+                "all_direction_decisions_reauthenticated": passed > 0,
+                "all_regenerated_lods_match_reviewed_lods": passed > 0,
                 "all_successful_sources_passed_prebind_geometry_gate": passed > 0,
                 "all_source_rigs_and_license_snapshot_pinned": True,
                 "all_successful_lods_glb2_readable_and_double_sided": passed > 0,
@@ -732,6 +980,15 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--target-faces", type=int, default=100_000)
     parser.add_argument("--asset-id", action="append", default=[])
+    parser.add_argument(
+        "--direction-decision-root",
+        required=True,
+        type=Path,
+        help=(
+            "Directory containing immutable <asset_id>.json manual direction "
+            "decisions produced by the direction review UI."
+        ),
+    )
     return parser
 
 
@@ -744,6 +1001,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             workers=args.workers,
             target_faces=args.target_faces,
             asset_ids=args.asset_id,
+            direction_decision_root=args.direction_decision_root,
         )
         manifest = contracts.load_json(manifest_path)
     except (contracts.ContractError, OSError, subprocess.SubprocessError) as error:

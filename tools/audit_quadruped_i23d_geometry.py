@@ -23,9 +23,10 @@ import numpy as np
 import trimesh
 
 
-SCHEMA = "avengine_quadruped_i23d_geometry_audit_v2"
+SCHEMA = "avengine_quadruped_i23d_geometry_audit_v3"
 BEND_PASS_DEG = 5.0
 BEND_REVIEW_DEG = 10.0
+BEND_REJECT_LATERAL_PEAK_RATIO = 0.05
 NONMANIFOLD_PASS_RATIO = 1.0e-4
 NONMANIFOLD_REJECT_RATIO = 1.0e-3
 
@@ -212,13 +213,24 @@ def torso_midline_yaw(
 
 def decision(topology: dict[str, Any], midline: dict[str, Any]) -> dict[str, Any]:
     bend = abs(float(midline["centerline_bend_p95_degrees"]))
+    lateral_peak_ratio = abs(float(midline["centerline_lateral_peak_ratio"]))
     ratio = float(topology["nonmanifold_edge_ratio_per_triangle"])
     rejected = []
     review = []
-    if bend > BEND_REVIEW_DEG:
-        rejected.append("torso_centerline_bend_exceeds_10_degrees")
+    # A tangent angle alone is unstable on short, noisy centerlines: a small
+    # 2--4% lateral departure can produce a large endpoint derivative without
+    # a visibly twisted torso.  Reject only when both angular bend and actual
+    # normalized lateral displacement are large.  High angle with modest
+    # displacement is sent to the exact human top-view gate instead.
+    if (
+        bend > BEND_REVIEW_DEG
+        and lateral_peak_ratio > BEND_REJECT_LATERAL_PEAK_RATIO
+    ):
+        rejected.append(
+            "torso_centerline_bend_and_lateral_displacement_exceed_limits"
+        )
     elif bend > BEND_PASS_DEG:
-        review.append("torso_centerline_bend_between_5_and_10_degrees")
+        review.append("torso_centerline_shape_requires_manual_top_view_review")
     if ratio > NONMANIFOLD_REJECT_RATIO:
         rejected.append("nonmanifold_edge_ratio_exceeds_0_001")
     elif ratio > NONMANIFOLD_PASS_RATIO:
@@ -238,6 +250,9 @@ def decision(topology: dict[str, Any], midline: dict[str, Any]) -> dict[str, Any
         "thresholds": {
             "torso_centerline_bend_pass_max_degrees": BEND_PASS_DEG,
             "torso_centerline_bend_reject_above_degrees": BEND_REVIEW_DEG,
+            "torso_centerline_lateral_peak_reject_above_ratio": (
+                BEND_REJECT_LATERAL_PEAK_RATIO
+            ),
             "nonmanifold_pass_max_ratio": NONMANIFOLD_PASS_RATIO,
             "nonmanifold_reject_above_ratio": NONMANIFOLD_REJECT_RATIO,
         },

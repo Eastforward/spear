@@ -104,11 +104,14 @@ def main(argv=None):
         }
     )
     sys.path.insert(0, str(TOOLS_ROOT))
+    from tools import controlled_animal_one_shot_policy as one_shot
     import i23d_human_bakeoff as wrapper
 
     jobs = json.loads(args.jobs.read_text(encoding="utf-8"))
     if not isinstance(jobs, list) or not jobs:
         raise ValueError("persistent worker jobs must be a non-empty list")
+    for job in jobs:
+        one_shot.validate_pixal_job(job)
     claim_dir = None
     if args.claim_dir is not None:
         if args.claim_dir.is_symlink() or not args.claim_dir.is_dir():
@@ -181,6 +184,7 @@ def main(argv=None):
             "legacy_tag": job["legacy_tag"],
             "candidate_tag": job["candidate_tag"],
             "seed": int(job["seed"]),
+            "attempt_ordinal": int(job["attempt_ordinal"]),
             "started_at": _utc_now(),
         }
         if claim_path is not None:
@@ -221,6 +225,7 @@ def main(argv=None):
                     "resolution": 1024,
                     "seed": int(job["seed"]),
                 },
+                "one_shot_execution": job["one_shot_execution"],
                 "timings": {
                     "persistent_worker_model_load_seconds": status[
                         "model_load_seconds"

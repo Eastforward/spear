@@ -297,3 +297,114 @@ def test_page_marks_pose_checks_optional_and_prefetches_neighbor_previews():
     assert "b.onclick=()=>mutateYaw('rotate'" in html
     assert "yaw_deg:next};yawBusy=true;updateYawUI();drawPreview();try" in html
     assert "历史失败动画，仅供定位" in html
+
+
+def test_two_stage_manual_gate_separates_torso_axis_and_head_tail_yaw(
+    tmp_path, monkeypatch
+):
+    entry = _entry()
+    entry["current_evidence_status"]["walking_direction"] = (
+        "new_canary_pending_manual_review"
+    )
+    manifest = {
+        "schema": server.MANIFEST_SCHEMA_V3,
+        "manifest_sha256": "d" * 64,
+        "asset_count": 1,
+        "formal_dataset_registration_authorized": False,
+        "entries": [entry],
+    }
+    monkeypatch.setattr(
+        server,
+        "_validate_manifest",
+        lambda _path: (manifest, {entry["asset_id"]: entry}),
+    )
+    client = server.create_app(
+        tmp_path / "manifest.json", tmp_path / "state"
+    ).test_client()
+
+    initial = client.get("/api/state").get_json()["dog_fixture"]
+    assert initial["schema"] == server.STATE_SCHEMA_V3
+    assert initial["axis_alignment_yaw_deg"] == 0
+    assert initial["cardinal_yaw_deg"] == 0
+
+    for value in (15, 5, 5):
+        response = client.post(
+            "/api/rotate/dog_fixture",
+            json={"mode": "axis_delta", "value": value},
+        )
+        assert response.status_code == 200
+    response = client.post(
+        "/api/rotate/dog_fixture",
+        json={"mode": "cardinal_set", "value": 180},
+    )
+    state = response.get_json()
+    assert state["axis_alignment_yaw_deg"] == 25
+    assert state["cardinal_yaw_deg"] == 180
+    assert state["yaw_deg"] == -155
+
+    decision_response = client.post(
+        "/api/decision/dog_fixture",
+        json={
+            "status": "source_pose_and_manual_orientation_approved",
+            "notes": "rigid torso axis aligned manually; head points +X",
+            "pose_checks": {},
+        },
+    )
+    assert decision_response.status_code == 200
+    decision = json.loads(
+        (tmp_path / "state/decisions/dog_fixture.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert decision["schema"] == server.DECISION_SCHEMA_V3
+    assert decision[
+        "manual_axis_alignment_yaw_about_gltf_positive_y_deg"
+    ] == 25
+    assert decision[
+        "manual_cardinal_head_tail_yaw_about_gltf_positive_y_deg"
+    ] == 180
+    assert decision["manual_total_yaw_about_gltf_positive_y_deg"] == -155
+    assert decision["automatic_orientation_inference_used"] is False
+    assert decision["axis_alignment_authority"] == (
+        "human_visual_torso_spine_axis"
+    )
+    assert decision["decision_sha256"] == server._hash_without(
+        decision, "decision_sha256"
+    )
+
+
+def test_two_stage_manual_axis_alignment_has_a_bounded_human_only_range(
+    tmp_path, monkeypatch
+):
+    entry = _entry()
+    manifest = {
+        "schema": server.MANIFEST_SCHEMA_V3,
+        "manifest_sha256": "e" * 64,
+        "asset_count": 1,
+        "formal_dataset_registration_authorized": False,
+        "entries": [entry],
+    }
+    monkeypatch.setattr(
+        server,
+        "_validate_manifest",
+        lambda _path: (manifest, {entry["asset_id"]: entry}),
+    )
+    client = server.create_app(
+        tmp_path / "manifest.json", tmp_path / "state"
+    ).test_client()
+    for _ in range(3):
+        assert client.post(
+            "/api/rotate/dog_fixture",
+            json={"mode": "axis_delta", "value": 15},
+        ).status_code == 200
+    beyond = client.post(
+        "/api/rotate/dog_fixture",
+        json={"mode": "axis_delta", "value": 1},
+    )
+    assert beyond.status_code == 409
+    assert "±45" in beyond.get_json()["error"]
+
+    html = client.get("/").get_data(as_text=True)
+    assert "第一步：只看右侧 TOP-DOWN" in html
+    assert "第二步：选择头尾/正方向" in html
+    assert "代码不估计角度" in html

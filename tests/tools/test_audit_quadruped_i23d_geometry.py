@@ -76,6 +76,7 @@ def test_decision_does_not_reject_rigid_yaw_but_rejects_nonmanifold_ratio():
             "yaw_degrees": 17.0,
             "global_axis_yaw_degrees": 17.0,
             "centerline_bend_p95_degrees": 0.2,
+            "centerline_lateral_peak_ratio": 0.001,
         },
     )
 
@@ -93,10 +94,29 @@ def test_decision_rejects_real_centerline_bend():
             "yaw_degrees": 0.0,
             "global_axis_yaw_degrees": 0.0,
             "centerline_bend_p95_degrees": 17.0,
+            "centerline_lateral_peak_ratio": 0.08,
         },
     )
 
     assert result["status"] == "reject_before_lod_and_binding"
     assert result["rejection_reasons"] == [
-        "torso_centerline_bend_exceeds_10_degrees"
+        "torso_centerline_bend_and_lateral_displacement_exceed_limits"
+    ]
+
+
+def test_decision_sends_high_tangent_bend_with_small_displacement_to_human():
+    result = audit.decision(
+        {"nonmanifold_edge_ratio_per_triangle": 0.0},
+        {
+            "yaw_degrees": 25.0,
+            "global_axis_yaw_degrees": 25.0,
+            "centerline_bend_p95_degrees": 18.0,
+            "centerline_lateral_peak_ratio": 0.04,
+        },
+    )
+
+    assert result["status"] == "manual_source_geometry_review_required"
+    assert result["rejection_reasons"] == []
+    assert result["manual_review_reasons"] == [
+        "torso_centerline_shape_requires_manual_top_view_review"
     ]

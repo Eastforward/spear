@@ -20,6 +20,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import controlled_animal_isnet_worker as isnet
+from tools import controlled_animal_one_shot_policy as one_shot
 from tools import controlled_source_asset_schema as contracts
 from tools import execute_controlled_rocketbox_material_jobs as material_execution
 from tools import review_controlled_animal_flux2_candidates as review
@@ -55,6 +56,67 @@ def _relative_record(path: Path, root: Path) -> dict[str, Any]:
     }
 
 
+def _flux_one_shot_evidence(
+    flux_batch: Mapping[str, Any], candidates: Mapping[str, Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Authenticate native policy evidence or explicitly label a legacy batch.
+
+    Existing approved artifacts predate the machine policy and must not be
+    rewritten.  They may continue only when their sealed manifests prove one
+    recorded invocation and one output per frozen request; the evidence remains
+    labelled legacy and cannot qualify a profile by itself.
+    """
+
+    record = flux_batch.get("one_shot_execution")
+    if record is not None:
+        try:
+            one_shot.validate_stage_record(record, "flux2")
+            for candidate in candidates.values():
+                one_shot.validate_stage_record(
+                    candidate["manifest"].get("one_shot_execution"), "flux2"
+                )
+        except one_shot.PolicyError as error:
+            raise contracts.ContractError(str(error)) from error
+        evidence = {
+            "mode": "native_policy_enforced_before_inference",
+            "policy": one_shot.policy_record(),
+            "flux_batch_sha256": flux_batch["batch_sha256"],
+            "profile_qualification_authorized": True,
+        }
+        one_shot.validate_upstream_flux_evidence(evidence)
+        return evidence
+
+    checks = flux_batch.get("automatic_checks", {})
+    manifests = [candidate["manifest"] for candidate in candidates.values()]
+    if (
+        checks.get("one_flux_invocation_per_candidate") is not True
+        or flux_batch.get("candidate_count") != len(manifests)
+        or len(
+            {
+                candidate["index"].get("execution_job_id")
+                for candidate in candidates.values()
+            }
+        )
+        != len(manifests)
+        or any(
+            manifest.get("generation", {}).get("flux_invocations") != 1
+            for manifest in manifests
+        )
+    ):
+        raise contracts.ContractError("legacy FLUX batch lacks one-shot evidence")
+    evidence = {
+        "mode": "legacy_sealed_manifest_attestation",
+        "policy": one_shot.policy_record(),
+        "flux_batch_sha256": flux_batch["batch_sha256"],
+        "recorded_flux_invocations_per_candidate": 1,
+        "recorded_candidates_per_request": 1,
+        "cross_batch_seed_lottery_exclusion_proven": False,
+        "profile_qualification_authorized": False,
+    }
+    one_shot.validate_upstream_flux_evidence(evidence)
+    return evidence
+
+
 def load_review_batch(path: Path):
     path = Path(path).resolve()
     if path.is_symlink() or not path.is_file():
@@ -79,6 +141,7 @@ def prepare_pixal_inputs(
     review_batch = load_review_batch(review_batch_path)
     flux_batch_path = Path(review_batch["flux2_batch"]["path"])
     flux_root, flux_batch, candidates = review.load_flux_batch(flux_batch_path)
+    upstream_one_shot = _flux_one_shot_evidence(flux_batch, candidates)
     if flux_batch["batch_sha256"] != review_batch["flux2_batch"]["batch_sha256"]:
         raise contracts.ContractError("review and FLUX.2 batch hashes differ")
     approved_reviews = {}
@@ -211,6 +274,8 @@ def prepare_pixal_inputs(
                     "candidate_tag": f"{instance_id}_pixal_v1",
                     "rig_mode": "animated_transfer",
                     "seed": int(generation["generation_seed"]),
+                    "attempt_ordinal": 0,
+                    "one_shot_execution": one_shot.stage_record("pixal3d"),
                     "reference": {
                         "source": {
                             "path": str(candidates[instance_id]["files"]["candidate"]),
@@ -232,6 +297,7 @@ def prepare_pixal_inputs(
                         "request_sha256": controlled_job["consumer_requests"][0][
                             "request_sha256"
                         ],
+                        "generation_seed": int(generation["generation_seed"]),
                         "profile_schema_id": controlled_job["profile_schema_id"],
                         "sampled_attributes": controlled_job["sampled_attributes"],
                         "target_physical_profile": controlled_job[
@@ -269,6 +335,8 @@ def prepare_pixal_inputs(
             "status": "ready_for_pixal3d",
             "state_classification": "research_candidate",
             "formal_dataset_registration_authorized": False,
+            "one_shot_execution": one_shot.stage_record("pixal3d"),
+            "upstream_flux_one_shot_evidence": upstream_one_shot,
             "review_batch": {
                 "path": str(Path(review_batch_path).resolve()),
                 "sha256": _sha256_file(Path(review_batch_path)),
@@ -292,6 +360,9 @@ def prepare_pixal_inputs(
                 "all_isnet_segmentations_passed": True,
                 "all_pixal_inputs_rgba_1024": True,
                 "pixal_and_dino_revisions_pinned": True,
+                "one_pixal_invocation_per_frozen_request": True,
+                "seed_retry_forbidden": True,
+                "candidate_ranking_or_best_of_n_forbidden": True,
                 "overall": "passed",
             },
         }

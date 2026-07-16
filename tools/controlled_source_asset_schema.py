@@ -358,11 +358,110 @@ def _validate_generation_contract(
             "model_revisions",
         }
         if route == "flux2_pixal3d_animal_v1":
-            _require_exact_fields(
-                contract, frozenset(common_fields), "animal generation_contract"
-            )
+            actual_fields = set(contract)
+            allowed_fields = common_fields | {
+                "source_view_contract",
+                "base_acquisition_policy",
+            }
+            if not common_fields.issubset(actual_fields) or not actual_fields.issubset(
+                allowed_fields
+            ):
+                missing = common_fields - actual_fields
+                extra = actual_fields - allowed_fields
+                raise ContractError(
+                    "animal generation_contract fields are invalid: "
+                    f"missing={sorted(missing)} extra={sorted(extra)}"
+                )
             if base_template.get("kind") != "reference_image":
                 raise ContractError("Pixal animal base_template.kind must be reference_image")
+            if "source_view_contract" in contract:
+                source_view = _require_exact_fields(
+                    contract["source_view_contract"],
+                    frozenset(
+                        {
+                            "pose_guide",
+                            "nominal_camera_azimuth_deg",
+                            "camera_roll_deg",
+                            "camera_pitch_policy",
+                            "projected_torso_spine_axis",
+                            "purpose",
+                            "expected_raw_i23d_horizontal_yaw",
+                            "downstream_orientation_gate",
+                            "automatic_yaw_inference_allowed",
+                        }
+                    ),
+                    "animal source_view_contract",
+                )
+                _require_id(source_view["pose_guide"], "source_view_contract.pose_guide")
+                azimuth = source_view["nominal_camera_azimuth_deg"]
+                if (
+                    isinstance(azimuth, bool)
+                    or not isinstance(azimuth, (int, float))
+                    or not 0 <= float(azimuth) <= 45
+                ):
+                    raise ContractError(
+                        "source_view_contract nominal camera azimuth must be 0..45"
+                    )
+                if source_view["camera_roll_deg"] != 0:
+                    raise ContractError("source_view_contract camera roll must be zero")
+                _require_id(
+                    source_view["camera_pitch_policy"],
+                    "source_view_contract.camera_pitch_policy",
+                )
+                if source_view["projected_torso_spine_axis"] != (
+                    "straight_and_horizontal"
+                ):
+                    raise ContractError(
+                        "source_view_contract must keep the projected torso axis horizontal"
+                    )
+                _require_text(source_view["purpose"], "source_view_contract.purpose")
+                if source_view["expected_raw_i23d_horizontal_yaw"] not in {
+                    "cardinal_from_exact_side_input",
+                    "non_cardinal_due_to_three_quarter_input",
+                }:
+                    raise ContractError(
+                        "source_view_contract expected raw I2-3D yaw is invalid"
+                    )
+                if source_view["downstream_orientation_gate"] != (
+                    "manual_torso_axis_alignment_then_cardinal_head_tail_v3"
+                ):
+                    raise ContractError(
+                        "source_view_contract downstream orientation gate is invalid"
+                    )
+                if source_view["automatic_yaw_inference_allowed"] is not False:
+                    raise ContractError(
+                        "source_view_contract cannot authorize automatic yaw inference"
+                    )
+            if "base_acquisition_policy" in contract:
+                policy = _require_exact_fields(
+                    contract["base_acquisition_policy"],
+                    frozenset(
+                        {
+                            "policy_id",
+                            "acquisition_unit",
+                            "sampled_domains_must_be_singleton",
+                            "downstream_instance_route",
+                            "profile_validation",
+                        }
+                    ),
+                    "animal base_acquisition_policy",
+                )
+                expected_policy = {
+                    "policy_id": "animal_one_shot_no_seed_lottery_v1",
+                    "acquisition_unit": "one_frozen_base_asset",
+                    "sampled_domains_must_be_singleton": True,
+                    "downstream_instance_route": "stable_animal_template_v1",
+                    "profile_validation": (
+                        "all_predeclared_requests_count_zero_hidden_failures"
+                    ),
+                }
+                if dict(policy) != expected_policy:
+                    raise ContractError("animal base acquisition policy changed")
+                if any(len(values) != 1 for values in domains.values()):
+                    raise ContractError(
+                        "one-shot FLUX/Pixal base acquisition requires singleton "
+                        "attribute domains; instance variants must use the stable route"
+                    )
         elif route == "stable_animal_template_v1":
             _require_exact_fields(
                 contract,
@@ -1171,7 +1270,7 @@ def _compile_animal_generation_plan(
                 "model_revisions": _deepcopy(contract["model_revisions"]),
             },
         }
-    return {
+    plan = {
         "schema": "flux2_pixal3d_generation_plan_v1",
         "route": contract["route"],
         "prompt_template_id": contract["prompt_template_id"],
@@ -1182,6 +1281,11 @@ def _compile_animal_generation_plan(
         "flux_invocations": 1,
         "model_revisions": _deepcopy(contract["model_revisions"]),
     }
+    if "base_acquisition_policy" in contract:
+        plan["base_acquisition_policy"] = _deepcopy(
+            contract["base_acquisition_policy"]
+        )
+    return plan
 
 
 def _srgb_hex(values: Sequence[int]) -> str:

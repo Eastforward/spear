@@ -333,6 +333,59 @@ def test_profile_validation_is_strict_and_hash_stable():
     assert schema.profile_sha256(profile) == schema.profile_sha256(copy.deepcopy(profile))
 
 
+def test_animal_profile_can_record_three_quarter_view_and_manual_yaw_gate():
+    profile = animal_profile()
+    profile["generation_contract"]["source_view_contract"] = {
+        "pose_guide": "quaternius_dog_three_quarter_30deg_v1",
+        "nominal_camera_azimuth_deg": 30,
+        "camera_roll_deg": 0,
+        "camera_pitch_policy": "level_neutral_product_view",
+        "projected_torso_spine_axis": "straight_and_horizontal",
+        "purpose": "keep all four paws visible and separated",
+        "expected_raw_i23d_horizontal_yaw": (
+            "non_cardinal_due_to_three_quarter_input"
+        ),
+        "downstream_orientation_gate": (
+            "manual_torso_axis_alignment_then_cardinal_head_tail_v3"
+        ),
+        "automatic_yaw_inference_allowed": False,
+    }
+
+    validated = schema.validate_attribute_profile(profile)
+
+    assert validated["generation_contract"]["source_view_contract"] == (
+        profile["generation_contract"]["source_view_contract"]
+    )
+
+
+def test_animal_source_view_contract_rejects_roll_or_automatic_yaw():
+    profile = animal_profile()
+    profile["generation_contract"]["source_view_contract"] = {
+        "pose_guide": "quaternius_dog_three_quarter_30deg_v1",
+        "nominal_camera_azimuth_deg": 30,
+        "camera_roll_deg": 5,
+        "camera_pitch_policy": "level_neutral_product_view",
+        "projected_torso_spine_axis": "straight_and_horizontal",
+        "purpose": "keep all four paws visible and separated",
+        "expected_raw_i23d_horizontal_yaw": (
+            "non_cardinal_due_to_three_quarter_input"
+        ),
+        "downstream_orientation_gate": (
+            "manual_torso_axis_alignment_then_cardinal_head_tail_v3"
+        ),
+        "automatic_yaw_inference_allowed": False,
+    }
+    with pytest.raises(schema.ContractError, match="camera roll"):
+        schema.validate_attribute_profile(profile)
+
+    profile["generation_contract"]["source_view_contract"]["camera_roll_deg"] = 0
+    profile["generation_contract"]["source_view_contract"][
+        "automatic_yaw_inference_allowed"
+    ] = True
+    with pytest.raises(schema.ContractError, match="automatic yaw"):
+        schema.validate_attribute_profile(profile)
+
+
 def test_checked_in_profile_catalog_is_valid_breed_specific_and_balanced():
     paths = sorted(PROFILE_ROOT.rglob("*.json"))
     profiles = [

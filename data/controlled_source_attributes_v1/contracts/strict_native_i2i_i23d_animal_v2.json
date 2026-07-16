@@ -1,0 +1,50 @@
+{
+  "schema": "avengine_strict_native_i2i_i23d_animal_contract_v2",
+  "contract_id": "strict_native_i2i_i23d_animal_v2",
+  "supersedes_execution_policy_of": "strict_native_i2i_i23d_animal_v1",
+  "state_classification": "research_candidate",
+  "one_shot_policy": {
+    "path": "data/controlled_source_attributes_v1/contracts/animal_one_shot_no_seed_lottery_v1.json",
+    "sha256": "66f2cba8c213c39cf57483fc7768d4e1c737ad03059dd9dedfee55fdf26eafcc"
+  },
+  "two_phase_route": {
+    "base_asset_acquisition": {
+      "attribute_domains": "singleton_only",
+      "request_frozen_before_inference": true,
+      "flux2_invocations": 1,
+      "flux2_images": 1,
+      "pixal3d_invocations": 1,
+      "seed_retry_allowed": false,
+      "candidate_ranking_allowed": false,
+      "failure": "preserve_evidence_reject_and_revise_prompt_or_pose_profile"
+    },
+    "production_instances": {
+      "route": "stable_animal_template_v1",
+      "base_geometry_skin_skeleton_actions": "frozen_and_hash_authenticated",
+      "size": "deterministic_absolute_actor_or_root_scale",
+      "coat": "deterministic_semantic_material_or_texture_transform",
+      "body_build_and_life_stage": "bounded_prevalidated_semantic_deformation",
+      "rerun_flux2_or_pixal3d_per_instance": false
+    }
+  },
+  "source_pose_contract": {
+    "pose_guide_required": true,
+    "camera_roll_deg": 0,
+    "ground_and_horizon": "level",
+    "projected_torso_axis": "straight_and_horizontal",
+    "quadruped_limbs": "four_complete_separated_limbs_and_paws",
+    "tail": "single_and_separated_from_hind_limbs_when_present",
+    "view": "profile_declared_exact_side_or_fixed_three_quarter",
+    "head_direction_must_not_define_torso_axis": true,
+    "automatic_fine_yaw_inference_allowed": false,
+    "orientation_gate": "manual_torso_axis_alignment_then_cardinal_head_tail_v3_for_each_new_base_only"
+  },
+  "profile_qualification": {
+    "validation_matrix_frozen_before_first_inference": true,
+    "all_requests_count": true,
+    "required_pass_fraction": 1.0,
+    "failed_requests_may_be_replaced_by_new_seeds": false,
+    "winner_only_reporting_allowed": false
+  },
+  "formal_dataset_registration_authorized": false
+}

@@ -31,3 +31,13 @@ def test_canary_marks_preview_mesh_as_preview_only():
     assert '"direction_preview_only": True' in text
     assert '"runtime_topology": "separate_strict_gate_in_progress"' in text
     assert '"target_animation_generated_for_this_decision": False' in text
+
+
+def test_canary_can_opt_into_two_stage_manual_yaw_without_auto_inference():
+    text = source()
+    assert '"controlled_animal_pose_direction_manual_review_manifest_v3"' in text
+    assert '"--manual-residual-yaw"' in text
+    assert '"step_degrees": [1, 5, 15]' in text
+    assert '"range_degrees": [-45, 45]' in text
+    assert '"visual_authority": "torso_and_spine_longitudinal_axis"' in text
+    assert '"must_not_follow": "turned_head_or_tail"' in text

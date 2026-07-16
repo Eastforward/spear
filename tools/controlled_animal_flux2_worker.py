@@ -16,6 +16,11 @@ from typing import Any, Mapping, Sequence
 
 from PIL import Image
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tools import controlled_animal_one_shot_policy as one_shot
+
 
 MODEL_ROOT = Path("/data/models/hub/models--black-forest-labs--FLUX.2-klein-4B")
 MODEL_REVISION = "e7b7dc27f91deacad38e78976d1f2b499d76a294"
@@ -112,6 +117,10 @@ def validate_partition(value: Any) -> dict[str, Any]:
     )
     if value.get("partition_sha256") != expected_hash:
         raise ValueError("partition hash mismatch")
+    try:
+        one_shot.validate_stage_record(value.get("one_shot_execution"), "flux2")
+    except one_shot.PolicyError as error:
+        raise ValueError(str(error)) from error
     model = value.get("model")
     if model != {
         "name": "black-forest-labs/FLUX.2-klein-4B",
@@ -149,6 +158,10 @@ def validate_partition(value: Any) -> dict[str, Any]:
             or len(job.get("consumer_requests", [])) != 1
         ):
             raise ValueError("partition animal job contract changed")
+        try:
+            one_shot.validate_flux_job(job)
+        except one_shot.PolicyError as error:
+            raise ValueError(str(error)) from error
     return value
 
 
@@ -242,8 +255,10 @@ def run_worker(partition: Mapping[str, Any], gpu: int, output_root: Path, status
                 generator=generator,
                 max_sequence_length=parameters["max_sequence_length"],
             )
-            if not getattr(result, "images", None):
-                raise RuntimeError("FLUX.2 returned no animal candidate")
+            if not getattr(result, "images", None) or len(result.images) != 1:
+                raise RuntimeError(
+                    "FLUX.2 must return exactly one image under the no-lottery policy"
+                )
             candidate = result.images[0].convert("RGB")
             if candidate.size != (1024, 1024):
                 raise RuntimeError("FLUX.2 animal output canvas changed")
@@ -277,6 +292,7 @@ def run_worker(partition: Mapping[str, Any], gpu: int, output_root: Path, status
                     "model": partition["model"],
                     "parameters": parameters,
                 },
+                "one_shot_execution": one_shot.stage_record("flux2"),
                 "downstream_gate": {
                     "status": "blocked_pending_2d_review",
                     "required_review": "approved_for_exact_candidate_sha256",
@@ -292,6 +308,9 @@ def run_worker(partition: Mapping[str, Any], gpu: int, output_root: Path, status
                 "automatic_checks": {
                     "reference_hash_before_after_stable": True,
                     "one_flux_invocation": True,
+                    "one_flux_image": True,
+                    "seed_retry_forbidden": True,
+                    "candidate_ranking_forbidden": True,
                     "canvas_1024_rgb": True,
                     "visual_attributes_verified": False,
                     "overall": "pending_2d_review",

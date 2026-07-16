@@ -9,6 +9,7 @@ import pytest
 
 from tools import controlled_source_asset_schema as contracts
 from tools import controlled_animal_flux2_worker as animal_worker
+from tools import controlled_animal_one_shot_policy as one_shot
 from tools import execute_controlled_rocketbox_material_jobs as material_executor
 from tools import prepare_controlled_source_asset_execution as execution
 from tools import run_controlled_animal_flux2_jobs as animal_flux
@@ -193,9 +194,15 @@ def test_animal_worker_partition_pins_model_parameters_and_one_invocation():
     jobs, _pairs = animal_flux.select_qa_canary_jobs(
         preflight, profile_ids={"dog_golden_retriever_v1"}
     )
+    jobs = json.loads(json.dumps(jobs))
+    for job in jobs:
+        job["generation_plan"]["base_acquisition_policy"] = (
+            one_shot.base_acquisition_record()
+        )
     partition = {
         "schema": animal_worker.PARTITION_SCHEMA,
         "execution_preflight_sha256": preflight["preflight_sha256"],
+        "one_shot_execution": one_shot.stage_record("flux2"),
         "model": animal_flux.MODEL,
         "parameters": animal_flux.PARAMETERS,
         "jobs": jobs,

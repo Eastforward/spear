@@ -20,6 +20,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import audit_mesh_efficiency
+from tools import controlled_animal_one_shot_policy as one_shot
 from tools import controlled_source_asset_schema as contracts
 from tools import prepare_controlled_animal_pixal_inputs as pixal_inputs
 from tools import rocketbox_native_material_canary as immutable
@@ -67,6 +68,13 @@ def load_pixal_inputs(path: Path) -> tuple[Path, dict[str, Any]]:
         or payload.get("automatic_checks", {}).get("overall") != "passed"
     ):
         raise contracts.ContractError("Pixal input manifest contract/hash is invalid")
+    try:
+        one_shot.validate_stage_record(payload.get("one_shot_execution"), "pixal3d")
+        one_shot.validate_upstream_flux_evidence(
+            payload.get("upstream_flux_one_shot_evidence")
+        )
+    except one_shot.PolicyError as error:
+        raise contracts.ContractError(str(error)) from error
     jobs = payload.get("jobs")
     if not isinstance(jobs, list) or payload.get("job_count") != len(jobs) or not jobs:
         raise contracts.ContractError("Pixal job count is invalid")
@@ -76,6 +84,10 @@ def load_pixal_inputs(path: Path) -> tuple[Path, dict[str, Any]]:
     root = path.parent
     expected_output_root = Path(payload["pixal_output_root"]).resolve()
     for job in jobs:
+        try:
+            one_shot.validate_pixal_job(job)
+        except one_shot.PolicyError as error:
+            raise contracts.ContractError(str(error)) from error
         instance_id = job["controlled_request"]["instance_id"]
         if job.get("legacy_tag") != instance_id:
             raise contracts.ContractError("Pixal legacy tag must equal controlled instance ID")
@@ -149,6 +161,8 @@ def build_worker_job(
         "legacy_tag": job["legacy_tag"],
         "candidate_tag": job["candidate_tag"],
         "seed": job["seed"],
+        "attempt_ordinal": job["attempt_ordinal"],
+        "one_shot_execution": job["one_shot_execution"],
         "reference": job["reference"],
         "output": str(physical_output),
         "manifest": str(physical_manifest),
@@ -323,6 +337,8 @@ def _validate_outputs(
                 "seed": int(job["seed"]),
             }
             or model_manifest.get("controlled_request") != controlled
+            or model_manifest.get("one_shot_execution")
+            != one_shot.stage_record("pixal3d")
         ):
             raise contracts.ContractError(f"Pixal attempt manifest mismatch: {instance_id}")
         stats = audit_mesh_efficiency.mesh_stats(physical_output)
@@ -347,6 +363,8 @@ def _validate_outputs(
                 "target_physical_profile": controlled["target_physical_profile"],
                 "gpu": gpu,
                 "seed": int(job["seed"]),
+                "attempt_ordinal": int(job["attempt_ordinal"]),
+                "one_shot_execution": job["one_shot_execution"],
                 "pixal_input": job["reference"]["pixal_input"],
                 "output": _relative_artifact(physical_output, staging),
                 "attempt_manifest": _relative_artifact(physical_manifest, staging),
@@ -417,6 +435,10 @@ def run_batch(
             "status": "passed_generation_and_glb_readback",
             "state_classification": "research_candidate",
             "formal_dataset_registration_authorized": False,
+            "one_shot_execution": one_shot.stage_record("pixal3d"),
+            "upstream_flux_one_shot_evidence": payload[
+                "upstream_flux_one_shot_evidence"
+            ],
             "started_at": started_at,
             "finished_at": _utc_now(),
             "pixal_inputs": {
@@ -449,6 +471,9 @@ def run_batch(
                 "all_model_revisions_pinned": True,
                 "all_jobs_have_unique_request": True,
                 "all_jobs_claimed_once_by_dynamic_queue": True,
+                "one_pixal_invocation_per_frozen_request": True,
+                "seed_retry_forbidden": True,
+                "candidate_ranking_or_best_of_n_forbidden": True,
                 "all_outputs_glb2_readable": True,
                 "all_outputs_have_pbr_material_and_texture": True,
                 "no_generated_asset_has_been_registered": True,
@@ -463,7 +488,22 @@ def run_batch(
         os.rename(staging, output_root)
         return output_root / "pixal_batch_manifest.json"
     except Exception:
-        immutable._remove_staging_tree(staging)
+        # A model failure is evidence, not disposable scratch state.  Preserve
+        # the exact worker order, claim, status (when present), and log under a
+        # sibling immutable directory so the public output path remains
+        # fail-closed and may be retried without overwriting anything.
+        failure_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        failure_root = output_root.parent / (
+            f"{output_root.name}.failed_{failure_stamp}_{os.getpid()}"
+        )
+        immutable._seal_readonly_tree(staging)
+        os.rename(staging, failure_root)
+        print(
+            "CONTROLLED_ANIMAL_PIXAL_FAILURE_EVIDENCE "
+            f"output={failure_root}",
+            file=sys.stderr,
+            flush=True,
+        )
         raise
 
 

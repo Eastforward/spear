@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a one-asset pre-animation cardinal-direction review manifest."""
+"""Build a one-asset pre-animation manual-direction review manifest."""
 
 from __future__ import annotations
 
@@ -16,7 +16,11 @@ import tempfile
 from typing import Any, Sequence
 
 
-SCHEMA = "controlled_animal_pose_direction_manual_review_manifest_v2"
+CARDINAL_SCHEMA = "controlled_animal_pose_direction_manual_review_manifest_v2"
+TWO_STAGE_SCHEMA = "controlled_animal_pose_direction_manual_review_manifest_v3"
+# Backward-compatible public name used by the original cardinal-only tests and
+# callers.  New generated meshes opt into v3 explicitly.
+SCHEMA = CARDINAL_SCHEMA
 AVENGINE_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -82,6 +86,63 @@ def build(args: argparse.Namespace) -> Path:
     if species not in {"cat", "dog", "horse"}:
         raise CanaryError(f"unsupported review species: {species}")
     breed = safe_identity(args.breed, "breed")
+    two_stage = bool(args.manual_residual_yaw)
+    if two_stage:
+        orientation_contract = {
+            "preview_coordinate_frame": "gltf_y_up",
+            "initial_preview_pretransform": "identity",
+            "automatic_orientation_inference": "disabled",
+            "hidden_reflection_or_mirror": "forbidden",
+            "manual_rotation_only": True,
+            "manual_axis_alignment_yaw": {
+                "allowed": True,
+                "step_degrees": [1, 5, 15],
+                "range_degrees": [-45, 45],
+                "visual_authority": "torso_and_spine_longitudinal_axis",
+                "must_not_follow": "turned_head_or_tail",
+            },
+            "manual_cardinal_head_tail_yaw_degrees": [-90, 0, 90, 180],
+            "target_torso_spine_longitudinal_axis": "positive_x",
+            "target_up_axis": "positive_y",
+            "review_alignment_target": "torso_and_spine_not_visible_nose",
+            "fine_yaw_compensation": (
+                "manual_torso_axis_alignment_only_not_automatic_or_head_compensation"
+            ),
+            "source_pose_rejection_conditions": [
+                "head_not_aligned_with_torso",
+                "torso_or_spine_internally_twisted",
+                "front_and_hind_leg_planes_inconsistent",
+                "feet_not_on_one_ground_plane",
+                "tail_intersects_hind_legs",
+            ],
+            "binding_pretransform": "not_authorized_by_this_visual_gate",
+        }
+        state_classification = "pre_animation_manual_two_stage_yaw_review_required"
+        binding_orientation = "manual_two_stage_yaw_required"
+    else:
+        orientation_contract = {
+            "preview_coordinate_frame": "gltf_y_up",
+            "initial_preview_pretransform": "identity",
+            "automatic_orientation_inference": "disabled",
+            "hidden_reflection_or_mirror": "forbidden",
+            "manual_rotation_only": True,
+            "allowed_yaw_degrees": [-90, 0, 90, 180],
+            "target_torso_spine_longitudinal_axis": "positive_x",
+            "target_up_axis": "positive_y",
+            "review_alignment_target": "torso_and_spine_not_visible_nose",
+            "fine_yaw_compensation": "forbidden_reject_source_pose_instead",
+            "source_pose_rejection_conditions": [
+                "head_not_aligned_with_torso",
+                "torso_or_spine_twisted_or_diagonal",
+                "front_and_hind_leg_planes_inconsistent",
+                "feet_not_on_one_ground_plane",
+                "tail_intersects_hind_legs",
+            ],
+            "binding_pretransform": "not_authorized_by_this_visual_gate",
+        }
+        state_classification = "pre_animation_manual_cardinal_review_required"
+        binding_orientation = "manual_cardinal_review_required"
+
     entry = {
         "asset_id": asset_id,
         "species": species,
@@ -108,38 +169,19 @@ def build(args: argparse.Namespace) -> Path:
             "old_asset_mesh_used": False,
             "target_animation_generated_for_this_decision": False,
         },
-        "orientation_contract": {
-            "preview_coordinate_frame": "gltf_y_up",
-            "initial_preview_pretransform": "identity",
-            "automatic_orientation_inference": "disabled",
-            "hidden_reflection_or_mirror": "forbidden",
-            "manual_rotation_only": True,
-            "allowed_yaw_degrees": [-90, 0, 90, 180],
-            "target_torso_spine_longitudinal_axis": "positive_x",
-            "target_up_axis": "positive_y",
-            "review_alignment_target": "torso_and_spine_not_visible_nose",
-            "fine_yaw_compensation": "forbidden_reject_source_pose_instead",
-            "source_pose_rejection_conditions": [
-                "head_not_aligned_with_torso",
-                "torso_or_spine_twisted_or_diagonal",
-                "front_and_hind_leg_planes_inconsistent",
-                "feet_not_on_one_ground_plane",
-                "tail_intersects_hind_legs",
-            ],
-            "binding_pretransform": "not_authorized_by_this_visual_gate",
-        },
+        "orientation_contract": orientation_contract,
         "current_evidence_status": {
             "walking_direction": "new_canary_pending_manual_review",
             "source_pose": "manual_review_required",
-            "binding_orientation": "manual_cardinal_review_required",
+            "binding_orientation": binding_orientation,
             "runtime_topology": "separate_strict_gate_in_progress",
             "formal_dataset_asset": False,
         },
     }
     manifest: dict[str, Any] = {
-        "schema": SCHEMA,
+        "schema": TWO_STAGE_SCHEMA if two_stage else CARDINAL_SCHEMA,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "state_classification": "pre_animation_manual_cardinal_review_required",
+        "state_classification": state_classification,
         "formal_dataset_registration_authorized": False,
         "asset_count": 1,
         "species_counts": {species: 1},
@@ -195,6 +237,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reference-generator", default="FLUX.2 Klein")
     parser.add_argument("--i23d-backend", required=True)
     parser.add_argument("--preview-geometry-status", required=True)
+    parser.add_argument(
+        "--manual-residual-yaw",
+        action="store_true",
+        help=(
+            "Use the v3 two-stage manual gate: first align the rigid torso axis "
+            "with small reviewer-controlled yaw steps, then choose a cardinal "
+            "head/tail orientation. No automatic orientation is inferred."
+        ),
+    )
     parser.add_argument("--output-root", type=Path, required=True)
     return parser
 
