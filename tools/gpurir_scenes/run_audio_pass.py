@@ -13,8 +13,9 @@ import numpy as np
 import soundfile as sf
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from audio_event_schedule import prepare_animal_call  # noqa: E402
 from gpurir_scenes.audio_registry import pick_audio  # noqa: E402
-from gpurir_scenes.scene_spec import compose_scene, N_FRAMES  # noqa: E402
+from gpurir_scenes.scene_spec import compose_scene, FPS, N_FRAMES  # noqa: E402
 
 import gpuRIR  # noqa: E402
 
@@ -37,7 +38,7 @@ def tetra_mic_positions(center_m):
     return np.asarray(center_m, dtype=np.float64) + TETRA_UNIT_SPHERE * MIC_RADIUS_M
 
 
-def _load_source_wav(path, fs=FS, duration_s=5.0):
+def _load_source_wav(path, *, rng, fs=FS, duration_s=5.0):
     x, sr = sf.read(path, always_2d=False)
     if x.ndim > 1:
         x = x.mean(axis=1)
@@ -45,13 +46,12 @@ def _load_source_wav(path, fs=FS, duration_s=5.0):
         import scipy.signal
         n = int(len(x) * fs / sr)
         x = scipy.signal.resample(x, n)
-    n_out = int(duration_s * fs)
-    if len(x) >= n_out:
-        return x[:n_out].astype(np.float32)
-    # Pad tail with silence (do NOT loop; user directive).
-    out = np.zeros(n_out, dtype=np.float32)
-    out[:len(x)] = x
-    return out
+    return prepare_animal_call(
+        x.astype(np.float32),
+        sample_rate=fs,
+        duration_s=duration_s,
+        rng=rng,
+    )
 
 
 def _simulate_traj_rirs(pos_traj_m, mic_pos_m, room_size_m, t60_s, tmax_s=0.5):
@@ -86,13 +86,19 @@ def _convolve_static(source_wav, rir):
 
 def run_audio_pass(spec, out_wav_path, rng):
     os.makedirs(os.path.dirname(out_wav_path) or ".", exist_ok=True)
-    n_samples = int(5.0 * FS)
+    duration_s = float(N_FRAMES) / float(FPS)
+    n_samples = int(round(duration_s * FS))
     per_source_out = []
     per_source_meta = []
 
     for placement in spec.animals:
         audio_path, audio_src, cls = pick_audio(placement.tag, rng)
-        wav = _load_source_wav(audio_path, duration_s=5.0)
+        wav, schedule = _load_source_wav(
+            audio_path,
+            rng=rng,
+            duration_s=duration_s,
+        )
+        schedule.update({"tag": placement.tag, "audio_path": audio_path})
         if placement.is_animated:
             rirs = _simulate_traj_rirs(
                 placement.trajectory_m, spec.mic_pos_m, spec.room_size_m, spec.t60_s,
@@ -113,6 +119,7 @@ def run_audio_pass(spec, out_wav_path, rng):
         per_source_meta.append({
             "tag": placement.tag, "audio_src": audio_src, "class": cls,
             "audio_path": audio_path, "is_animated": placement.is_animated,
+            "event_schedule": schedule,
         })
 
     total = np.sum(np.stack(per_source_out, axis=0), axis=0)

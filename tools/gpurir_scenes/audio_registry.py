@@ -23,6 +23,20 @@ AUDIO_CORPUS = _os.environ.get(
 )
 _SPEAR_ROOT = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 DEFAULT_SAO_CACHE = _os.path.join(_SPEAR_ROOT, "tmp/gpurir_scenes_v1/sao_cache")
+GENERATED_SPECIES_V2 = {
+    "chipmunk": _os.path.join(
+        _SPEAR_ROOT,
+        "tmp/animal_audio_event_audit_v1/generated_species_v2/chipmunk_seed7311.wav",
+    ),
+    "yak": _os.path.join(
+        _SPEAR_ROOT,
+        "tmp/animal_audio_event_audit_v1/generated_species_v2/yak_seed7321.wav",
+    ),
+    "donkey_ass": _os.path.join(
+        _SPEAR_ROOT,
+        "tmp/animal_audio_event_audit_v1/generated_species_v2/donkey_ass_seed7331.wav",
+    ),
+}
 
 # Ordered filename-keyword candidates per tag. Case-insensitive substring
 # match on the wav filename. First keyword with hits wins.
@@ -44,9 +58,13 @@ TAG_TO_KEYWORDS = {
     "cat_persian":    ["meow", "purr"],
     "cat_tabby":      ["meow"],
     "cat_british_shorthair_v2": ["meow", "purr"],
+    "cat_siamese_v1": ["meow", "purr"],
     "chipmunk":       ["chipmunk"],                        # SAO fallback
     "dog_golden":     [("bark", "dog"), "woof"],
     "dog_beagle_v2":  [("bark", "dog"), "woof"],
+    "dog_pug_v1":     [("bark", "dog"), "woof"],
+    "dog_pug_pixal_canary_v1": [("bark", "dog"), "woof"],
+    "dog_pug_pixal_canary_v2_100k": [("bark", "dog"), "woof"],
     "goat":           [("bleat", "goat"), "goat bleating"],
     "sheep":          [("bleat", "sheep"), "sheep bleating"],
     "pig":            [("oink", "pig"), "pig snort", ("pig", "snort")],
@@ -126,6 +144,9 @@ def pick_audio(tag, rng, sao_cache_dir=DEFAULT_SAO_CACHE):
     path, kw = _lookup_local(tag, rng)
     if path is not None:
         return path, "local", kw
+    generated_v2 = GENERATED_SPECIES_V2.get(tag)
+    if generated_v2 and os.path.isfile(generated_v2):
+        return generated_v2, "sao_v2", TAG_TO_SAO_PROMPT.get(tag) or "generic"
     os.makedirs(sao_cache_dir, exist_ok=True)
     cached = os.path.join(sao_cache_dir, f"{tag}.wav")
     if not os.path.exists(cached):

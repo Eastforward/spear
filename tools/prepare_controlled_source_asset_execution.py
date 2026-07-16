@@ -172,6 +172,41 @@ def _animal_execution_job(
     }
 
 
+def _stable_animal_execution_job(
+    request: Mapping[str, Any],
+    profile: Mapping[str, Any],
+    artifact_roots: Mapping[str, Path],
+) -> dict[str, Any]:
+    plan = copy.deepcopy(request["generation_plan"])
+    template = copy.deepcopy(plan["base_template"])
+    template["artifact"] = _resolve_artifact(template["artifact"], artifact_roots)
+    plan["base_template"] = template
+    return {
+        "execution_job_id": f"stable_animal_{request['request_sha256'][:16]}",
+        "profile_schema_id": request["profile_schema_id"],
+        "profile_sha256": request["profile_sha256"],
+        "lineage_group_id": request["lineage_group_id"],
+        "state_classification": request["state_classification"],
+        "taxonomy": copy.deepcopy(request["taxonomy"]),
+        "fixed_attributes": copy.deepcopy(request["fixed_attributes"]),
+        "sampled_attributes": copy.deepcopy(request["sampled_attributes"]),
+        "consumer_requests": [_consumer(request)],
+        "stable_instance_plan": plan,
+        "target_physical_profile": copy.deepcopy(request["target_physical_profile"]),
+        "rig_profile": copy.deepcopy(request["rig_profile"]),
+        "acoustic_profile": copy.deepcopy(request["acoustic_profile"]),
+        "execution_gate": {
+            "before_flux_reference": "authenticated_preflight_passed",
+            "before_instance_publish": (
+                "topology_skin_walk_idle_and_attribute_realization_qa_passed"
+            ),
+            "before_source_asset_v2": (
+                "all_required_static_animation_ue_audio_qa_passed"
+            ),
+        },
+    }
+
+
 def _material_variant_core(
     request: Mapping[str, Any], profile: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -335,6 +370,7 @@ def build_execution_preflight(
 
     profiles_by_id = {profile["profile_schema_id"]: profile for profile in profiles}
     animal_requests: list[dict[str, Any]] = []
+    stable_animal_requests: list[dict[str, Any]] = []
     material_requests: list[dict[str, Any]] = []
     for request in request_batch["requests"]:
         profile = profiles_by_id[request["profile_schema_id"]]
@@ -342,6 +378,8 @@ def build_execution_preflight(
         route = validated["generation_plan"]["route"]
         if route == "flux2_pixal3d_animal_v1":
             animal_requests.append(validated)
+        elif route == "stable_animal_template_v1":
+            stable_animal_requests.append(validated)
         elif route == "rocketbox_material_v1":
             material_requests.append(validated)
         else:  # pragma: no cover - profile validation currently makes this unreachable.
@@ -352,15 +390,27 @@ def build_execution_preflight(
         for request in animal_requests
     ]
     animal_jobs.sort(key=lambda item: item["execution_job_id"])
+    stable_animal_jobs = [
+        _stable_animal_execution_job(
+            request,
+            profiles_by_id[request["profile_schema_id"]],
+            artifact_roots,
+        )
+        for request in stable_animal_requests
+    ]
+    stable_animal_jobs.sort(key=lambda item: item["execution_job_id"])
     material_jobs = _material_execution_jobs(
         material_requests, profiles_by_id, artifact_roots
     )
     summary = {
         "animal_job_count": len(animal_jobs),
+        "stable_animal_job_count": len(stable_animal_jobs),
         "deterministic_material_job_count": len(material_jobs),
         "material_request_count": len(material_requests),
         "material_requests_deduplicated": len(material_requests) - len(material_jobs),
-        "unique_execution_job_count": len(animal_jobs) + len(material_jobs),
+        "unique_execution_job_count": (
+            len(animal_jobs) + len(stable_animal_jobs) + len(material_jobs)
+        ),
     }
     preflight: dict[str, Any] = {
         "schema": PREFLIGHT_SCHEMA,
@@ -386,6 +436,7 @@ def build_execution_preflight(
         "profile_artifact_authentication": fresh_authentication,
         "routes": {
             "flux2_pixal3d_animal_v1": animal_jobs,
+            "stable_animal_template_v1": stable_animal_jobs,
             "rocketbox_material_v1": material_jobs,
         },
         "execution_summary": summary,
@@ -501,6 +552,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         "CONTROLLED_EXECUTION_PREFLIGHT_OK "
         f"animal={summary['animal_job_count']} "
+        f"stable_animal={summary['stable_animal_job_count']} "
         f"material_unique={summary['deterministic_material_job_count']} "
         f"material_requests={summary['material_request_count']} "
         f"output={path}"

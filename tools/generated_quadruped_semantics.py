@@ -20,10 +20,11 @@ class QuadrupedSemantics:
     front_side_positive: tuple[str, ...]
     hind_side_negative: tuple[str, ...]
     hind_side_positive: tuple[str, ...]
+    auxiliary_branches: tuple[tuple[str, ...], ...]
     foot_leaves: tuple[str, ...]
 
     def chains(self) -> dict[str, tuple[str, ...]]:
-        return {
+        result = {
             "axial": self.axial,
             "head": self.head_chain,
             "tail": self.tail_chain,
@@ -32,6 +33,13 @@ class QuadrupedSemantics:
             "hind_side_negative": self.hind_side_negative,
             "hind_side_positive": self.hind_side_positive,
         }
+        result.update(
+            {
+                f"auxiliary_{index}": branch
+                for index, branch in enumerate(self.auxiliary_branches)
+            }
+        )
+        return result
 
     def all_bones(self) -> tuple[str, ...]:
         ordered = []
@@ -40,6 +48,103 @@ class QuadrupedSemantics:
                 if name not in ordered:
                     ordered.append(name)
         return tuple(ordered)
+
+
+def quadruped_semantic_labels(
+    semantics: QuadrupedSemantics,
+    records: Iterable[Mapping],
+    *,
+    bbox_min: Sequence[float],
+    bbox_extent: Sequence[float],
+    front_axis: str,
+    low_leaf_height_fraction: float = 0.22,
+) -> dict[str, str]:
+    """Return exhaustive labels and attach low auxiliary controls to a paw.
+
+    ``QuadrupedSemantics.chains()`` deliberately preserves the literal tree:
+    disconnected exporter controls remain auxiliary branches.  Weight QA,
+    however, must know that a low ``hoof`` controller on the animal's negative
+    side belongs to the same locomotion limb as the nearest deform chain.  This
+    helper performs that geometric association without changing chain order,
+    which keeps retargeting topology and weight sanitation concerns separate.
+    """
+    axis_components = {
+        "positive-x": (0, 1.0, 1),
+        "negative-x": (0, -1.0, 1),
+        "positive-y": (1, 1.0, 0),
+        "negative-y": (1, -1.0, 0),
+    }
+    if front_axis not in axis_components:
+        raise SemanticRigError(f"unsupported front axis: {front_axis}")
+    records = [dict(record) for record in records]
+    by_name = {record.get("name"): record for record in records}
+    if None in by_name or len(by_name) != len(records):
+        raise SemanticRigError("bone names must be present and unique")
+    labels: dict[str, str] = {}
+    core_names = {
+        "axial",
+        "head",
+        "tail",
+        "front_side_negative",
+        "front_side_positive",
+        "hind_side_negative",
+        "hind_side_positive",
+    }
+    for label, chain in semantics.chains().items():
+        if label.startswith("auxiliary_"):
+            continue
+        if label not in core_names:
+            raise SemanticRigError(f"unknown semantic chain label: {label}")
+        for name in chain:
+            if name in labels:
+                raise SemanticRigError(f"bone appears in multiple chains: {name}")
+            labels[name] = label
+
+    forward_index, sign, lateral_index = axis_components[front_axis]
+    extent = [float(value) for value in bbox_extent]
+    if len(extent) != 3 or extent[forward_index] <= 0.0 or extent[lateral_index] <= 0.0:
+        raise SemanticRigError("mesh cardinal extent must be positive")
+    floor = float(bbox_min[2])
+    low_limit = floor + float(low_leaf_height_fraction) * extent[2]
+    limb_chains = {
+        "front_side_negative": semantics.front_side_negative,
+        "front_side_positive": semantics.front_side_positive,
+        "hind_side_negative": semantics.hind_side_negative,
+        "hind_side_positive": semantics.hind_side_positive,
+    }
+    foot_points = {
+        label: _point(by_name[chain[-1]], "head_world")
+        for label, chain in limb_chains.items()
+    }
+
+    for index, branch in enumerate(semantics.auxiliary_branches):
+        points = [_point(by_name[name], "head_world") for name in branch]
+        branch_label = f"auxiliary_{index}"
+        if min(point[2] for point in points) <= low_limit:
+            representative = min(points, key=lambda point: point[2])
+
+            def distance(item: tuple[str, tuple[float, float, float]]):
+                _label, point = item
+                forward_delta = (
+                    sign * (representative[forward_index] - point[forward_index])
+                    / extent[forward_index]
+                )
+                lateral_delta = (
+                    representative[lateral_index] - point[lateral_index]
+                ) / extent[lateral_index]
+                return (forward_delta * forward_delta + lateral_delta * lateral_delta, _label)
+
+            branch_label = min(foot_points.items(), key=distance)[0]
+        for name in branch:
+            if name in labels:
+                raise SemanticRigError(f"bone appears in multiple chains: {name}")
+            labels[name] = branch_label
+    if set(labels) != set(by_name):
+        raise SemanticRigError(
+            "semantic labels must cover every bone: "
+            f"missing={sorted(set(by_name) - set(labels))}"
+        )
+    return labels
 
 
 def _point(record: Mapping, key: str) -> tuple[float, float, float]:
@@ -70,6 +175,153 @@ def _common_prefix(first: Sequence[str], second: Sequence[str]) -> list[str]:
             break
         result.append(left)
     return result
+
+
+def _binary_cluster(values: Sequence[float], *, label: str) -> list[int]:
+    """Split a cardinal coordinate into deterministic low/high clusters.
+
+    Exported quadruped rigs sometimes carry a disconnected hoof controller in
+    addition to the deforming lower-leg chain.  Both branches terminate near
+    the floor, so a literal low-leaf count sees eight feet.  Clustering the
+    forward and lateral coordinates independently lets us recover the four
+    anatomical paw locations without relying on bone names.
+    """
+    if len(values) < 2:
+        raise SemanticRigError(f"{label} clustering needs at least two values")
+    lower = min(float(value) for value in values)
+    upper = max(float(value) for value in values)
+    if upper - lower <= 1.0e-9:
+        raise SemanticRigError(f"{label} low-limb coordinates are degenerate")
+    assignments = [0] * len(values)
+    for _iteration in range(32):
+        updated = [
+            0 if abs(float(value) - lower) <= abs(float(value) - upper) else 1
+            for value in values
+        ]
+        if not any(index == 0 for index in updated) or not any(
+            index == 1 for index in updated
+        ):
+            raise SemanticRigError(f"{label} low-limb clustering collapsed")
+        new_lower = sum(
+            float(value) for value, index in zip(values, updated) if index == 0
+        ) / updated.count(0)
+        new_upper = sum(
+            float(value) for value, index in zip(values, updated) if index == 1
+        ) / updated.count(1)
+        if updated == assignments and abs(new_lower - lower) <= 1.0e-12 and abs(
+            new_upper - upper
+        ) <= 1.0e-12:
+            break
+        assignments = updated
+        lower, upper = new_lower, new_upper
+    return assignments
+
+
+def _select_anatomical_foot_leaves(
+    low_leaves: Sequence[str],
+    by_name: Mapping[str, Mapping],
+    *,
+    forward_index: int,
+    forward_sign: float,
+    lateral_index: int,
+    low_limit: float,
+) -> list[str]:
+    """Choose one deforming limb endpoint for each of four paw locations.
+
+    A candidate with a deeper root path wins within a paw cluster.  This keeps
+    the articulated upper/lower-leg chain and leaves disconnected IK/hoof/end
+    controls as auxiliary branches.  The final lexical tie-break is only for
+    deterministic output; it is never used to decide the paw quadrant.
+    """
+    if len(low_leaves) < 4:
+        raise SemanticRigError(
+            "expected exactly four anatomical low limb groups, "
+            f"but found only {list(low_leaves)}"
+        )
+    if len(low_leaves) == 4:
+        return list(low_leaves)
+
+    forward_values = [
+        forward_sign * _point(by_name[name], "head_world")[forward_index]
+        for name in low_leaves
+    ]
+    lateral_values = [
+        _point(by_name[name], "head_world")[lateral_index]
+        for name in low_leaves
+    ]
+    forward_groups = _binary_cluster(forward_values, label="front/hind")
+    lateral_groups = _binary_cluster(lateral_values, label="left/right")
+    quadrants: dict[tuple[int, int], list[str]] = {}
+    for name, forward_group, lateral_group in zip(
+        low_leaves, forward_groups, lateral_groups
+    ):
+        quadrants.setdefault((forward_group, lateral_group), []).append(name)
+    expected = {(0, 0), (0, 1), (1, 0), (1, 1)}
+    if set(quadrants) != expected:
+        raise SemanticRigError(
+            "expected exactly four anatomical low limb groups, got "
+            f"{ {key: sorted(value) for key, value in quadrants.items()} }"
+        )
+
+    def candidate_score(name: str) -> tuple[int, int, float, str]:
+        path = _path_to_root(name, by_name)
+        heads = [_point(by_name[item], "head_world")[2] for item in path]
+        vertical_span = max(heads) - min(heads)
+        articulated_high_bones = sum(
+            value > low_limit for value in heads[1:]
+        )
+        return (articulated_high_bones, len(path), vertical_span, name)
+
+    return [
+        max(quadrants[key], key=candidate_score)
+        for key in sorted(quadrants)
+    ]
+
+
+def _collect_auxiliary_branches(
+    by_name: Mapping[str, Mapping], covered: set[str]
+) -> tuple[tuple[str, ...], ...]:
+    """Return residual subtrees in deterministic parent-first order.
+
+    TokenRig may add high branches for ears, muzzle, jaw, or similar anatomy.
+    They are not extra locomotion chains, but they must remain represented so
+    the retargeter can make them follow their nearest semantic ancestor.
+    """
+    missing = set(by_name) - covered
+    if not missing:
+        return ()
+    roots = sorted(
+        name for name in missing if by_name[name].get("parent") not in missing
+    )
+    if not roots:
+        raise SemanticRigError("auxiliary bone subtrees have no covered attachment")
+    visited: set[str] = set()
+    branches: list[tuple[str, ...]] = []
+
+    def visit(name: str, ordered: list[str]) -> None:
+        if name in visited:
+            raise SemanticRigError(f"auxiliary bone subtree repeats {name}")
+        visited.add(name)
+        ordered.append(name)
+        for child in sorted(by_name[name].get("children", [])):
+            if child in missing:
+                visit(child, ordered)
+
+    for root in roots:
+        parent = by_name[root].get("parent")
+        if parent not in covered:
+            raise SemanticRigError(
+                f"auxiliary branch {root} does not attach to a semantic bone"
+            )
+        ordered: list[str] = []
+        visit(root, ordered)
+        branches.append(tuple(ordered))
+    if visited != missing:
+        raise SemanticRigError(
+            "auxiliary bone coverage is incomplete: "
+            f"missing={sorted(missing - visited)}"
+        )
+    return tuple(branches)
 
 
 def infer_quadruped_semantics(
@@ -109,18 +361,25 @@ def infer_quadruped_semantics(
     leaves = [
         name for name, record in by_name.items() if not record.get("children", [])
     ]
-    foot_leaves = [
+    low_leaves = [
         name for name in leaves if _point(by_name[name], "head_world")[2] <= low_limit
     ]
-    if len(foot_leaves) != 4:
-        raise SemanticRigError(
-            f"expected exactly four low limb leaves, got {foot_leaves}"
-        )
-    non_foot_leaves = [name for name in leaves if name not in foot_leaves]
+    forward_index, sign, lateral_index = axis_components[front_axis]
+    foot_leaves = _select_anatomical_foot_leaves(
+        low_leaves,
+        by_name,
+        forward_index=forward_index,
+        forward_sign=sign,
+        lateral_index=lateral_index,
+        low_limit=low_limit,
+    )
+    # All other near-floor endpoints are excluded from head/tail inference.
+    # They are retained below as auxiliary branches, so skeleton coverage is
+    # still exact even when a glTF exporter disconnects hoof/end controls.
+    non_foot_leaves = [name for name in leaves if name not in low_leaves]
     if len(non_foot_leaves) < 2:
         raise SemanticRigError("quadruped rig needs distinct head and tail leaves")
 
-    forward_index, sign, lateral_index = axis_components[front_axis]
     forward = (
         lambda name: sign
         * _point(by_name[name], "head_world")[forward_index]
@@ -179,6 +438,17 @@ def infer_quadruped_semantics(
     head_chain = tuple(head_path[last_limb_attachment + 1 :])
     if not axial or not head_chain:
         raise SemanticRigError("axial or head chain is empty")
+    core_chains = (
+        axial,
+        head_chain,
+        tail_chain,
+        front[0]["chain"],
+        front[1]["chain"],
+        hind[0]["chain"],
+        hind[1]["chain"],
+    )
+    core_covered = {name for chain in core_chains for name in chain}
+    auxiliary_branches = _collect_auxiliary_branches(by_name, core_covered)
     semantics = QuadrupedSemantics(
         root=root,
         axial=axial,
@@ -188,6 +458,7 @@ def infer_quadruped_semantics(
         front_side_positive=front[1]["chain"],
         hind_side_negative=hind[0]["chain"],
         hind_side_positive=hind[1]["chain"],
+        auxiliary_branches=auxiliary_branches,
         foot_leaves=tuple(sorted(foot_leaves)),
     )
     if set(semantics.all_bones()) != set(by_name):

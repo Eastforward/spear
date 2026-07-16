@@ -41,12 +41,26 @@ def _import_glb(path):
     new_actions = [act for act in bpy.data.actions if act not in before_actions]
     armatures = [obj for obj in new_objects if obj.type == "ARMATURE"]
     meshes = [obj for obj in new_objects if obj.type == "MESH"]
-    if not armatures or not meshes or not new_actions:
+    if len(armatures) != 1 or not meshes or len(new_actions) != 1:
         raise SystemExit(
-            f"{path}: expected armature, mesh, and action; got "
+            f"{path}: expected one armature, skinned mesh, and action; got "
             f"armatures={len(armatures)} meshes={len(meshes)} actions={len(new_actions)}"
         )
-    return armatures[0], meshes, new_actions[0], new_objects
+    armature = armatures[0]
+    skinned_meshes = [
+        mesh
+        for mesh in meshes
+        if mesh.parent is armature
+        or any(
+            modifier.type == "ARMATURE" and modifier.object is armature
+            for modifier in mesh.modifiers
+        )
+    ]
+    if len(skinned_meshes) != 1:
+        raise SystemExit(
+            f"{path}: expected one skinned runtime mesh; got {len(skinned_meshes)}"
+        )
+    return armature, skinned_meshes, new_actions[0], new_objects
 
 
 def _stash_action_on_armature(armature, action, name):
@@ -60,6 +74,29 @@ def _stash_action_on_armature(armature, action, name):
     strip.name = name
 
 
+def _clear_imported_nla_tracks(armature):
+    armature.animation_data_create()
+    animation_data = armature.animation_data
+    animation_data.action = None
+    for track in list(animation_data.nla_tracks):
+        animation_data.nla_tracks.remove(track)
+
+
+def _remove_non_runtime_objects(objects, runtime_objects):
+    runtime = set(runtime_objects)
+    for obj in list(objects):
+        if obj not in runtime:
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def _select_runtime_objects(armature, meshes):
+    bpy.ops.object.select_all(action="DESELECT")
+    armature.select_set(True)
+    for mesh in meshes:
+        mesh.select_set(True)
+    bpy.context.view_layer.objects.active = armature
+
+
 def main():
     args = parse_argv()
     for path in (args.base_glb, args.append_glb):
@@ -67,22 +104,33 @@ def main():
             raise SystemExit(f"missing input GLB: {path}")
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    base_armature, _base_meshes, base_action, _base_objects = _import_glb(args.base_glb)
+    base_armature, base_meshes, base_action, base_objects = _import_glb(args.base_glb)
     append_armature, _append_meshes, append_action, append_objects = _import_glb(args.append_glb)
 
+    _clear_imported_nla_tracks(base_armature)
     _stash_action_on_armature(base_armature, base_action, args.base_action_name)
     _stash_action_on_armature(base_armature, append_action, args.append_action_name)
-    base_armature.animation_data.action = base_action
+    base_armature.animation_data.action = None
 
-    for obj in append_objects:
-        bpy.data.objects.remove(obj, do_unlink=True)
+    _remove_non_runtime_objects(
+        base_objects,
+        (base_armature, *base_meshes),
+    )
+    _remove_non_runtime_objects(append_objects, ())
+    _select_runtime_objects(base_armature, base_meshes)
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     bpy.ops.export_scene.gltf(
         filepath=args.output,
         export_format="GLB",
+        use_selection=True,
         export_animations=True,
         export_extra_animations=True,
+        export_animation_mode="NLA_TRACKS",
+        export_force_sampling=True,
+        export_skins=True,
+        export_texcoords=True,
+        export_normals=True,
     )
     print(
         f"COMBINE_GLB_ACTIONS_OK output={args.output} "

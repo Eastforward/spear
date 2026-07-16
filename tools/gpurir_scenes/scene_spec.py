@@ -98,6 +98,14 @@ class AnimalPlacement:
     # humans. Leave None for legacy dog/cat defaults.
     actor_scale: Optional[float] = None
     actor_z_lift_cm: Optional[float] = None
+    walking_forward_yaw_offset_deg: Optional[float] = None
+    animation_play_rate: Optional[float] = None
+    # Optional UE runtime grounding for human dataset renders.  The actor is
+    # still placed at scale 1 on the apartment floor; after animation pose
+    # evaluation, only its world Z is corrected so the current lowest mesh
+    # bound touches the measured floor.
+    ground_snap_to_floor: bool = False
+    ground_snap_max_abs_correction_cm: float = 15.0
 
 
 @dataclass

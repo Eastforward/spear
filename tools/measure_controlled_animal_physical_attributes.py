@@ -15,6 +15,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -36,6 +37,32 @@ FRONT_UPPER_GROUPS = frozenset({"Bone.014", "Bone.017"})
 
 class MeasurementError(RuntimeError):
     """Raised when physical evidence is missing or internally inconsistent."""
+
+
+def resolve_front_upper_groups(group_names: Iterable[str]) -> frozenset[str]:
+    """Resolve Quaternius or Rocketbox-style foreleg upper-arm groups."""
+    names = frozenset(str(name) for name in group_names)
+    if FRONT_UPPER_GROUPS.issubset(names):
+        return FRONT_UPPER_GROUPS
+    normalized = {
+        re.sub(r"[^a-z0-9]+", " ", name.lower()).strip(): name for name in names
+    }
+    left = [
+        original
+        for label, original in normalized.items()
+        if label.endswith(" l upperarm") or label.endswith(" left upperarm")
+    ]
+    right = [
+        original
+        for label, original in normalized.items()
+        if label.endswith(" r upperarm") or label.endswith(" right upperarm")
+    ]
+    if len(left) == 1 and len(right) == 1:
+        return frozenset({left[0], right[0]})
+    raise MeasurementError(
+        "missing or ambiguous foreleg upper-arm vertex groups: "
+        f"left={sorted(left)} right={sorted(right)}"
+    )
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -252,9 +279,7 @@ def _blender_geometry_measurement(input_glb: Path, output: Path) -> None:
         raise MeasurementError("rigged GLB contains no mesh")
     mesh = max(meshes, key=lambda obj: len(obj.data.vertices))
     group_names = {group.index: group.name for group in mesh.vertex_groups}
-    missing = FRONT_UPPER_GROUPS - set(group_names.values())
-    if missing:
-        raise MeasurementError(f"missing foreleg vertex groups: {sorted(missing)}")
+    front_upper_groups = resolve_front_upper_groups(group_names.values())
 
     all_x: list[float] = []
     all_z: list[float] = []
@@ -266,7 +291,7 @@ def _blender_geometry_measurement(input_glb: Path, output: Path) -> None:
         weight = sum(
             float(membership.weight)
             for membership in vertex.groups
-            if group_names.get(membership.group) in FRONT_UPPER_GROUPS
+            if group_names.get(membership.group) in front_upper_groups
         )
         if weight >= 0.05:
             shoulder_z.append(float(point.z))
@@ -284,7 +309,7 @@ def _blender_geometry_measurement(input_glb: Path, output: Path) -> None:
         "input_glb": _artifact(input_glb),
         "mesh_name": mesh.name,
         "vertex_count": len(mesh.data.vertices),
-        "front_upper_groups": sorted(FRONT_UPPER_GROUPS),
+        "front_upper_groups": sorted(front_upper_groups),
         "selected_shoulder_vertex_count": len(shoulder_z),
         "quantiles": {
             "floor": 0.001,

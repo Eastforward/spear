@@ -156,6 +156,7 @@ CORE_BONES = (
     "Bip01 R Foot",
     "Bip01 R Toe0",
 )
+ABSOLUTE_POSE_BONES = CORE_BONES
 
 IMMUTABLE_HASH_KEYS = (
     "avatar_fbx",
@@ -189,6 +190,7 @@ ROOT_SCALE = 1.0
 FPS = 30
 EXPECTED_SOURCE_ONLY_NUB_BONES = 41
 MATRIX_TOLERANCE = 1.0e-4
+ABSOLUTE_POSE_ROTATION_TOLERANCE_RAD = 1.0e-5
 ROUNDTRIP_JOINT_TOLERANCE_M = 1.0e-4
 SKIN_POSITION_TOLERANCE_M = 2.0e-6
 SKIN_WEIGHT_L1_TOLERANCE = 1.0e-6
@@ -213,11 +215,19 @@ class SourceImport:
 
 
 class CachedFrame:
-    def __init__(self, frame, source_location, source_quaternion, bone_deltas):
+    def __init__(
+        self,
+        frame,
+        source_location,
+        source_quaternion,
+        bone_pose_rotations,
+        pelvis_translation_delta,
+    ):
         self.frame = frame
         self.source_location = source_location
         self.source_quaternion = source_quaternion
-        self.bone_deltas = bone_deltas
+        self.bone_pose_rotations = bone_pose_rotations
+        self.pelvis_translation_delta = pelvis_translation_delta
 
 
 def parse_args(argv=None):
@@ -568,32 +578,35 @@ def integer_frame_range(action):
     return start, end
 
 
-def cache_source_frames(source, frame_start, frame_end, driven_bones):
+def cache_source_frames(source, frame_start, frame_end):
     scene = bpy.context.scene
     scene.frame_set(frame_start)
     bpy.context.view_layer.update()
     helper_basis = source.helper.matrix_world.to_quaternion().normalized()
+    source_pelvis_rest_translation = source.armature.data.bones[
+        "Bip01 Pelvis"
+    ].matrix_local.translation.copy()
     cached_frames = []
     for frame in range(frame_start, frame_end + 1):
         scene.frame_set(frame)
         bpy.context.view_layer.update()
-        deltas = {}
-        for name in TARGET_BONES:
-            if name not in driven_bones:
-                deltas[name] = Matrix.Identity(4)
-                continue
-            source_bone = source.armature.data.bones[name]
+        pose_rotations = {}
+        for name in ABSOLUTE_POSE_BONES:
             source_pb = source.armature.pose.bones[name]
-            source_rest_local = parent_local_rest(source_bone)
-            source_pose_local = parent_local_pose(source_pb)
-            source_delta = source_rest_local.inverted() @ source_pose_local
-            deltas[name] = source_delta.copy()
+            source_pose_rotation = source_pb.matrix.to_quaternion().normalized()
+            pose_rotations[name] = source_pose_rotation.copy()
+        source_pelvis_translation = source.armature.pose.bones[
+            "Bip01 Pelvis"
+        ].matrix.translation
         cached_frames.append(
             CachedFrame(
                 frame=frame,
                 source_location=source.armature.matrix_world.translation.copy(),
                 source_quaternion=source.armature.matrix_world.to_quaternion().normalized(),
-                bone_deltas=deltas,
+                bone_pose_rotations=pose_rotations,
+                pelvis_translation_delta=(
+                    source_pelvis_translation - source_pelvis_rest_translation
+                ).copy(),
             )
         )
     return cached_frames, helper_basis
@@ -674,12 +687,14 @@ def bake_target_action(
     sampled_positions = {}
     baked_root_locations = {}
     frame_errors = []
+    body_pose_rotation_errors = []
 
     for cached in cached_frames:
         bpy.context.scene.frame_set(cached.frame)
         for target_pb in target_armature.pose.bones:
             target_pb.rotation_mode = "QUATERNION"
             target_pb.matrix_basis = Matrix.Identity(4)
+        bpy.context.view_layer.update()
 
         source_location = cached.source_location
         root_displacement = AXIS_MAP @ (
@@ -694,33 +709,68 @@ def bake_target_action(
         ).normalized()
         target_armature.scale = target_base_scale
 
+        requested_armature_matrices = {}
         for name in parent_first_bones:
+            if name not in ABSOLUTE_POSE_BONES:
+                continue
             target_pb = target_armature.pose.bones[name]
-            source_delta = cached.bone_deltas[name]
             target_rest_local = target_rest_locals[name]
-            target_local = target_rest_local @ source_delta
-            target_armature_matrix = (
-                target_local
-                if target_pb.parent is None
-                else target_pb.parent.matrix @ target_local
+            source_pose_rotation = cached.bone_pose_rotations[name]
+            if target_pb.parent is None:
+                target_translation = target_rest_local.translation.copy()
+            else:
+                target_translation = (
+                    target_pb.parent.matrix @ target_rest_local.translation
+                )
+            if name == "Bip01 Pelvis":
+                target_translation += cached.pelvis_translation_delta
+            target_armature_matrix = Matrix.LocRotScale(
+                target_translation,
+                source_pose_rotation,
+                Vector((1.0, 1.0, 1.0)),
             )
             target_pb.matrix = target_armature_matrix
+            bpy.context.view_layer.update()
+            requested_armature_matrices[name] = target_armature_matrix.copy()
 
-        bpy.context.view_layer.update()
         maximum_error = 0.0
+        maximum_body_pose_rotation_error = 0.0
+        maximum_body_pose_rotation_error_bone = None
         for name in TARGET_BONES:
             target_pb = target_armature.pose.bones[name]
-            actual_local = parent_local_pose(target_pb)
-            requested_local = target_rest_locals[name] @ cached.bone_deltas[name]
+            if name in ABSOLUTE_POSE_BONES:
+                actual_transform = target_pb.matrix
+                requested_transform = requested_armature_matrices[name]
+            else:
+                actual_transform = parent_local_pose(target_pb)
+                requested_transform = target_rest_locals[name]
             maximum_error = max(
                 maximum_error,
-                matrix_difference_max_abs(actual_local, requested_local),
+                matrix_difference_max_abs(actual_transform, requested_transform),
             )
+            if name in ABSOLUTE_POSE_BONES:
+                pose_rotation_error = shortest_rotation_angle(
+                    target_pb.matrix.to_quaternion(),
+                    cached.bone_pose_rotations[name],
+                )
+                if pose_rotation_error > maximum_body_pose_rotation_error:
+                    maximum_body_pose_rotation_error = pose_rotation_error
+                    maximum_body_pose_rotation_error_bone = name
         if maximum_error > MATRIX_TOLERANCE:
             raise RuntimeError(
                 f"target pose invariant failed at frame {cached.frame}: {maximum_error}"
             )
+        if (
+            maximum_body_pose_rotation_error
+            > ABSOLUTE_POSE_ROTATION_TOLERANCE_RAD
+        ):
+            raise RuntimeError(
+                "target body pose does not reconstruct the absolute source pose at "
+                f"frame {cached.frame}: {maximum_body_pose_rotation_error} rad at "
+                f"{maximum_body_pose_rotation_error_bone}"
+            )
         frame_errors.append(maximum_error)
+        body_pose_rotation_errors.append(maximum_body_pose_rotation_error)
 
         keyframe_transform(target_armature, cached.frame)
         for name in TARGET_BONES:
@@ -740,6 +790,7 @@ def bake_target_action(
     return (
         sampled_positions,
         max(frame_errors),
+        max(body_pose_rotation_errors),
         vector_list(target_base_scale),
         baked_root_locations,
     )
@@ -1290,7 +1341,14 @@ def loop_metrics(cached_frames, baked_root_locations):
     start = cached_frames[0]
     end = cached_frames[-1]
     bone_residuals = {
-        name: matrix_difference_max_abs(end.bone_deltas[name], start.bone_deltas[name])
+        name: (
+            matrix_difference_max_abs(
+                end.bone_pose_rotations[name].to_matrix().to_4x4(),
+                start.bone_pose_rotations[name].to_matrix().to_4x4(),
+            )
+            if name in ABSOLUTE_POSE_BONES
+            else 0.0
+        )
         for name in TARGET_BONES
     }
     maximum_bone = max(bone_residuals, key=bone_residuals.get)
@@ -1298,11 +1356,21 @@ def loop_metrics(cached_frames, baked_root_locations):
     end_previous = cached_frames[-2]
     boundary_motion_residuals = {}
     for name in TARGET_BONES:
-        start_velocity = start.bone_deltas[name].inverted() @ start_next.bone_deltas[name]
-        end_velocity = end_previous.bone_deltas[name].inverted() @ end.bone_deltas[name]
-        boundary_motion_residuals[name] = matrix_difference_max_abs(
-            start_velocity, end_velocity
-        )
+        if name in ABSOLUTE_POSE_BONES:
+            start_velocity = (
+                start.bone_pose_rotations[name].inverted()
+                @ start_next.bone_pose_rotations[name]
+            )
+            end_velocity = (
+                end_previous.bone_pose_rotations[name].inverted()
+                @ end.bone_pose_rotations[name]
+            )
+            boundary_motion_residuals[name] = matrix_difference_max_abs(
+                start_velocity.to_matrix().to_4x4(),
+                end_velocity.to_matrix().to_4x4(),
+            )
+        else:
+            boundary_motion_residuals[name] = 0.0
     maximum_velocity_bone = max(
         boundary_motion_residuals, key=boundary_motion_residuals.get
     )
@@ -1446,9 +1514,7 @@ def main(argv=None):
     frame_start, frame_end = integer_frame_range(source.action)
     parent_first_bones = parent_first_names(avatar.armature)
     rest_angles = rest_angle_statistics(source.armature, avatar.armature)
-    cached_frames, helper_basis = cache_source_frames(
-        source, frame_start, frame_end, driven_bones
-    )
+    cached_frames, helper_basis = cache_source_frames(source, frame_start, frame_end)
     excluded_source_helpers = remove_source_import(source)
 
     avatar.armature.matrix_world = target_base_matrix
@@ -1460,6 +1526,7 @@ def main(argv=None):
     (
         sampled_positions,
         maximum_space_error,
+        maximum_body_pose_rotation_error,
         preserved_target_scale,
         baked_root_locations,
     ) = bake_target_action(
@@ -1537,6 +1604,10 @@ def main(argv=None):
             "source_only_bones": source_only_bones,
             "hierarchy_mismatches": hierarchy_mismatches,
             "driven_source_bone_count": len(driven_bones & set(TARGET_BONES)),
+            "absolute_pose_bones": list(ABSOLUTE_POSE_BONES),
+            "target_rest_pose_bones": sorted(
+                set(TARGET_BONES) - set(ABSOLUTE_POSE_BONES)
+            ),
             "undriven_target_bones_kept_at_rest": sorted(
                 set(TARGET_BONES) - driven_bones
             ),
@@ -1576,6 +1647,12 @@ def main(argv=None):
             "errors": validation_errors,
             "space_invariant_max_abs_error": maximum_space_error,
             "space_invariant_tolerance": MATRIX_TOLERANCE,
+            "absolute_body_pose_max_rotation_error_rad": (
+                maximum_body_pose_rotation_error
+            ),
+            "absolute_body_pose_rotation_tolerance_rad": (
+                ABSOLUTE_POSE_ROTATION_TOLERANCE_RAD
+            ),
             "mapped_80_of_80": len(TARGET_BONES) == 80,
             "hierarchy_mismatch_count": len(hierarchy_mismatches),
             "target_mesh_unchanged": pre_retarget_mesh == post_retarget_mesh,

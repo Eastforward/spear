@@ -221,16 +221,56 @@ def clean_frames(output_dir):
         os.remove(path)
 
 
-def configure_instance(rpc_port):
+def parallel_instance_settings(rpc_port, graphics_adapter=None):
+    """Return collision-free SPEAR/UE process settings for one render worker."""
+    rpc_port = int(rpc_port)
+    if not 1024 <= rpc_port <= 65535:
+        raise ValueError(f"rpc_port must be in [1024, 65535], got {rpc_port}")
+    if graphics_adapter is not None:
+        graphics_adapter = int(graphics_adapter)
+        if graphics_adapter < 0:
+            raise ValueError(
+                f"graphics_adapter must be non-negative, got {graphics_adapter}"
+            )
+    return {
+        "rpc_port": rpc_port,
+        "graphics_adapter": graphics_adapter,
+        "temp_dir": f"tmp/spear_instance_{rpc_port}",
+        "log": f"SpearSim_rpc_{rpc_port}.log",
+        "shared_memory_initial_unique_id": rpc_port * 10000,
+    }
+
+
+def configure_instance(rpc_port, fixed_delta_time=None):
     import spear
 
+    graphics_adapter_env = os.environ.get("SPEAR_GRAPHICS_ADAPTER")
+    settings = parallel_instance_settings(
+        rpc_port,
+        graphics_adapter=(
+            int(graphics_adapter_env) if graphics_adapter_env not in (None, "") else None
+        ),
+    )
     config = spear.get_config(user_config_files=[])
     config.defrost()
     config.SPEAR.LAUNCH_MODE = "game"
     config.SPEAR.INSTANCE.GAME_EXECUTABLE = EXECUTABLE
     config.SP_SERVICES.INITIALIZE_ENGINE_SERVICE.OVERRIDE_GAME_DEFAULT_MAP = True
     config.SP_SERVICES.INITIALIZE_ENGINE_SERVICE.GAME_DEFAULT_MAP = APARTMENT_MAP
-    config.SP_SERVICES.RPC_SERVICE.RPC_SERVER_PORT = int(rpc_port)
+    config.SP_SERVICES.RPC_SERVICE.RPC_SERVER_PORT = settings["rpc_port"]
+    config.SPEAR.INSTANCE.TEMP_DIR = settings["temp_dir"]
+    config.SPEAR.INSTANCE.COMMAND_LINE_ARGS.log = settings["log"]
+    config.SP_CORE.SHARED_MEMORY_INITIAL_UNIQUE_ID = settings[
+        "shared_memory_initial_unique_id"
+    ]
+    if settings["graphics_adapter"] is not None:
+        config.SPEAR.INSTANCE.COMMAND_LINE_ARGS.graphicsadapter = settings[
+            "graphics_adapter"
+        ]
+    if os.environ.get("SPEAR_RENDER_OFFSCREEN", "0") == "1":
+        config.SPEAR.INSTANCE.COMMAND_LINE_ARGS.renderoffscreen = None
+    if fixed_delta_time is not None:
+        config.SP_SERVICES.INITIALIZE_ENGINE_SERVICE.FIXED_DELTA_TIME = float(fixed_delta_time)
     config.SPEAR.ENVIRONMENT_VARS.VK_ICD_FILENAMES = "/etc/vulkan/icd.d/nvidia_icd.json"
     config.freeze()
     spear.configure_system(config=config)

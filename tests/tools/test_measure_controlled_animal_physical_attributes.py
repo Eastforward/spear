@@ -1,6 +1,7 @@
 from tools.measure_controlled_animal_physical_attributes import (
     build_runtime_measurement,
     quantile,
+    resolve_front_upper_groups,
     summarize_size_ordering,
 )
 
@@ -74,3 +75,13 @@ def test_size_ordering_uses_observed_shoulder_heights():
     assert summary[0]["ordered_sizes"] == ["small", "medium", "large"]
     assert summary[0]["strictly_increasing"] is True
     assert quantile([0.0, 10.0], 0.25) == 2.5
+
+
+def test_foreleg_groups_support_quaternius_and_rocketbox_native_rigs():
+    assert resolve_front_upper_groups({"Bone.014", "Bone.017", "Bone"}) == {
+        "Bone.014",
+        "Bone.017",
+    }
+    assert resolve_front_upper_groups(
+        {"beagle L UpperArm", "beagle R UpperArm", "beagle Pelvis"}
+    ) == {"beagle L UpperArm", "beagle R UpperArm"}

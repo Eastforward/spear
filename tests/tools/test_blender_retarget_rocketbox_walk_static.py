@@ -188,12 +188,23 @@ def test_script_maps_all_exact_target_bones_and_rejects_bad_rigs():
     assert "hierarchy_mismatches" in source
 
 
-def test_script_uses_the_measured_parent_local_rest_delta_parent_first():
+def test_script_uses_absolute_source_body_pose_instead_of_first_frame_rest_delta():
     source = compact_source()
+    bake_source = "".join(
+        ast.get_source_segment(renderer_source(), function_node("bake_target_action")).split()
+    )
 
-    assert "source_rest_local.inverted()@source_pose_local" in source
-    assert "target_rest_local@source_delta" in source
-    assert "target_pb.parent.matrix@target_local" in source
+    assert "ABSOLUTE_POSE_BONES=CORE_BONES" in source
+    assert "source_pb.matrix.to_quaternion().normalized()" in source
+    assert "source_rest_local.inverted()@source_pose_local" not in source
+    assert "source_pose_rotation" in source
+    assert "target_rest_local.translation" in source
+    assert "ifnameinABSOLUTE_POSE_BONES" in source
+    assert "target_armature_matrix=Matrix.LocRotScale(" in source
+    assert (
+        "target_pb.matrix=target_armature_matrix"
+        "bpy.context.view_layer.update()"
+    ) in bake_source
     assert "parent_first_bones" in source
     assert "target_pb.matrix=target_armature_matrix" in source
 

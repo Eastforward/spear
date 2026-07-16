@@ -28,6 +28,7 @@ import spear
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "examples"))
 sys.path.insert(0, os.path.join(REPO, "tools"))
+sys.path.insert(0, os.path.join(REPO, "tools", "spike_rlr"))
 
 from render_in_apartment import (  # noqa: E402
     APARTMENT_MAP, configure_instance, spawn_camera, read_frame,
@@ -40,6 +41,7 @@ from render_in_gpurir_room import (  # noqa: E402
 )
 from gpurir_scenes.scene_spec import compose_scene, check_no_clipping, N_FRAMES, FPS, MIC_POS_M  # noqa: E402
 from gpurir_scenes.furniture_map import load_apartment_furniture  # noqa: E402
+from rig_direction_check import select_skeletal_mesh_component  # noqa: E402
 
 
 M2CM = 100.0
@@ -190,8 +192,9 @@ def _play_anim_on_actor(game, actor, placement):
     UAnimationAsset when it is available, and leave the BP state as fallback
     if loading fails.
     """
-    smc = game.unreal_service.get_component_by_class(
-        actor=actor, uclass="USkeletalMeshComponent",
+    smc = select_skeletal_mesh_component(
+        unreal_service=game.unreal_service,
+        actor=actor,
     )
     if smc is None:
         return
@@ -203,6 +206,24 @@ def _play_anim_on_actor(game, actor, placement):
         smc.PlayAnimation(NewAnimToPlay=anim, bLooping=True)
     except Exception as e:
         print(f"[render] WARN could not swap anim to {wanted} for {placement.tag}: {e}", flush=True)
+        return
+
+    play_rate = getattr(placement, "animation_play_rate", None)
+    if play_rate is None:
+        return
+    play_rate = float(play_rate)
+    if not 0.0 < play_rate <= 4.0:
+        raise ValueError(f"invalid animation_play_rate for {placement.tag}: {play_rate}")
+    smc.set_property_value(
+        property_name="GlobalAnimRateScale",
+        property_value=play_rate,
+    )
+    observed_play_rate = float(smc.get_property_value("GlobalAnimRateScale"))
+    if abs(observed_play_rate - play_rate) > 1e-4:
+        raise RuntimeError(
+            f"{placement.tag} GlobalAnimRateScale readback "
+            f"{observed_play_rate} != requested {play_rate}"
+        )
 
 
 def _spawn_animal(game, placement, room, spec):

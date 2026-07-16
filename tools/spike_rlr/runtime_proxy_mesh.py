@@ -11,7 +11,11 @@ from pathlib import Path
 from typing import Optional
 
 
-RUNTIME_PROXY_ALGORITHM = "blender_decimate_v1"
+RUNTIME_PROXY_ALGORITHM = "blender_welded_decimate_v2"
+SUPPORTED_RUNTIME_PROXY_ALGORITHMS = {
+    "blender_decimate_v1",
+    RUNTIME_PROXY_ALGORITHM,
+}
 RUNTIME_PROXY_MESH_NAME = "mesh_runtime.glb"
 RUNTIME_PROXY_META_NAME = "mesh_runtime.json"
 DEFAULT_TARGET_FACES = 40000
@@ -45,7 +49,7 @@ def load_current_runtime_proxy_record(
     except Exception:
         return None
 
-    if rec.get("algorithm") != RUNTIME_PROXY_ALGORITHM:
+    if rec.get("algorithm") not in SUPPORTED_RUNTIME_PROXY_ALGORITHMS:
         return None
     if rec.get("source_mesh_sha256") != source_mesh_sha256:
         return None
@@ -73,6 +77,7 @@ def write_runtime_proxy_record(
     source_vertices: int,
     actual_faces: int,
     actual_vertices: int,
+    topology: Optional[dict] = None,
 ) -> dict:
     rec = {
         "algorithm": RUNTIME_PROXY_ALGORITHM,
@@ -86,5 +91,7 @@ def write_runtime_proxy_record(
         "actual_faces": int(actual_faces),
         "actual_vertices": int(actual_vertices),
     }
-    Path(metadata_path).write_text(json.dumps(rec, indent=2))
+    if topology is not None:
+        rec["topology"] = topology
+    Path(metadata_path).write_text(json.dumps(rec, indent=2) + "\n")
     return rec
