@@ -1,5 +1,9 @@
 from pathlib import Path
 
+import pytest
+
+from tools import build_generated_animal_direction_canary as canary
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "tools" / "build_generated_animal_direction_canary.py"
@@ -41,3 +45,56 @@ def test_canary_can_opt_into_two_stage_manual_yaw_without_auto_inference():
     assert '"range_degrees": [-45, 45]' in text
     assert '"visual_authority": "torso_and_spine_longitudinal_axis"' in text
     assert '"must_not_follow": "turned_head_or_tail"' in text
+
+
+def test_declared_view_alignment_uses_profile_yaw_and_geometry_only_as_gate(
+    tmp_path, monkeypatch
+):
+    mesh = tmp_path / "one_shot.glb"
+    mesh.write_bytes(b"immutable one-shot mesh")
+    monkeypatch.setattr(
+        canary.audit_quadruped_i23d_geometry,
+        "audit",
+        lambda *_args, **_kwargs: {
+            "torso_midline": {
+                "sensitivity_global_axis_yaw_degrees": [31.2, 32.1, 31.3]
+            }
+        },
+    )
+
+    result = canary.declared_view_canonicalization_audit(
+        mesh,
+        canonicalization_yaw_deg=30,
+        maximum_residual_deg=3,
+    )
+
+    assert result["declared_canonicalization_yaw_deg"] == 30
+    assert result["postcanonical_residual_yaw_degrees"] == pytest.approx(
+        [1.2, 2.1, 1.3]
+    )
+    assert result["status"] == "passed_declared_view_canonicalization"
+    assert result["applied_yaw_was_inferred_from_geometry"] is False
+    assert result["single_attempt_failure_requires_new_profile_not_seed_retry"] is True
+
+
+def test_declared_view_alignment_rejects_residual_without_seed_retry(
+    tmp_path, monkeypatch
+):
+    mesh = tmp_path / "one_shot.glb"
+    mesh.write_bytes(b"immutable one-shot mesh")
+    monkeypatch.setattr(
+        canary.audit_quadruped_i23d_geometry,
+        "audit",
+        lambda *_args, **_kwargs: {
+            "torso_midline": {
+                "sensitivity_global_axis_yaw_degrees": [30.5, 36.0, 31.0]
+            }
+        },
+    )
+
+    with pytest.raises(canary.CanaryError, match="single-attempt|one-shot"):
+        canary.declared_view_canonicalization_audit(
+            mesh,
+            canonicalization_yaw_deg=30,
+            maximum_residual_deg=3,
+        )

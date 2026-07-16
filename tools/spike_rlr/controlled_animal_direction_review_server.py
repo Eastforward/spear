@@ -62,6 +62,7 @@ ALLOWED_DELTAS = {-90.0, 90.0, 180.0}
 CARDINAL_YAWS = {-90.0, 0.0, 90.0, 180.0}
 ALLOWED_AXIS_DELTAS = {-15.0, -5.0, -1.0, 1.0, 5.0, 15.0}
 MAX_MANUAL_AXIS_ALIGNMENT_DEG = 45.0
+MAX_MANUAL_LINE_RESIDUAL_DEG = 30.0
 POSE_CHECK_HINTS = (
     "spine_is_straight",
     "head_is_aligned_with_torso",
@@ -69,6 +70,8 @@ POSE_CHECK_HINTS = (
     "all_paws_share_one_ground_plane",
 )
 INTERACTIVE_MAX_POINTS = 18_000
+DECLARED_AXIS_POLICY = "deterministic_declared_camera_view_canonicalization_v1"
+DECLARED_HEAD_TAIL_YAWS = {0.0, 180.0}
 
 
 class ReviewServerError(RuntimeError):
@@ -165,6 +168,132 @@ def _yaw_matrix_y_up(yaw_deg: float) -> np.ndarray:
 def _manual_preview_matrix(yaw_deg: float) -> np.ndarray:
     """Return a rotation-only manual preview transform (never a reflection)."""
     return _yaw_matrix_y_up(yaw_deg)
+
+
+def _declared_axis_alignment(entry: Mapping[str, Any]) -> dict[str, float] | None:
+    """Authenticate a fixed source-view transform and its verify-only audit."""
+
+    contract = entry.get("orientation_contract", {})
+    if contract.get("axis_alignment_policy") != DECLARED_AXIS_POLICY:
+        return None
+    audit = entry.get("declared_view_canonicalization_audit", {})
+    try:
+        yaw = float(contract["declared_axis_alignment_yaw_deg"])
+        maximum = float(contract["maximum_postcanonical_residual_yaw_deg"])
+        audit_yaw = float(audit["declared_canonicalization_yaw_deg"])
+        audit_maximum = float(audit["maximum_allowed_residual_yaw_deg"])
+        audit_residual = float(audit["maximum_absolute_residual_yaw_deg"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ReviewServerError("declared source-view yaw contract is invalid") from error
+    if (
+        not 0.0 <= yaw <= 45.0
+        or not 0.0 < maximum <= 5.0
+        or contract.get("manual_axis_alignment_allowed") is not False
+        or contract.get("automatic_orientation_inference") != "disabled"
+        or contract.get("manual_cardinal_head_tail_yaw_degrees") != [0, 180]
+        or audit.get("schema")
+        != "controlled_animal_declared_view_canonicalization_audit_v1"
+        or audit.get("status") != "passed_declared_view_canonicalization"
+        or audit.get("applied_yaw_was_inferred_from_geometry") is not False
+        or not math.isclose(audit_yaw, yaw, abs_tol=1.0e-9)
+        or not math.isclose(audit_maximum, maximum, abs_tol=1.0e-9)
+        or audit_residual > maximum
+    ):
+        raise ReviewServerError(
+            "declared source-view canonicalization audit/contract is invalid"
+        )
+    return {"yaw_deg": yaw, "maximum_residual_deg": maximum}
+
+
+def _validate_manual_axis_line(
+    value: Any,
+    *,
+    current_axis_yaw_deg: float,
+) -> tuple[float, dict[str, Any]]:
+    """Validate a torso line explicitly selected by the human reviewer.
+
+    The browser supplies two normalized points from the TOP-DOWN panel.  It
+    derives the small residual rotation from that reviewer-authored line; the
+    server does not inspect the mesh or estimate an orientation.  Recording
+    both points keeps the exact manual authority auditable.
+    """
+
+    if not isinstance(value, Mapping):
+        raise ReviewServerError("manual torso line must be an object")
+    points: dict[str, list[float]] = {}
+    for name in ("torso_back_normalized", "torso_front_normalized"):
+        point = value.get(name)
+        if not isinstance(point, list) or len(point) != 2:
+            raise ReviewServerError(f"manual torso line {name} is invalid")
+        try:
+            numeric = [float(point[0]), float(point[1])]
+        except (TypeError, ValueError) as error:
+            raise ReviewServerError(
+                f"manual torso line {name} must be numeric"
+            ) from error
+        if not all(math.isfinite(item) and 0.0 <= item <= 1.0 for item in numeric):
+            raise ReviewServerError(
+                f"manual torso line {name} escaped the TOP-DOWN panel"
+            )
+        points[name] = numeric
+    separation = math.dist(
+        points["torso_back_normalized"], points["torso_front_normalized"]
+    )
+    if separation < 0.05:
+        raise ReviewServerError("manual torso line points are too close")
+    model_points: dict[str, list[float]] = {}
+    for name in ("torso_back_xz", "torso_front_xz"):
+        point = value.get(name)
+        if not isinstance(point, list) or len(point) != 2:
+            raise ReviewServerError(f"manual torso line {name} is invalid")
+        try:
+            numeric = [float(point[0]), float(point[1])]
+        except (TypeError, ValueError) as error:
+            raise ReviewServerError(
+                f"manual torso line {name} must be numeric"
+            ) from error
+        if not all(math.isfinite(item) for item in numeric):
+            raise ReviewServerError(f"manual torso line {name} is not finite")
+        model_points[name] = numeric
+    model_dx = model_points["torso_front_xz"][0] - model_points["torso_back_xz"][0]
+    model_dz = model_points["torso_front_xz"][1] - model_points["torso_back_xz"][1]
+    if model_dx <= 0.0 or math.hypot(model_dx, model_dz) <= 1.0e-6:
+        raise ReviewServerError(
+            "manual torso line must run from torso back to torso front"
+        )
+    derived_residual = math.degrees(math.atan2(model_dz, model_dx))
+    derived_axis = float(current_axis_yaw_deg) + derived_residual
+    try:
+        submitted_residual = float(value["residual_yaw_deg"])
+        submitted_axis = float(value["result_axis_yaw_deg"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ReviewServerError("manual torso line yaw is missing") from error
+    if (
+        not math.isfinite(submitted_residual)
+        or not math.isfinite(submitted_axis)
+        or abs(derived_residual) > MAX_MANUAL_LINE_RESIDUAL_DEG
+        or abs(derived_axis) > MAX_MANUAL_AXIS_ALIGNMENT_DEG
+        or not math.isclose(
+            submitted_residual,
+            derived_residual,
+            abs_tol=0.051,
+        )
+        or not math.isclose(
+            submitted_axis,
+            derived_axis,
+            abs_tol=0.051,
+        )
+    ):
+        raise ReviewServerError("manual torso line yaw is inconsistent")
+    rounded_axis = round(derived_axis, 3)
+    return rounded_axis, {
+        **points,
+        **model_points,
+        "residual_yaw_deg": round(derived_residual, 3),
+        "result_axis_yaw_deg": rounded_axis,
+        "authority": "human_selected_top_down_torso_back_to_front_line",
+        "automatic_orientation_inference_used": False,
+    }
 
 
 def _load_preview_mesh(path: Path) -> trimesh.Trimesh:
@@ -390,6 +519,8 @@ def _validate_manifest(path: Path) -> tuple[dict[str, Any], dict[str, dict[str, 
                 or _sha256_file(artifact_path) != record.get("sha256")
             ):
                 raise ReviewServerError(f"direction review artifact changed: {name}")
+        if manifest["schema"] == MANIFEST_SCHEMA_V3:
+            _declared_axis_alignment(entry)
         entries[asset_id] = entry
     return manifest, entries
 
@@ -421,6 +552,7 @@ def _public_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
         "breed": entry.get("breed"),
         "profile_schema_id": entry.get("profile_schema_id"),
         "sampled_attributes": entry.get("sampled_attributes", {}),
+        "orientation_contract": copy.deepcopy(entry.get("orientation_contract", {})),
         "artifacts": {
             name: {
                 "url": entry["artifacts"][name]["server_path"],
@@ -447,7 +579,7 @@ header{padding:16px;border-bottom:1px solid #273043}h1{font-size:19px;margin:0 0
 #list{overflow:auto;padding:7px}.item{width:100%;text-align:left;color:inherit;background:transparent;border:1px solid transparent;border-radius:9px;padding:9px;cursor:pointer}.item:hover{background:#171e2b}.item.active{background:#1b2940;border-color:#3c6ea8}.item-title{font-size:12px;font-weight:650;overflow-wrap:anywhere}.item-meta{font-size:11px;color:#9aa7ba;margin-top:3px}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;background:#f59e0b}.dot.ok{background:#22c55e}.dot.bad{background:#ef4444}
 main{overflow:auto;padding:20px}.stage{max-width:1450px;margin:auto}.danger{background:#441b22;border:1px solid #9f3446;border-radius:10px;padding:12px;margin-bottom:14px;color:#ffd8df}.title-row{display:flex;justify-content:space-between;gap:12px}h2{font-size:20px;margin:0;overflow-wrap:anywhere}.pills{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}.pill{font-size:12px;border:1px solid #334155;background:#172131;border-radius:999px;padding:4px 8px}
 .grid{display:grid;grid-template-columns:minmax(430px,1.15fr) minmax(400px,1fr);gap:14px}.card{background:#111620;border:1px solid #273043;border-radius:12px;padding:14px}h3{font-size:15px;margin:0 0 8px}.instructions{font-size:13px;color:#ccd6e5;line-height:1.55;margin-bottom:10px}.preview-wrap{position:relative;background:#fff;border-radius:8px;min-height:380px;display:flex;align-items:center;justify-content:center;overflow:hidden}.preview-wrap canvas{display:block;width:100%;height:min(56vh,590px);min-height:380px}.preview-loading{position:absolute;color:#334155;font-size:13px;pointer-events:none}.static img{width:100%;border-radius:8px;background:#05070a}.evidence-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}.evidence figure{margin:0}.evidence figcaption{font-size:11px;color:#b8c6dc;margin:4px 0 10px}.contact{margin-top:8px}
-.controls{display:grid;grid-template-columns:repeat(4,minmax(70px,1fr));gap:6px;margin-top:9px}.controls button{padding:8px 3px}.fine-controls{grid-template-columns:repeat(7,minmax(54px,1fr))}.control-label{font-size:12px;color:#8fb3df;margin-top:10px}.yaw{font-family:ui-monospace,monospace;color:#7dd3fc;text-align:center;margin:8px 0}.checks{display:grid;gap:5px;margin-top:10px;padding:9px;border:1px solid #334155;border-radius:8px;background:#0d141f}.checks-title{font-size:12px;color:#8fb3df;margin-bottom:3px}.checks label{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#d5deeb}.checks input{width:auto;margin-top:2px}.decision{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.approve{background:#126137;border-color:#1f9d57}.reject{background:#7d2631;border-color:#bd4353}
+.controls{display:grid;grid-template-columns:repeat(4,minmax(70px,1fr));gap:6px;margin-top:9px}.controls button{padding:8px 3px}.fine-controls{grid-template-columns:repeat(7,minmax(54px,1fr))}.control-label{font-size:12px;color:#8fb3df;margin-top:10px}.axis-line-tools{margin-top:8px;padding:8px;border:1px dashed #4e83bd;border-radius:8px;background:#101b2a}.axis-line-status{font-size:12px;color:#b9d8ff;line-height:1.5}.axis-line-actions{display:grid;grid-template-columns:2fr 1fr;gap:6px;margin-top:6px}.yaw{font-family:ui-monospace,monospace;color:#7dd3fc;text-align:center;margin:8px 0}.checks{display:grid;gap:5px;margin-top:10px;padding:9px;border:1px solid #334155;border-radius:8px;background:#0d141f}.checks-title{font-size:12px;color:#8fb3df;margin-bottom:3px}.checks label{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#d5deeb}.checks input{width:auto;margin-top:2px}.decision{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.approve{background:#126137;border-color:#1f9d57}.reject{background:#7d2631;border-color:#bd4353}
 .video-card{margin-top:14px}.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.tabs button.active{background:#24466e;border-color:#4e83bd}video{width:100%;max-height:560px;background:#000;border-radius:9px}.path{font-size:11px;color:#b8c6dc;white-space:nowrap;overflow:auto;margin-top:7px;padding:7px;background:#0c111a;border-radius:6px}
 .note{margin-top:8px}.nav{display:flex;gap:6px}.status-line{font-size:12px;color:#fbbf24;margin-top:5px}
 @media(max-width:950px){body{height:auto;overflow:auto}.app{display:block;height:auto}aside{height:42vh}.grid{grid-template-columns:1fr}main{padding:12px}.controls{grid-template-columns:repeat(4,1fr)}}
@@ -455,14 +587,14 @@ main{overflow:auto;padding:20px}.stage{max-width:1450px;margin:auto}.danger{back
 <script id="assets" type="application/json">{{assets_json|safe}}</script>
 <div class="app"><aside><header><h1>{{direction_title}}</h1><div class="summary">{{asset_count}} 个资产 · {{direction_summary}}</div><div class="links"><a class="link" href="/docs/controlled_animal_video_review.html">动物成片</a><a class="link" href="/docs/rocketbox_human_video_review.html">人类视频</a></div></header>
 <div class="filters"><input id="search" type="search" placeholder="搜索 asset / breed / 属性"><select id="species"><option value="">全部动物</option><option value="cat">猫</option><option value="dog">狗</option><option value="horse">马</option></select></div><div id="list"></div></aside>
-<main><div class="stage"><div class="danger"><b>先审源姿势，再审坐标方向：</b>歪头、躯干内部扭曲、前后脚错轨不能靠 yaw 修复。v3 的小角度只允许纠正<strong>整只模型刚体坐标系</strong>，请沿躯干/脊柱纵轴调平，绝不能追着歪向一边的头或尾巴。页面不自动判断方向、不预置 mirror，也不覆盖旧 GLB 或视频。</div>
+<main><div class="stage"><div class="danger"><b>先审源姿势，再审头尾方向：</b>歪头、躯干内部扭曲、前后脚错轨不能靠 yaw 修复。声明视角模式会先按 prompt/姿势模板中固定的相机方位自动规范化躯干轴；这不是从 mesh 猜角度。人工只判断是否头尾翻转 180°。旧的诊断模式仍可人工微调刚体轴。页面不预置 mirror，也不覆盖旧 GLB 或视频。</div>
 <div class="title-row"><div><h2 id="title"></h2><div id="sub" class="muted"></div><div id="status" class="status-line"></div></div><div class="nav"><button class="btn" id="prev">←</button><button class="btn" id="next">→</button></div></div><div id="pills" class="pills"></div>
-<div class="grid"><section class="card"><h3>{{gate_heading}}</h3><div class="instructions">{{gate_instructions|safe}}</div><div class="preview-wrap"><canvas id="preview" aria-label="方向实时预览"></canvas><span id="preview-loading" class="preview-loading">正在加载原始 mesh 点云…</span></div><div id="yaw" class="yaw"></div><div id="legacy-controls" class="controls" {% if two_stage %}hidden{% endif %}><button class="btn rot" data-d="-90">↺ −90°</button><button class="btn" id="reset">重置 0°</button><button class="btn rot" data-d="90">↻ +90°</button><button class="btn rot" data-d="180">⇄ 180°</button></div><div id="two-stage-controls" {% if not two_stage %}hidden{% endif %}><div class="control-label">第一步：只看右侧 TOP-DOWN 的躯干/脊柱轴，实时调平</div><div class="controls fine-controls"><button class="btn axis" data-d="-15">−15°</button><button class="btn axis" data-d="-5">−5°</button><button class="btn axis" data-d="-1">−1°</button><button class="btn" id="reset-axis">轴归零</button><button class="btn axis" data-d="1">+1°</button><button class="btn axis" data-d="5">+5°</button><button class="btn axis" data-d="15">+15°</button></div><div class="control-label">第二步：选择头尾/正方向；不会清除第一步的小角度</div><div class="controls"><button class="btn cardinal" data-v="-90">−90°</button><button class="btn cardinal" data-v="0">0°</button><button class="btn cardinal" data-v="90">+90°</button><button class="btn cardinal" data-v="180">180°</button></div></div><div class="checks"><div class="checks-title">可选检查提示（不勾选也能保存）</div><label><input class="pose-check" id="check-spine" type="checkbox">躯干/脊柱本身笔直，没有内部斜扭</label><label><input class="pose-check" id="check-head" type="checkbox">头颈沿躯干方向，没有朝镜头或侧面歪转</label><label><input class="pose-check" id="check-legs" type="checkbox">前后腿轨迹/平面一致，没有错轨</label><label><input class="pose-check" id="check-ground" type="checkbox">四只脚处于同一合理地面，没有悬空</label></div><textarea id="notes" class="note" rows="2" placeholder="可选备注；拒绝时建议写明：歪头 / 躯干内部扭曲 / 前后脚错轨 / 脚未落地"></textarea><div class="decision"><button class="btn approve" id="approve">姿势合格并保存当前方向（0°）</button><button class="btn reject" id="reject">拒绝源姿势，退回重生</button></div></section>
+<div class="grid"><section class="card"><h3>{{gate_heading}}</h3><div class="instructions">{{gate_instructions|safe}}</div><div class="preview-wrap"><canvas id="preview" aria-label="方向实时预览"></canvas><span id="preview-loading" class="preview-loading">正在加载原始 mesh 点云…</span></div><div id="yaw" class="yaw"></div><div id="legacy-controls" class="controls" {% if two_stage %}hidden{% endif %}><button class="btn rot" data-d="-90">↺ −90°</button><button class="btn" id="reset">重置 0°</button><button class="btn rot" data-d="90">↻ +90°</button><button class="btn rot" data-d="180">⇄ 180°</button></div><div id="two-stage-controls" {% if not two_stage %}hidden{% endif %}><div id="declared-axis-note" class="axis-line-tools" {% if not declared_axis %}hidden{% endif %}><div class="axis-line-status">躯干轴已由固定的源视角参数确定性调平，并通过几何残差门禁；这里不允许人工微调，也不会从 mesh 估计应用角度。</div></div><div id="manual-axis-controls" {% if declared_axis %}hidden{% endif %}><div class="control-label">诊断模式第一步：只看右侧 TOP-DOWN 的躯干/脊柱轴，实时调平</div><div class="controls fine-controls"><button class="btn axis" data-d="-15">−15°</button><button class="btn axis" data-d="-5">−5°</button><button class="btn axis" data-d="-1">−1°</button><button class="btn" id="reset-axis">轴归零</button><button class="btn axis" data-d="1">+1°</button><button class="btn axis" data-d="5">+5°</button><button class="btn axis" data-d="15">+15°</button></div><div class="axis-line-tools"><div id="axis-line-status" class="axis-line-status">精确调平：在右侧 TOP-DOWN 躯干上依次点击“躯干后端、躯干前端”；蓝色水平尺是目标线。角度只由你的两点选择产生。</div><div class="axis-line-actions"><button class="btn" id="apply-axis-line" disabled>应用人工两点调平</button><button class="btn" id="clear-axis-line">重选两点</button></div></div></div><div class="control-label">人工步骤：只选择头尾/正方向</div><div class="controls"><button class="btn cardinal" data-v="0">0°</button>{% if not declared_axis %}<button class="btn cardinal" data-v="-90">−90°</button><button class="btn cardinal" data-v="90">+90°</button>{% endif %}<button class="btn cardinal" data-v="180">180°</button></div></div><div class="checks"><div class="checks-title">可选检查提示（不勾选也能保存）</div><label><input class="pose-check" id="check-spine" type="checkbox">躯干/脊柱本身笔直，没有内部斜扭</label><label><input class="pose-check" id="check-head" type="checkbox">头颈沿躯干方向，没有朝镜头或侧面歪转</label><label><input class="pose-check" id="check-legs" type="checkbox">前后腿轨迹/平面一致，没有错轨</label><label><input class="pose-check" id="check-ground" type="checkbox">四只脚处于同一合理地面，没有悬空</label></div><textarea id="notes" class="note" rows="2" placeholder="可选备注；拒绝时建议写明：歪头 / 躯干内部扭曲 / 前后脚错轨 / 脚未落地"></textarea><div class="decision"><button class="btn approve" id="approve">姿势合格并保存当前方向（0°）</button><button class="btn reject" id="reject">拒绝源姿势，退回重生</button></div></section>
 <section class="card static evidence"><h3>绑定前原始证据（不随按钮变化）</h3><div class="instructions">左图是进入 image-to-3D 的当次 FLUX 参考图，右图是当次原始 3D mesh 顶视图。两者用于区分“生成时已经歪”与“后续坐标方向错误”。</div><div class="evidence-pair"><figure><img id="inputref" alt="I2-3D input"><figcaption>当次 FLUX / I2-3D 输入</figcaption></figure><figure><img id="topview" alt="I2-3D static top view"><figcaption>当次原始 3D mesh 顶视图</figcaption></figure></div><img id="contact" class="contact" alt="static contact sheet"><div id="rawpath" class="path"></div></section></div>
 <section class="card video-card"><h3>第二道门：绑定后动作与真实移动方向</h3><div class="instructions">页面同时保留隔离动画证据和已通过批状态认证的 UE Apartment Walk/Idle。请以当前资产的状态标签为准：被拒绝结果只用于定位问题；带 Apartment 标签的结果仍需人工确认方向，不能据此自动注册为正式资产。</div><div class="tabs" id="tabs"></div><video id="video" controls preload="metadata"></video><div id="videopath" class="path"></div></section>
 </div></main></div>
 <script>
-const all=JSON.parse(document.getElementById('assets').textContent),twoStage={{two_stage_json|safe}};let filtered=[...all],idx=0,state={};const $=x=>document.getElementById(x);
+const all=JSON.parse(document.getElementById('assets').textContent),twoStage={{two_stage_json|safe}},declaredAxis={{declared_axis_json|safe}};let filtered=[...all],idx=0,state={};const $=x=>document.getElementById(x);
 async function loadState(){state=await (await fetch('/api/state')).json();render()}
 function current(){return filtered[idx]}
 function apply(){const q=$('search').value.toLowerCase(),s=$('species').value;filtered=all.filter(a=>(!s||a.species===s)&&(!q||(`${a.asset_id} ${a.breed} ${JSON.stringify(a.sampled_attributes)}`).toLowerCase().includes(q)));idx=0;render()}
@@ -471,21 +603,25 @@ function evidenceLabel(a){const e=a.current_evidence_status.walking_direction||'
 function renderList(){const list=$('list');list.replaceChildren();filtered.forEach((a,i)=>{const b=document.createElement('button'),st=itemStatus(a.asset_id),failed=(a.current_evidence_status.walking_direction||'').includes('rejected');b.className='item'+(i===idx?' active':'');b.innerHTML=`<div class="item-title"><span class="dot ${st.includes('approved')?'ok':(st.includes('rejected')||failed)?'bad':''}"></span></div><div class="item-meta"></div>`;b.querySelector('.item-title').append(a.asset_id);b.querySelector('.item-meta').textContent=`${a.species} · ${a.breed} · ${evidenceLabel(a)} · ${st}`;b.onclick=()=>{idx=i;render()};list.append(b)})}
 let view='apartment_walking_review';const labels={walking_side:'绑定后 Walk 侧面',walking_front:'绑定后 Walk 正面',idle_side:'绑定后 Idle 侧面',apartment_walking_review:'UE Walk + Top-down',apartment_walking_main:'UE Walk 主视图',apartment_walking_topdown:'Walk Top-down',apartment_idle_review:'UE Idle + Top-down',apartment_idle_main:'UE Idle 主视图',apartment_idle_topdown:'Idle Top-down'};
 function poseChecks(){return{spine_is_straight:$('check-spine').checked,head_is_aligned_with_torso:$('check-head').checked,front_and_hind_legs_share_consistent_planes:$('check-legs').checked,all_paws_share_one_ground_plane:$('check-ground').checked}}
-const cloudCache=new Map();let prefetchTimer=0,prefetchGeneration=0,yawBusy=false;
+const cloudCache=new Map(),axisLineByAsset=new Map();let prefetchTimer=0,prefetchGeneration=0,yawBusy=false,previewTopPanel=null,previewTopTransform=null;
 function preloadImage(url){return new Promise(resolve=>{const image=new Image();image.onload=image.onerror=resolve;image.src=url})}
 async function ensureCloud(a,{quiet=false}={}){if(cloudCache.has(a.asset_id)){if(current()?.asset_id===a.asset_id)drawPreview();return cloudCache.get(a.asset_id)}if(!quiet)$('preview-loading').textContent='正在加载原始 mesh 点云…';const response=await fetch(`/api/preview-points/${encodeURIComponent(a.asset_id)}`);if(!response.ok)throw Error((await response.json()).error||'点云加载失败');const data=await response.json();cloudCache.set(a.asset_id,data);if(current()?.asset_id===a.asset_id)drawPreview();return data}
 function arrow(ctx,x1,y1,x2,y2,color,label){const angle=Math.atan2(y2-y1,x2-x1);ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=4;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.beginPath();ctx.moveTo(x2,y2);ctx.lineTo(x2-13*Math.cos(angle-Math.PI/6),y2-13*Math.sin(angle-Math.PI/6));ctx.lineTo(x2-13*Math.cos(angle+Math.PI/6),y2-13*Math.sin(angle+Math.PI/6));ctx.closePath();ctx.fill();ctx.font='700 13px system-ui';ctx.fillText(label,Math.min(x1,x2)+5,Math.min(y1,y2)-8);ctx.restore()}
-function drawPreview(){const canvas=$('preview'),a=current();if(!a)return;const cloud=cloudCache.get(a.asset_id),loading=$('preview-loading');if(!cloud){loading.hidden=false;return}loading.hidden=true;const rect=canvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1,w=Math.max(430,Math.round(rect.width)),h=Math.max(380,Math.round(rect.height));canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);const yaw=Number((state[a.asset_id]||{}).yaw_deg||0)*Math.PI/180,c=Math.cos(yaw),s=Math.sin(yaw),points=cloud.points.map(p=>[c*p[0]+s*p[2],p[1],-s*p[0]+c*p[2]]);const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];for(const p of points)for(let k=0;k<3;k++){if(p[k]<min[k])min[k]=p[k];if(p[k]>max[k])max[k]=p[k]}const gap=26,leftW=(w-gap)*.61,rightX=leftW+gap,rightW=w-rightX,pad=38,topPad=52,bottomPad=58;function projector(kind){const x0=kind==='side'?0:rightX,pw=kind==='side'?leftW:rightW,vi=kind==='side'?1:2,rx=Math.max(1e-9,max[0]-min[0]),ry=Math.max(1e-9,max[vi]-min[vi]),scale=Math.min((pw-pad*2)/rx,(h-topPad-bottomPad)/ry)*.92,cx=(min[0]+max[0])/2,cy=(min[vi]+max[vi])/2;return p=>[x0+pw/2+(p[0]-cx)*scale,topPad+(h-topPad-bottomPad)/2-(p[vi]-cy)*scale]};const side=projector('side'),top=projector('top');ctx.fillStyle='rgba(40,107,179,.24)';for(const p of points){const q=side(p);ctx.fillRect(q[0],q[1],1.25,1.25)}ctx.fillStyle='rgba(31,138,85,.24)';for(const p of points){const q=top(p);ctx.fillRect(q[0],q[1],1.25,1.25)}ctx.strokeStyle='#cbd5e1';ctx.lineWidth=1;ctx.strokeRect(1,1,leftW-2,h-2);ctx.strokeRect(rightX+1,1,rightW-2,h-2);ctx.fillStyle='#111827';ctx.font='700 14px system-ui';ctx.fillText('SIDE：动物必须直立',18,26);ctx.fillText('TOP-DOWN：躯干/脊柱必须朝右',rightX+18,26);arrow(ctx,leftW*.22,h-28,leftW*.82,h-28,'#08752d','FORWARD +X  →');arrow(ctx,rightX+rightW*.16,h-28,rightX+rightW*.84,h-28,'#08752d','FORWARD +X  →');arrow(ctx,22,h*.72,22,h*.28,'#2563eb','UP +Y  ↑')}
+function axisLineMeasurement(){const a=current(),line=a&&axisLineByAsset.get(a.asset_id),panel=previewTopPanel,t=previewTopTransform;if(!line||line.length!==2||!panel||!t)return null;const screen=line.map(p=>[panel.x+p[0]*panel.width,panel.y+p[1]*panel.height]),model=screen.map(p=>[t.modelX+(p[0]-t.screenX)/t.scale,t.modelZ-(p[1]-t.screenY)/t.scale]),dx=model[1][0]-model[0][0],dz=model[1][1]-model[0][1];if(dx<=0||Math.hypot(screen[1][0]-screen[0][0],screen[1][1]-screen[0][1])<20)return null;const residual=Math.atan2(dz,dx)*180/Math.PI,axis=Number((state[a.asset_id]||{}).axis_alignment_yaw_deg||0),result=Math.round((axis+residual)*1000)/1000;if(Math.abs(residual)>30||Math.abs(result)>45)return null;return{torso_back_normalized:line[0],torso_front_normalized:line[1],torso_back_xz:model[0],torso_front_xz:model[1],residual_yaw_deg:Math.round(residual*1000)/1000,result_axis_yaw_deg:result}}
+function updateAxisLineUI(){if(!twoStage)return;const a=current(),line=a&&axisLineByAsset.get(a.asset_id),measurement=axisLineMeasurement(),status=$('axis-line-status'),apply=$('apply-axis-line'),locked=Boolean(a&&(state[a.asset_id]||{}).decision)||yawBusy;if(!line||line.length===0)status.textContent='精确调平：在右侧 TOP-DOWN 躯干上依次点击“躯干后端、躯干前端”；蓝色水平尺是目标线。角度只由你的两点选择产生。';else if(line.length===1)status.textContent='已选躯干后端；现在点击躯干前端（不要点头尖或尾尖）。';else if(!measurement)status.textContent='两点顺序或距离不合格：请按“躯干后端 → 躯干前端”重新选择。';else status.textContent=`人工两点测得残余 ${measurement.residual_yaw_deg>0?'+':''}${measurement.residual_yaw_deg}°；应用后轴角为 ${measurement.result_axis_yaw_deg}°。`;apply.disabled=locked||!measurement;$('clear-axis-line').disabled=locked||!line}
+function drawPreview(){const canvas=$('preview'),a=current();if(!a)return;const cloud=cloudCache.get(a.asset_id),loading=$('preview-loading');if(!cloud){loading.hidden=false;return}loading.hidden=true;const rect=canvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1,w=Math.max(430,Math.round(rect.width)),h=Math.max(380,Math.round(rect.height));canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);const yaw=Number((state[a.asset_id]||{}).yaw_deg||0)*Math.PI/180,c=Math.cos(yaw),s=Math.sin(yaw),points=cloud.points.map(p=>[c*p[0]+s*p[2],p[1],-s*p[0]+c*p[2]]);const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];for(const p of points)for(let k=0;k<3;k++){if(p[k]<min[k])min[k]=p[k];if(p[k]>max[k])max[k]=p[k]}const gap=26,leftW=(w-gap)*.61,rightX=leftW+gap,rightW=w-rightX,pad=38,topPad=52,bottomPad=58;previewTopPanel={x:rightX,y:topPad,width:rightW,height:h-topPad-bottomPad};function projector(kind){const x0=kind==='side'?0:rightX,pw=kind==='side'?leftW:rightW,vi=kind==='side'?1:2,rx=Math.max(1e-9,max[0]-min[0]),ry=Math.max(1e-9,max[vi]-min[vi]),scale=Math.min((pw-pad*2)/rx,(h-topPad-bottomPad)/ry)*.92,cx=(min[0]+max[0])/2,cy=(min[vi]+max[vi])/2,screenX=x0+pw/2,screenY=topPad+(h-topPad-bottomPad)/2;if(kind==='top')previewTopTransform={modelX:cx,modelZ:cy,screenX,screenY,scale};return p=>[screenX+(p[0]-cx)*scale,screenY-(p[vi]-cy)*scale]};const side=projector('side'),top=projector('top');ctx.fillStyle='rgba(40,107,179,.24)';for(const p of points){const q=side(p);ctx.fillRect(q[0],q[1],1.25,1.25)}ctx.fillStyle='rgba(31,138,85,.24)';for(const p of points){const q=top(p);ctx.fillRect(q[0],q[1],1.25,1.25)}ctx.strokeStyle='#cbd5e1';ctx.lineWidth=1;ctx.strokeRect(1,1,leftW-2,h-2);ctx.strokeRect(rightX+1,1,rightW-2,h-2);const line=axisLineByAsset.get(a.asset_id)||[],guideY=line.length?topPad+line[0][1]*previewTopPanel.height:topPad+previewTopPanel.height/2;ctx.save();ctx.strokeStyle='#2563eb';ctx.lineWidth=2;ctx.setLineDash([9,6]);ctx.beginPath();ctx.moveTo(rightX+12,guideY);ctx.lineTo(w-12,guideY);ctx.stroke();ctx.setLineDash([]);if(line.length){const projected=line.map(p=>[rightX+p[0]*previewTopPanel.width,topPad+p[1]*previewTopPanel.height]);if(projected.length===2){ctx.strokeStyle='#ef4444';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(...projected[0]);ctx.lineTo(...projected[1]);ctx.stroke()}projected.forEach((p,i)=>{ctx.fillStyle=i?'#16a34a':'#dc2626';ctx.beginPath();ctx.arc(p[0],p[1],6,0,Math.PI*2);ctx.fill();ctx.fillStyle='#111827';ctx.font='700 11px system-ui';ctx.fillText(i?'前':'后',p[0]+8,p[1]-8)})}ctx.restore();ctx.fillStyle='#111827';ctx.font='700 14px system-ui';ctx.fillText('SIDE：动物必须直立',18,26);ctx.fillText('TOP-DOWN：躯干/脊柱必须朝右',rightX+18,26);arrow(ctx,leftW*.22,h-28,leftW*.82,h-28,'#08752d','FORWARD +X  →');arrow(ctx,rightX+rightW*.16,h-28,rightX+rightW*.84,h-28,'#08752d','FORWARD +X  →');arrow(ctx,22,h*.72,22,h*.28,'#2563eb','UP +Y  ↑');updateAxisLineUI()}
+function captureAxisPoint(event){const a=current(),canvas=$('preview'),st=a&&(state[a.asset_id]||{});if(!twoStage||declaredAxis||!a||!previewTopPanel||yawBusy||st.decision)return;const rect=canvas.getBoundingClientRect(),x=event.clientX-rect.left,y=event.clientY-rect.top,p=previewTopPanel;if(x<p.x||x>p.x+p.width||y<p.y||y>p.y+p.height)return;let line=axisLineByAsset.get(a.asset_id)||[];if(line.length>=2)line=[];line=[...line,[Math.max(0,Math.min(1,(x-p.x)/p.width)),Math.max(0,Math.min(1,(y-p.y)/p.height))]];axisLineByAsset.set(a.asset_id,line);drawPreview()}
 function normalizeYaw(value){let yaw=((Number(value)+180)%360+360)%360-180;if(Math.abs(yaw+180)<1e-9)return 180;if(Math.abs(yaw)<1e-9)return 0;return yaw}
-function updateYawUI(){const a=current();if(!a)return;const st=state[a.asset_id]||{yaw_deg:0},yaw=Number(st.yaw_deg||0),axis=Number(st.axis_alignment_yaw_deg||0),cardinal=Number(st.cardinal_yaw_deg||0);$('yaw').textContent=twoStage?`人工轴对齐 ${axis}° + 头尾方向 ${cardinal}° = 绑定总 yaw ${yaw}°`:`raw mesh + manual cardinal yaw = ${yaw}°`;$('approve').textContent=`姿势合格并保存当前方向（${yaw}°）`;const locked=Boolean(st.decision)||yawBusy;document.querySelectorAll('.rot,.axis,.cardinal,#reset,#reset-axis,#approve,#reject,.pose-check').forEach(x=>x.disabled=locked)}
+function updateYawUI(){const a=current();if(!a)return;const st=state[a.asset_id]||{yaw_deg:0},yaw=Number(st.yaw_deg||0),axis=Number(st.axis_alignment_yaw_deg||0),cardinal=Number(st.cardinal_yaw_deg||0);$('yaw').textContent=declaredAxis?`固定源视角规范化 ${axis}° + 人工头尾方向 ${cardinal}° = 绑定总 yaw ${yaw}°`:twoStage?`人工轴对齐 ${axis}° + 头尾方向 ${cardinal}° = 绑定总 yaw ${yaw}°`:`raw mesh + manual cardinal yaw = ${yaw}°`;$('approve').textContent=`姿势合格并保存当前方向（${yaw}°）`;const locked=Boolean(st.decision)||yawBusy;document.querySelectorAll('.rot,.axis,.cardinal,#reset,#reset-axis,#approve,#reject,.pose-check').forEach(x=>x.disabled=locked);updateAxisLineUI()}
 async function mutateYaw(operation,value=0){if(yawBusy)return;const a=current();if(!a)return;const assetId=a.asset_id,before=Number((state[assetId]||{}).yaw_deg||0),next=operation==='reset'?0:normalizeYaw(before+value);state[assetId]={...(state[assetId]||{}),yaw_deg:next};yawBusy=true;updateYawUI();drawPreview();try{const url=operation==='reset'?`/api/reset/${encodeURIComponent(assetId)}`:`/api/rotate/${encodeURIComponent(assetId)}`,payload=operation==='reset'?{}:{delta_deg:Number(value)},response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),result=await response.json();if(!response.ok)throw Error(result.error||'方向保存失败');state[assetId]=result}catch(error){state[assetId]={...(state[assetId]||{}),yaw_deg:before};alert(error.message)}finally{yawBusy=false;if(current()?.asset_id===assetId){updateYawUI();drawPreview()}renderList()}}
-async function mutateTwoStage(mode,value){if(yawBusy)return;const a=current();if(!a)return;const assetId=a.asset_id,before={...(state[assetId]||{})},axis=mode==='axis_delta'?Number(before.axis_alignment_yaw_deg||0)+Number(value):mode==='axis_reset'?0:Number(before.axis_alignment_yaw_deg||0),cardinal=mode==='cardinal_set'?Number(value):Number(before.cardinal_yaw_deg||0),next=normalizeYaw(axis+cardinal);state[assetId]={...before,axis_alignment_yaw_deg:axis,cardinal_yaw_deg:cardinal,yaw_deg:next};yawBusy=true;updateYawUI();drawPreview();try{const response=await fetch(`/api/rotate/${encodeURIComponent(assetId)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode,value:Number(value||0)})}),result=await response.json();if(!response.ok)throw Error(result.error||'方向保存失败');state[assetId]=result}catch(error){state[assetId]=before;alert(error.message)}finally{yawBusy=false;if(current()?.asset_id===assetId){updateYawUI();drawPreview()}renderList()}}
+async function mutateTwoStage(mode,value){if(yawBusy)return;const a=current();if(!a)return;const assetId=a.asset_id,before={...(state[assetId]||{})},axis=mode==='axis_delta'?Number(before.axis_alignment_yaw_deg||0)+Number(value):mode==='axis_reset'?0:Number(before.axis_alignment_yaw_deg||0),cardinal=mode==='cardinal_set'?Number(value):Number(before.cardinal_yaw_deg||0),next=normalizeYaw(axis+cardinal);axisLineByAsset.delete(assetId);state[assetId]={...before,axis_alignment_yaw_deg:axis,cardinal_yaw_deg:cardinal,yaw_deg:next};yawBusy=true;updateYawUI();drawPreview();try{const response=await fetch(`/api/rotate/${encodeURIComponent(assetId)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode,value:Number(value||0)})}),result=await response.json();if(!response.ok)throw Error(result.error||'方向保存失败');state[assetId]=result}catch(error){state[assetId]=before;alert(error.message)}finally{yawBusy=false;if(current()?.asset_id===assetId){updateYawUI();drawPreview()}renderList()}}
+async function applyManualAxisLine(){if(yawBusy)return;const a=current(),measurement=axisLineMeasurement();if(!a||!measurement)return;const assetId=a.asset_id,before={...(state[assetId]||{})},axis=measurement.result_axis_yaw_deg,cardinal=Number(before.cardinal_yaw_deg||0);state[assetId]={...before,axis_alignment_yaw_deg:axis,yaw_deg:normalizeYaw(axis+cardinal)};yawBusy=true;updateYawUI();drawPreview();try{const response=await fetch(`/api/rotate/${encodeURIComponent(assetId)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'axis_set_from_manual_line',value:measurement})}),result=await response.json();if(!response.ok)throw Error(result.error||'人工两点调平保存失败');state[assetId]=result;axisLineByAsset.delete(assetId)}catch(error){state[assetId]=before;alert(error.message)}finally{yawBusy=false;if(current()?.asset_id===assetId){updateYawUI();drawPreview()}renderList()}}
 async function prefetchNeighbors(){const generation=++prefetchGeneration;if(filtered.length<2)return;for(const offset of [1,-1]){if(generation!==prefetchGeneration)return;const a=filtered[(idx+offset+filtered.length)%filtered.length],input=(a.artifacts.reference_image||a.artifacts.pixal_input_rgba).url;await Promise.all([ensureCloud(a,{quiet:true}),...([input,a.artifacts.static_top_view.url,a.artifacts.static_contact_sheet.url].map(preloadImage))])}}
 function queueNeighborPrefetch(){clearTimeout(prefetchTimer);prefetchTimer=setTimeout(prefetchNeighbors,120)}
 function render(){renderList();const a=current();if(!a)return;const st=state[a.asset_id]||{yaw_deg:0,revision:0};$('title').textContent=a.asset_id;$('sub').textContent=`${a.species} · ${a.breed} · ${a.profile_schema_id}`;$('status').textContent=`${evidenceLabel(a)}；${twoStage?'躯干轴对齐/头尾方向':'源姿势/整90°倍数方向'}：${st.decision?.status||'待人工审核'}`;$('pills').replaceChildren(...Object.entries(a.sampled_attributes).map(([k,v])=>{const x=document.createElement('span');x.className='pill';x.textContent=`${k}=${v}`;return x}));$('inputref').src=(a.artifacts.reference_image||a.artifacts.pixal_input_rgba).url;$('topview').src=a.artifacts.static_top_view.url;$('contact').src=a.artifacts.static_contact_sheet.url;$('rawpath').textContent=(a.artifacts.i23d_raw_glb||a.artifacts.pixal_raw_glb||a.artifacts.prebind_lod_glb).absolute_path;document.querySelectorAll('.pose-check').forEach(x=>x.checked=false);renderVideo();updateYawUI();drawPreview();ensureCloud(a).catch(e=>{$('preview-loading').hidden=false;$('preview-loading').textContent=e.message});queueNeighborPrefetch()}
 function renderVideo(){const a=current();const keys=Object.keys(labels).filter(k=>a.artifacts[k]);const tabs=$('tabs');if(!keys.length){tabs.replaceChildren();$('video').removeAttribute('src');$('videopath').textContent='该阶段尚无动画媒体';return}if(!a.artifacts[view])view=keys[0];tabs.replaceChildren(...keys.map(k=>{const b=document.createElement('button');b.className='btn'+(view===k?' active':'');b.textContent=labels[k];b.onclick=()=>{view=k;renderVideo()};return b}));const m=a.artifacts[view];$('video').src=m.url;$('videopath').textContent=m.absolute_path}
 async function post(url,payload={}){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const j=await r.json();if(!r.ok){alert(j.error||'操作失败');throw Error(j.error)}state[j.asset_id]=j;render()}
-document.querySelectorAll('.rot').forEach(b=>b.onclick=()=>mutateYaw('rotate',Number(b.dataset.d)));if($('reset'))$('reset').onclick=()=>mutateYaw('reset');document.querySelectorAll('.axis').forEach(b=>b.onclick=()=>mutateTwoStage('axis_delta',Number(b.dataset.d)));document.querySelectorAll('.cardinal').forEach(b=>b.onclick=()=>mutateTwoStage('cardinal_set',Number(b.dataset.v)));if($('reset-axis'))$('reset-axis').onclick=()=>mutateTwoStage('axis_reset',0);$('approve').onclick=()=>{const checks=poseChecks(),yaw=Number((state[current().asset_id]||{}).yaw_deg||0),status=twoStage?'source_pose_and_manual_orientation_approved':'source_pose_and_cardinal_orientation_approved';if(confirm(`确认源姿势合格，并保存当前方向 ${yaw}°？检查项为可选提示；这只保存人工方向，不会自动注册正式资产。`))post(`/api/decision/${encodeURIComponent(current().asset_id)}`,{status,notes:$('notes').value,pose_checks:checks})};$('reject').onclick=()=>{const notes=$('notes').value.trim()||'源姿势失败：头颈、躯干、腿平面或落地至少一项不合格';if(confirm('确认拒绝源姿势并退回 2D/image-to-3D 重生？'))post(`/api/decision/${encodeURIComponent(current().asset_id)}`,{status:'source_pose_rejected',notes,pose_checks:poseChecks()})};
+document.querySelectorAll('.rot').forEach(b=>b.onclick=()=>mutateYaw('rotate',Number(b.dataset.d)));if($('reset'))$('reset').onclick=()=>mutateYaw('reset');document.querySelectorAll('.axis').forEach(b=>b.onclick=()=>mutateTwoStage('axis_delta',Number(b.dataset.d)));document.querySelectorAll('.cardinal').forEach(b=>b.onclick=()=>mutateTwoStage('cardinal_set',Number(b.dataset.v)));if($('reset-axis'))$('reset-axis').onclick=()=>mutateTwoStage('axis_reset',0);$('preview').onclick=captureAxisPoint;$('apply-axis-line').onclick=applyManualAxisLine;$('clear-axis-line').onclick=()=>{const a=current();if(a){axisLineByAsset.delete(a.asset_id);drawPreview()}};$('approve').onclick=()=>{const checks=poseChecks(),yaw=Number((state[current().asset_id]||{}).yaw_deg||0),status=twoStage?'source_pose_and_manual_orientation_approved':'source_pose_and_cardinal_orientation_approved';if(confirm(`确认源姿势合格，并保存当前方向 ${yaw}°？检查项为可选提示；这只保存人工方向，不会自动注册正式资产。`))post(`/api/decision/${encodeURIComponent(current().asset_id)}`,{status,notes:$('notes').value,pose_checks:checks})};$('reject').onclick=()=>{const notes=$('notes').value.trim()||'源姿势失败：头颈、躯干、腿平面或落地至少一项不合格';if(confirm('确认拒绝源姿势并退回 2D/image-to-3D 重生？'))post(`/api/decision/${encodeURIComponent(current().asset_id)}`,{status:'source_pose_rejected',notes,pose_checks:poseChecks()})};
 $('prev').onclick=()=>{if(filtered.length){idx=(idx-1+filtered.length)%filtered.length;render()}};$('next').onclick=()=>{if(filtered.length){idx=(idx+1)%filtered.length;render()}};$('search').oninput=apply;$('species').oninput=apply;window.onresize=drawPreview;window.onkeydown=e=>{if(e.key==='ArrowLeft')$('prev').click();if(e.key==='ArrowRight')$('next').click()};loadState();
 </script></body></html>"""
 
@@ -496,11 +632,31 @@ def create_app(
     *,
     host: str = "127.0.0.1",
     port: int = 8102,
+    carry_forward_decision_root: Path | None = None,
 ) -> Flask:
     manifest_path = Path(manifest_path).resolve()
     state_root = Path(state_root).resolve()
     manifest, entries = _validate_manifest(manifest_path)
     two_stage = manifest["schema"] == MANIFEST_SCHEMA_V3
+    declared_axis_by_asset = {
+        asset_id: alignment
+        for asset_id, entry in entries.items()
+        if (alignment := _declared_axis_alignment(entry)) is not None
+    }
+    if declared_axis_by_asset and len(declared_axis_by_asset) != len(entries):
+        raise ReviewServerError(
+            "one review manifest cannot mix declared-axis and manual-axis entries"
+        )
+    declared_axis_mode = bool(declared_axis_by_asset)
+    if carry_forward_decision_root is not None:
+        carry_forward_decision_root = Path(carry_forward_decision_root).resolve()
+        if (
+            carry_forward_decision_root.is_symlink()
+            or not carry_forward_decision_root.is_dir()
+        ):
+            raise ReviewServerError(
+                "carry-forward decision root is missing or unsafe"
+            )
     state_root.mkdir(parents=True, exist_ok=True)
     (state_root / "previews").mkdir(exist_ok=True)
     (state_root / "states").mkdir(exist_ok=True)
@@ -522,6 +678,7 @@ def create_app(
         DIRECTION_HOST=host,
         DIRECTION_PORT=port,
         DIRECTION_TWO_STAGE=two_stage,
+        DIRECTION_DECLARED_AXIS_MODE=declared_axis_mode,
     )
 
     def state_path(asset_id: str) -> Path:
@@ -529,6 +686,28 @@ def create_app(
 
     def decision_path(asset_id: str) -> Path:
         return state_root / "decisions" / f"{asset_id}.json"
+
+    def carried_decision(asset_id: str) -> tuple[dict[str, Any], Path] | None:
+        if carry_forward_decision_root is None:
+            return None
+        path = carry_forward_decision_root / f"{asset_id}.json"
+        if not path.is_file() or path.is_symlink():
+            return None
+        decision = _read_json(path)
+        if (
+            decision.get("schema") != DECISION_SCHEMA_V3
+            or decision.get("asset_id") != asset_id
+            or decision.get("manifest_sha256") != manifest["manifest_sha256"]
+            or decision.get("status")
+            != "source_pose_and_manual_orientation_approved"
+            or decision.get("automatic_orientation_inference_used") is not False
+            or decision.get("decision_sha256")
+            != _hash_without(decision, "decision_sha256")
+        ):
+            raise ReviewServerError(
+                f"carry-forward direction decision is invalid: {asset_id}"
+            )
+        return decision, path
 
     def read_state(asset_id: str) -> dict[str, Any]:
         path = state_path(asset_id)
@@ -542,10 +721,59 @@ def create_app(
                 "revision": 0,
             }
             if two_stage:
-                base.update(
-                    axis_alignment_yaw_deg=0.0,
-                    cardinal_yaw_deg=0.0,
-                )
+                carried = carried_decision(asset_id)
+                if carried is None:
+                    declared = declared_axis_by_asset.get(asset_id)
+                    axis_yaw = declared["yaw_deg"] if declared else 0.0
+                    base.update(
+                        axis_alignment_yaw_deg=axis_yaw,
+                        cardinal_yaw_deg=0.0,
+                        yaw_deg=_normalize_yaw(axis_yaw),
+                    )
+                    if declared:
+                        base["history"] = [
+                            {
+                                "operation": (
+                                    "apply_fixed_declared_source_view_"
+                                    "canonicalization"
+                                ),
+                                "value": axis_yaw,
+                            }
+                        ]
+                else:
+                    previous, previous_path = carried
+                    axis_yaw = float(
+                        previous[
+                            "manual_axis_alignment_yaw_about_gltf_positive_y_deg"
+                        ]
+                    )
+                    cardinal_yaw = float(
+                        previous[
+                            "manual_cardinal_head_tail_yaw_about_gltf_positive_y_deg"
+                        ]
+                    )
+                    base.update(
+                        axis_alignment_yaw_deg=axis_yaw,
+                        cardinal_yaw_deg=cardinal_yaw,
+                        yaw_deg=_normalize_yaw(axis_yaw + cardinal_yaw),
+                        history=[
+                            {
+                                "operation": (
+                                    "carry_forward_previous_human_decision_for_"
+                                    "superseding_review"
+                                ),
+                                "value": {
+                                    "axis_alignment_yaw_deg": axis_yaw,
+                                    "cardinal_yaw_deg": cardinal_yaw,
+                                },
+                            }
+                        ],
+                        supersedes_decision={
+                            "absolute_path": str(previous_path),
+                            "sha256": _sha256_file(previous_path),
+                            "decision_sha256": previous["decision_sha256"],
+                        },
+                    )
         else:
             base = _read_json(path)
             common_invalid = (
@@ -571,6 +799,17 @@ def create_app(
                             abs_tol=1.0e-6,
                         )
                     )
+                    declared = declared_axis_by_asset.get(asset_id)
+                    if declared:
+                        common_invalid = common_invalid or (
+                            not math.isclose(
+                                axis_yaw,
+                                declared["yaw_deg"],
+                                abs_tol=1.0e-9,
+                            )
+                            or cardinal_yaw not in DECLARED_HEAD_TAIL_YAWS
+                            or "manual_axis_line" in base
+                        )
             else:
                 try:
                     common_invalid = common_invalid or (
@@ -706,14 +945,27 @@ def create_app(
     @app.get("/")
     def index():
         public = [_public_entry(entry) for entry in entries.values()]
-        if two_stage:
+        if declared_axis_mode:
+            alignment = next(iter(declared_axis_by_asset.values()))
+            direction_title = "动物固定视角规范化 + 头尾人工审核"
+            direction_summary = "躯干轴由代码固定调平；人工只判断 0°/180°"
+            gate_heading = "自动门已调平躯干轴；人工门只选择头尾方向"
+            gate_instructions = (
+                "预览已按 prompt/姿势模板声明的固定相机方位旋转 "
+                f"<strong>{alignment['yaw_deg']:g}°</strong>，并通过不超过 "
+                f"<strong>{alignment['maximum_residual_deg']:g}°</strong> 的"
+                "躯干轴残差门禁。应用角度不来自 mesh 推断。请只选择 0° 或 "
+                "180°，让<strong style=\"color:#4ade80\">头部朝绿色 +X"
+                "</strong>。"
+            )
+        elif two_stage:
             direction_title = "动物源姿势与两步人工方向审核"
             direction_summary = "躯干轴微调 + 头尾方向；不使用自动判断"
             gate_heading = "人工门：先调平刚体躯干轴，再选择头尾方向"
             gate_instructions = (
                 "预览从<strong>原始 100k mesh、identity 变换</strong>开始。"
                 "第一步只看 TOP-DOWN 躯干/脊柱纵轴，用 ±1°/5°/15° 实时调平；"
-                "第二步选择 0°、−90°、+90° 或 180° 头尾方向。两项相加后让"
+                "第二步：选择头尾/正方向，可选 0°、−90°、+90° 或 180°。两项相加后让"
                 "<strong style=\"color:#4ade80\">躯干朝绿色 +X</strong>。"
                 "全部操作由审核者完成，代码不估计角度。"
             )
@@ -733,6 +985,8 @@ def create_app(
             assets_json=json.dumps(public, ensure_ascii=False).replace("</", "<\\/"),
             two_stage=two_stage,
             two_stage_json=json.dumps(two_stage),
+            declared_axis=declared_axis_mode,
+            declared_axis_json=json.dumps(declared_axis_mode),
             direction_title=direction_title,
             direction_summary=direction_summary,
             gate_heading=gate_heading,
@@ -771,10 +1025,34 @@ def create_app(
             state = read_state(asset_id)
             if two_stage:
                 mode = payload.get("mode")
-                try:
-                    value = float(payload.get("value"))
-                except (TypeError, ValueError) as error:
-                    raise ReviewServerError("manual yaw value must be numeric") from error
+                declared = declared_axis_by_asset.get(asset_id)
+                if declared and mode != "cardinal_set":
+                    raise ReviewServerError(
+                        "declared source-view axis is immutable; only 0/180 head-tail review is allowed"
+                    )
+                if mode == "axis_set_from_manual_line":
+                    next_axis, manual_line = _validate_manual_axis_line(
+                        payload.get("value"),
+                        current_axis_yaw_deg=float(
+                            state["axis_alignment_yaw_deg"]
+                        ),
+                    )
+                    state["axis_alignment_yaw_deg"] = next_axis
+                    state["manual_axis_line"] = manual_line
+                    state["history"].append(
+                        {
+                            "operation": "manual_axis_yaw_set_from_human_line",
+                            "value": copy.deepcopy(manual_line),
+                        }
+                    )
+                else:
+                    state.pop("manual_axis_line", None)
+                    try:
+                        value = float(payload.get("value"))
+                    except (TypeError, ValueError) as error:
+                        raise ReviewServerError(
+                            "manual yaw value must be numeric"
+                        ) from error
                 if mode == "axis_delta":
                     if value not in ALLOWED_AXIS_DELTAS:
                         raise ReviewServerError(
@@ -795,7 +1073,10 @@ def create_app(
                         {"operation": "manual_axis_yaw_reset", "value": 0.0}
                     )
                 elif mode == "cardinal_set":
-                    if value not in CARDINAL_YAWS:
+                    allowed_cardinals = (
+                        DECLARED_HEAD_TAIL_YAWS if declared else CARDINAL_YAWS
+                    )
+                    if value not in allowed_cardinals:
                         raise ReviewServerError(
                             f"unsupported cardinal head/tail yaw: {value}"
                         )
@@ -803,7 +1084,7 @@ def create_app(
                     state["history"].append(
                         {"operation": "manual_cardinal_yaw_set_deg", "value": value}
                     )
-                else:
+                elif mode != "axis_set_from_manual_line":
                     raise ReviewServerError("two-stage yaw mode is invalid")
                 state["yaw_deg"] = _normalize_yaw(
                     float(state["axis_alignment_yaw_deg"])
@@ -834,20 +1115,38 @@ def create_app(
             if decision_path(asset_id).exists():
                 raise ReviewServerError("direction decision is already immutable")
             previous = read_state(asset_id)
+            declared = declared_axis_by_asset.get(asset_id)
+            initial_axis = declared["yaw_deg"] if declared else 0.0
             state: dict[str, Any] = {
                 "schema": STATE_SCHEMA_V3 if two_stage else STATE_SCHEMA,
                 "asset_id": asset_id,
                 "manifest_sha256": manifest["manifest_sha256"],
-                "yaw_deg": 0.0,
-                "history": [],
+                "yaw_deg": _normalize_yaw(initial_axis),
+                "history": (
+                    [
+                        {
+                            "operation": (
+                                "restore_fixed_declared_source_view_"
+                                "canonicalization"
+                            ),
+                            "value": initial_axis,
+                        }
+                    ]
+                    if declared
+                    else []
+                ),
                 "revision": int(previous.get("revision", 0)) + 1,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             if two_stage:
                 state.update(
-                    axis_alignment_yaw_deg=0.0,
+                    axis_alignment_yaw_deg=initial_axis,
                     cardinal_yaw_deg=0.0,
                 )
+                if "supersedes_decision" in previous:
+                    state["supersedes_decision"] = copy.deepcopy(
+                        previous["supersedes_decision"]
+                    )
             write_state(asset_id, state)
         return jsonify(state)
 
@@ -875,6 +1174,7 @@ def create_app(
         with locks[asset_id]:
             state = read_state(asset_id)
             yaw_deg = float(state["yaw_deg"])
+            declared = declared_axis_by_asset.get(asset_id)
             if not two_stage and yaw_deg not in CARDINAL_YAWS:
                 raise ReviewServerError("saved yaw is not cardinal")
             matrix = _manual_preview_matrix(yaw_deg)
@@ -898,7 +1198,11 @@ def create_app(
                     entry["artifacts"]["static_top_view"]
                 ),
                 "automatic_orientation_inference_used": False,
-                "initial_preview_pretransform": "identity",
+                "initial_preview_pretransform": (
+                    "fixed_declared_source_view_canonicalization"
+                    if declared
+                    else "identity"
+                ),
                 "manual_rotation_matrix_3x3": matrix.tolist(),
                 "determinant": float(np.linalg.det(matrix)),
                 "manual_pose_checks": normalized_checks,
@@ -930,9 +1234,34 @@ def create_app(
                         state["cardinal_yaw_deg"]
                     ),
                     manual_total_yaw_about_gltf_positive_y_deg=yaw_deg,
-                    axis_alignment_authority="human_visual_torso_spine_axis",
+                    axis_alignment_authority=(
+                        "declared_source_view_contract"
+                        if declared
+                        else "human_visual_torso_spine_axis"
+                    ),
                     head_tail_authority="human_visual_head_tail_direction",
                 )
+                if declared:
+                    decision["axis_alignment_method"] = (
+                        "deterministic_declared_camera_view_canonicalization_v1"
+                    )
+                    decision["declared_view_canonicalization_audit"] = copy.deepcopy(
+                        entry["declared_view_canonicalization_audit"]
+                    )
+                else:
+                    decision["axis_alignment_method"] = (
+                        "human_selected_two_point_torso_line"
+                        if "manual_axis_line" in state
+                        else "human_increment_buttons"
+                    )
+                if "manual_axis_line" in state:
+                    decision["manual_axis_line"] = copy.deepcopy(
+                        state["manual_axis_line"]
+                    )
+                if "supersedes_decision" in state:
+                    decision["supersedes_decision"] = copy.deepcopy(
+                        state["supersedes_decision"]
+                    )
                 decision["downstream_candidate"]["manual_total_yaw_deg"] = yaw_deg
             else:
                 decision["manual_cardinal_yaw_about_gltf_positive_y_deg"] = yaw_deg
@@ -973,6 +1302,14 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--state-root", type=Path, default=DEFAULT_STATE_ROOT)
+    parser.add_argument(
+        "--carry-forward-decision-root",
+        type=Path,
+        help=(
+            "Optional immutable v3 decision directory whose human yaw is used "
+            "only as the starting point for a new superseding review root."
+        ),
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8102)
     return parser.parse_args()
@@ -981,7 +1318,11 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     app = create_app(
-        args.manifest, args.state_root, host=args.host, port=args.port
+        args.manifest,
+        args.state_root,
+        host=args.host,
+        port=args.port,
+        carry_forward_decision_root=args.carry_forward_decision_root,
     )
     print(
         "CONTROLLED_ANIMAL_DIRECTION_REVIEW_SERVER_OK "

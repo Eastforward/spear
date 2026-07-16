@@ -408,3 +408,217 @@ def test_two_stage_manual_axis_alignment_has_a_bounded_human_only_range(
     assert "第一步：只看右侧 TOP-DOWN" in html
     assert "第二步：选择头尾/正方向" in html
     assert "代码不估计角度" in html
+
+
+def test_human_two_point_torso_line_sets_precise_axis_without_mesh_inference(
+    tmp_path, monkeypatch
+):
+    entry = _entry()
+    manifest = {
+        "schema": server.MANIFEST_SCHEMA_V3,
+        "manifest_sha256": "f" * 64,
+        "asset_count": 1,
+        "formal_dataset_registration_authorized": False,
+        "entries": [entry],
+    }
+    monkeypatch.setattr(
+        server,
+        "_validate_manifest",
+        lambda _path: (manifest, {entry["asset_id"]: entry}),
+    )
+    client = server.create_app(
+        tmp_path / "manifest.json", tmp_path / "state"
+    ).test_client()
+    for value in (15, 15):
+        assert client.post(
+            "/api/rotate/dog_fixture",
+            json={"mode": "axis_delta", "value": value},
+        ).status_code == 200
+    assert client.post(
+        "/api/rotate/dog_fixture",
+        json={"mode": "cardinal_set", "value": 180},
+    ).status_code == 200
+
+    manual_line = {
+        "torso_back_normalized": [0.2, 0.5],
+        "torso_front_normalized": [0.8, 0.52],
+        "torso_back_xz": [0.0, 0.0],
+        "torso_front_xz": [1.0, -0.0349207695],
+        "residual_yaw_deg": -2.0,
+        "result_axis_yaw_deg": 28.0,
+    }
+    aligned = client.post(
+        "/api/rotate/dog_fixture",
+        json={"mode": "axis_set_from_manual_line", "value": manual_line},
+    )
+
+    assert aligned.status_code == 200
+    state = aligned.get_json()
+    assert state["axis_alignment_yaw_deg"] == 28
+    assert state["cardinal_yaw_deg"] == 180
+    assert state["yaw_deg"] == -152
+    assert state["manual_axis_line"]["authority"] == (
+        "human_selected_top_down_torso_back_to_front_line"
+    )
+    assert state["manual_axis_line"]["automatic_orientation_inference_used"] is False
+
+    approved = client.post(
+        "/api/decision/dog_fixture",
+        json={
+            "status": "source_pose_and_manual_orientation_approved",
+            "notes": "two manually selected torso points are horizontal",
+            "pose_checks": {},
+        },
+    )
+    assert approved.status_code == 200
+    decision = json.loads(
+        (tmp_path / "state/decisions/dog_fixture.json").read_text()
+    )
+    assert decision["axis_alignment_method"] == (
+        "human_selected_two_point_torso_line"
+    )
+    assert decision["manual_axis_line"]["result_axis_yaw_deg"] == 28
+    assert decision["automatic_orientation_inference_used"] is False
+
+
+def test_new_review_root_carries_prior_human_yaw_without_overwriting_decision(
+    tmp_path, monkeypatch
+):
+    entry = _entry()
+    manifest = {
+        "schema": server.MANIFEST_SCHEMA_V3,
+        "manifest_sha256": "9" * 64,
+        "asset_count": 1,
+        "formal_dataset_registration_authorized": False,
+        "entries": [entry],
+    }
+    monkeypatch.setattr(
+        server,
+        "_validate_manifest",
+        lambda _path: (manifest, {entry["asset_id"]: entry}),
+    )
+    old_root = tmp_path / "old-decisions"
+    old_root.mkdir()
+    old_decision = {
+        "schema": server.DECISION_SCHEMA_V3,
+        "manifest_sha256": manifest["manifest_sha256"],
+        "asset_id": "dog_fixture",
+        "status": "source_pose_and_manual_orientation_approved",
+        "automatic_orientation_inference_used": False,
+        "manual_axis_alignment_yaw_about_gltf_positive_y_deg": 30,
+        "manual_cardinal_head_tail_yaw_about_gltf_positive_y_deg": 180,
+        "manual_total_yaw_about_gltf_positive_y_deg": -150,
+    }
+    old_decision["decision_sha256"] = server._hash_without(
+        old_decision, "decision_sha256"
+    )
+    old_path = old_root / "dog_fixture.json"
+    old_path.write_text(json.dumps(old_decision))
+    old_bytes = old_path.read_bytes()
+
+    new_root = tmp_path / "superseding-state"
+    client = server.create_app(
+        tmp_path / "manifest.json",
+        new_root,
+        carry_forward_decision_root=old_root,
+    ).test_client()
+    initial = client.get("/api/state").get_json()["dog_fixture"]
+
+    assert initial["axis_alignment_yaw_deg"] == 30
+    assert initial["cardinal_yaw_deg"] == 180
+    assert initial["yaw_deg"] == -150
+    assert initial["supersedes_decision"]["absolute_path"] == str(old_path)
+    assert not (new_root / "decisions/dog_fixture.json").exists()
+    assert old_path.read_bytes() == old_bytes
+
+
+def test_page_draws_horizontal_ruler_and_requires_human_two_point_authority():
+    html = server.HTML
+
+    assert "蓝色水平尺是目标线" in html
+    assert "captureAxisPoint" in html
+    assert "axis_set_from_manual_line" in html
+    assert "角度只由你的两点选择产生" in html
+
+
+def test_declared_view_mode_locks_axis_and_only_allows_human_head_tail(
+    tmp_path, monkeypatch
+):
+    entry = _entry()
+    entry["orientation_contract"] = {
+        "axis_alignment_policy": server.DECLARED_AXIS_POLICY,
+        "declared_axis_alignment_yaw_deg": 30,
+        "maximum_postcanonical_residual_yaw_deg": 3,
+        "manual_axis_alignment_allowed": False,
+        "automatic_orientation_inference": "disabled",
+        "manual_cardinal_head_tail_yaw_degrees": [0, 180],
+    }
+    entry["declared_view_canonicalization_audit"] = {
+        "schema": "controlled_animal_declared_view_canonicalization_audit_v1",
+        "status": "passed_declared_view_canonicalization",
+        "declared_canonicalization_yaw_deg": 30,
+        "maximum_absolute_residual_yaw_deg": 2.1,
+        "maximum_allowed_residual_yaw_deg": 3,
+        "applied_yaw_was_inferred_from_geometry": False,
+    }
+    manifest = {
+        "schema": server.MANIFEST_SCHEMA_V3,
+        "manifest_sha256": "d" * 64,
+        "asset_count": 1,
+        "formal_dataset_registration_authorized": False,
+        "entries": [entry],
+    }
+    monkeypatch.setattr(
+        server,
+        "_validate_manifest",
+        lambda _path: (manifest, {entry["asset_id"]: entry}),
+    )
+    state_root = tmp_path / "declared-state"
+    client = server.create_app(
+        tmp_path / "manifest.json", state_root
+    ).test_client()
+
+    initial = client.get("/api/state").get_json()["dog_fixture"]
+    assert initial["axis_alignment_yaw_deg"] == 30
+    assert initial["cardinal_yaw_deg"] == 0
+    assert initial["yaw_deg"] == 30
+    assert "固定视角规范化" in client.get("/").get_data(as_text=True)
+
+    axis_change = client.post(
+        "/api/rotate/dog_fixture",
+        json={"mode": "axis_delta", "value": 1},
+    )
+    assert axis_change.status_code == 409
+    assert "immutable" in axis_change.get_json()["error"]
+    non_head_tail = client.post(
+        "/api/rotate/dog_fixture",
+        json={"mode": "cardinal_set", "value": 90},
+    )
+    assert non_head_tail.status_code == 409
+
+    flipped = client.post(
+        "/api/rotate/dog_fixture",
+        json={"mode": "cardinal_set", "value": 180},
+    )
+    assert flipped.status_code == 200
+    assert flipped.get_json()["yaw_deg"] == -150
+    approved = client.post(
+        "/api/decision/dog_fixture",
+        json={
+            "status": "source_pose_and_manual_orientation_approved",
+            "notes": "fixed axis passed; human selected head-tail flip",
+            "pose_checks": {},
+        },
+    )
+    assert approved.status_code == 200
+    decision = json.loads(
+        (state_root / "decisions/dog_fixture.json").read_text()
+    )
+    assert decision["axis_alignment_authority"] == "declared_source_view_contract"
+    assert decision["axis_alignment_method"] == server.DECLARED_AXIS_POLICY
+    assert decision["manual_axis_alignment_yaw_about_gltf_positive_y_deg"] == 30
+    assert decision[
+        "manual_cardinal_head_tail_yaw_about_gltf_positive_y_deg"
+    ] == 180
+    assert decision["manual_total_yaw_about_gltf_positive_y_deg"] == -150
+    assert decision["automatic_orientation_inference_used"] is False

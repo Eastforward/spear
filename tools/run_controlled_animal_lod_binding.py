@@ -231,13 +231,47 @@ def load_direction_decision(
             )
         ):
             raise contracts.ContractError("manual two-stage yaw composition is invalid")
+        axis_authority = decision.get("axis_alignment_authority")
         if (
-            decision.get("axis_alignment_authority")
-            != "human_visual_torso_spine_axis"
+            axis_authority
+            not in {
+                "human_visual_torso_spine_axis",
+                "declared_source_view_contract",
+            }
             or decision.get("head_tail_authority")
             != "human_visual_head_tail_direction"
         ):
             raise contracts.ContractError("manual two-stage review authority is invalid")
+        if axis_authority == "declared_source_view_contract":
+            audit = decision.get("declared_view_canonicalization_audit", {})
+            try:
+                declared_yaw = float(
+                    audit["declared_canonicalization_yaw_deg"]
+                )
+                residual = float(audit["maximum_absolute_residual_yaw_deg"])
+                maximum = float(audit["maximum_allowed_residual_yaw_deg"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise contracts.ContractError(
+                    "declared source-view canonicalization audit is incomplete"
+                ) from error
+            if (
+                decision.get("axis_alignment_method")
+                != "deterministic_declared_camera_view_canonicalization_v1"
+                or decision.get("initial_preview_pretransform")
+                != "fixed_declared_source_view_canonicalization"
+                or audit.get("schema")
+                != "controlled_animal_declared_view_canonicalization_audit_v1"
+                or audit.get("status")
+                != "passed_declared_view_canonicalization"
+                or audit.get("applied_yaw_was_inferred_from_geometry") is not False
+                or cardinal_yaw not in {0.0, 180.0}
+                or not math.isclose(axis_yaw, declared_yaw, abs_tol=1.0e-9)
+                or residual > maximum
+                or maximum > 5.0
+            ):
+                raise contracts.ContractError(
+                    "declared source-view canonicalization decision is invalid"
+                )
     else:
         try:
             yaw = float(

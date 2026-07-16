@@ -355,6 +355,76 @@ def test_direction_decision_gate_authenticates_two_stage_human_yaw(tmp_path):
     assert runner._decision_binding_yaw(decision) == -155
 
 
+def test_direction_gate_authenticates_declared_axis_plus_human_head_tail(tmp_path):
+    path, decision = _write_approved_two_stage_direction_decision(
+        tmp_path, axis_yaw=30, cardinal_yaw=180
+    )
+    decision.update(
+        axis_alignment_authority="declared_source_view_contract",
+        axis_alignment_method=(
+            "deterministic_declared_camera_view_canonicalization_v1"
+        ),
+        initial_preview_pretransform=(
+            "fixed_declared_source_view_canonicalization"
+        ),
+        declared_view_canonicalization_audit={
+            "schema": (
+                "controlled_animal_declared_view_canonicalization_audit_v1"
+            ),
+            "status": "passed_declared_view_canonicalization",
+            "declared_canonicalization_yaw_deg": 30,
+            "maximum_absolute_residual_yaw_deg": 2.1,
+            "maximum_allowed_residual_yaw_deg": 3,
+            "applied_yaw_was_inferred_from_geometry": False,
+        },
+    )
+    decision["decision_sha256"] = runner._hash_without(
+        decision, "decision_sha256"
+    )
+    path.write_text(json.dumps(decision))
+
+    authenticated = runner.load_direction_decision(
+        path, expected_asset_id="animal_x"
+    )
+
+    assert runner._decision_binding_yaw(authenticated) == -150
+    assert authenticated["axis_alignment_authority"] == (
+        "declared_source_view_contract"
+    )
+
+
+def test_declared_axis_gate_rejects_non_head_tail_cardinal(tmp_path):
+    path, decision = _write_approved_two_stage_direction_decision(
+        tmp_path, axis_yaw=30, cardinal_yaw=90
+    )
+    decision.update(
+        axis_alignment_authority="declared_source_view_contract",
+        axis_alignment_method=(
+            "deterministic_declared_camera_view_canonicalization_v1"
+        ),
+        initial_preview_pretransform=(
+            "fixed_declared_source_view_canonicalization"
+        ),
+        declared_view_canonicalization_audit={
+            "schema": (
+                "controlled_animal_declared_view_canonicalization_audit_v1"
+            ),
+            "status": "passed_declared_view_canonicalization",
+            "declared_canonicalization_yaw_deg": 30,
+            "maximum_absolute_residual_yaw_deg": 1,
+            "maximum_allowed_residual_yaw_deg": 3,
+            "applied_yaw_was_inferred_from_geometry": False,
+        },
+    )
+    decision["decision_sha256"] = runner._hash_without(
+        decision, "decision_sha256"
+    )
+    path.write_text(json.dumps(decision))
+
+    with pytest.raises(contracts.ContractError, match="declared source-view"):
+        runner.load_direction_decision(path, expected_asset_id="animal_x")
+
+
 def test_two_stage_direction_build_command_uses_composed_yaw(tmp_path):
     _, decision = _write_approved_two_stage_direction_decision(tmp_path)
     job = _job(tmp_path)
