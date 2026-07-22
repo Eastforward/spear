@@ -11,6 +11,8 @@ and Walk/Idle actions are never regenerated.
 from __future__ import annotations
 
 import argparse
+from collections import deque
+import copy
 from datetime import datetime, timezone
 import json
 import math
@@ -23,7 +25,6 @@ import bpy
 from bpy_extras.object_utils import world_to_camera_view
 from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
-from mathutils.kdtree import KDTree
 import numpy as np
 
 
@@ -37,6 +38,23 @@ def parse_argv():
     parser.add_argument("--input-glb", type=Path, required=True)
     parser.add_argument("--source-view-dir", type=Path, required=True)
     parser.add_argument("--edited-view-dir", type=Path, required=True)
+    parser.add_argument(
+        "--edited-mask-dir",
+        type=Path,
+        help=(
+            "Optional front/back/left/right grayscale animal masks. When "
+            "present, mask alpha is the foreground authority and the colour "
+            "background heuristic is not used."
+        ),
+    )
+    parser.add_argument(
+        "--neutral-shading-view-dir",
+        type=Path,
+        help=(
+            "Optional neutral-grey same-camera render views used by "
+            "neutral_shading_division to remove preview illumination."
+        ),
+    )
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument(
         "--output-stem",
@@ -46,10 +64,48 @@ def parse_argv():
     parser.add_argument("--texture-size", type=int, default=2048)
     parser.add_argument("--visibility-tolerance-ratio", type=float, default=0.003)
     parser.add_argument("--minimum-direct-coverage", type=float, default=0.60)
+    parser.add_argument(
+        "--view-fusion-mode",
+        choices=("weighted_average", "dominant_facing_view"),
+        default="weighted_average",
+        help=(
+            "Fuse compatible views by weighted average, or keep only the "
+            "most front-facing valid view per surface vertex when discrete "
+            "breed markings must not be averaged into grey seams."
+        ),
+    )
+    parser.add_argument(
+        "--edited-foreground-distance-threshold",
+        type=float,
+        default=0.025,
+        help=(
+            "Minimum scene-linear RGB distance from the fitted edited-view "
+            "background. Samples that still contain FLUX background are not "
+            "allowed to become coat texels."
+        ),
+    )
+    parser.add_argument(
+        "--edited-foreground-chroma-threshold",
+        type=float,
+        default=0.020,
+        help="Minimum scene-linear chromatic contrast from a neutral background.",
+    )
+    parser.add_argument(
+        "--edited-foreground-luminance-threshold",
+        type=float,
+        default=0.050,
+        help="Minimum absolute Rec.709 luminance contrast for neutral black/white fur.",
+    )
     parser.add_argument("--luminance-transfer-strength", type=float, default=0.15)
     parser.add_argument(
         "--colour-transfer-mode",
-        choices=("relative_chroma", "absolute_edited_chroma"),
+        choices=(
+            "relative_chroma",
+            "relative_rgb",
+            "neutral_shading_division",
+            "absolute_edited_chroma",
+            "absolute_edited_rgb",
+        ),
         default="relative_chroma",
         help=(
             "relative_chroma applies the edited/source chroma delta to the original "
@@ -64,6 +120,41 @@ def parse_argv():
         help=(
             "Blend strength in [0,1] for absolute_edited_chroma: 0 retains the "
             "original coat chroma and 1 fully follows the edited reference chroma."
+        ),
+    )
+    parser.add_argument(
+        "--absolute-rgb-strength",
+        type=float,
+        default=0.85,
+        help=(
+            "Blend strength in [0,1] for absolute_edited_rgb. This transfers "
+            "the spatial FLUX-edited RGB field, not one global RGB factor."
+        ),
+    )
+    parser.add_argument(
+        "--relative-rgb-strength",
+        type=float,
+        default=1.0,
+        help=(
+            "Strength in [0,1] for the spatial edited/source RGB reflectance "
+            "ratio. Unlike absolute RGB, common review lighting cancels."
+        ),
+    )
+    parser.add_argument(
+        "--relative-rgb-epsilon",
+        type=float,
+        default=0.005,
+        help="Scene-linear stabilizer in [0.001,0.025] for dark source texels.",
+    )
+    parser.add_argument(
+        "--pattern-luminance-strength",
+        type=float,
+        default=0.0,
+        help=(
+            "Gain in [0,2] for the edited/source spatial log-luminance delta. "
+            "Keep 0 for colour-only coats, 1 follows the measured edit, and a "
+            "reviewed value above 1 may recover pattern contrast lost by a very "
+            "dark source texture."
         ),
     )
     return parser.parse_args(argv)
@@ -130,6 +221,95 @@ def bilinear(image, xy):
     top = image[y0, x0, :3] * (1.0 - wx) + image[y0, x1, :3] * wx
     bottom = image[y1, x0, :3] * (1.0 - wx) + image[y1, x1, :3] * wx
     return top * (1.0 - wy) + bottom * wy
+
+
+def fitted_background_rgb(image, xy):
+    """Fit the nearly planar review background from a narrow image border."""
+    height, width = image.shape[:2]
+    border = max(4, min(height, width) // 64)
+    yy, xx = np.mgrid[0:height, 0:width]
+    mask = (xx < border) | (xx >= width - border) | (yy < border) | (yy >= height - border)
+    design = np.column_stack(
+        (
+            xx[mask] / max(width - 1, 1),
+            yy[mask] / max(height - 1, 1),
+            np.ones(int(np.count_nonzero(mask))),
+        )
+    )
+    coefficients, _residuals, _rank, _singular = np.linalg.lstsq(
+        design, image[mask, :3], rcond=None
+    )
+    query = np.column_stack(
+        (
+            xy[:, 0] / max(width - 1, 1),
+            xy[:, 1] / max(height - 1, 1),
+            np.ones(len(xy)),
+        )
+    )
+    return np.clip(query @ coefficients, 0.0, 1.0)
+
+
+def edited_foreground_mask(
+    image,
+    xy,
+    sampled_rgb,
+    minimum_distance,
+    minimum_chroma,
+    minimum_luminance,
+):
+    """Reject edit pixels whose colour is still the generated background."""
+    background = fitted_background_rgb(image, xy)
+    delta = sampled_rgb - background
+    distance = np.linalg.norm(delta, axis=1)
+    rec709 = np.asarray((0.2126, 0.7152, 0.0722), dtype=np.float64)
+    luminance_delta = np.abs(delta @ rec709)
+    neutral_removed = delta - delta.mean(axis=1, keepdims=True)
+    chroma_delta = np.linalg.norm(neutral_removed, axis=1)
+    foreground = (distance >= minimum_distance) & (
+        (chroma_delta >= minimum_chroma)
+        | (luminance_delta >= minimum_luminance)
+    )
+    return foreground, distance, chroma_delta, luminance_delta
+
+
+def topology_fill(values, covered, edges, vertices):
+    """Fill through mesh edges and coincident export-seam vertices only."""
+    if not np.any(covered):
+        raise RuntimeError("cannot topology-fill a field without covered vertices")
+    adjacency = [[] for _ in range(len(covered))]
+    for first, second in edges:
+        adjacency[first].append(second)
+        adjacency[second].append(first)
+    diagonal = float(np.linalg.norm(vertices.max(axis=0) - vertices.min(axis=0)))
+    weld_tolerance = max(diagonal * 1.0e-7, 1.0e-9)
+    coincident = {}
+    for index, point in enumerate(vertices):
+        key = tuple(np.rint(point / weld_tolerance).astype(np.int64))
+        coincident.setdefault(key, []).append(index)
+    for indices in coincident.values():
+        if len(indices) < 2:
+            continue
+        anchor = indices[0]
+        for index in indices[1:]:
+            adjacency[anchor].append(index)
+            adjacency[index].append(anchor)
+    owner = np.full(len(covered), -1, dtype=np.int64)
+    queue = deque()
+    for index in np.flatnonzero(covered):
+        owner[index] = index
+        queue.append(int(index))
+    while queue:
+        index = queue.popleft()
+        for neighbour in adjacency[index]:
+            if owner[neighbour] >= 0:
+                continue
+            owner[neighbour] = owner[index]
+            queue.append(neighbour)
+    missing = np.flatnonzero(~covered)
+    fillable = owner >= 0
+    fillable_missing = missing[fillable[missing]]
+    values[fillable_missing] = values[owner[fillable_missing]]
+    return values, fillable
 
 
 def upstream_image_nodes(socket):
@@ -205,6 +385,13 @@ def vertex_log_ratios(
     minimum_direct_coverage,
     luminance_transfer_strength,
     colour_transfer_mode,
+    edited_foreground_distance_threshold,
+    edited_foreground_chroma_threshold,
+    edited_foreground_luminance_threshold,
+    relative_rgb_epsilon,
+    view_fusion_mode,
+    edited_mask_dir,
+    neutral_shading_view_dir,
 ):
     bvh = BVHTree.FromPolygons(
         [tuple(item) for item in vertices],
@@ -212,6 +399,9 @@ def vertex_log_ratios(
         all_triangles=False,
     )
     accumulation = np.zeros((len(vertices), 3), dtype=np.float64)
+    edited_rgb_accumulation = np.zeros((len(vertices), 3), dtype=np.float64)
+    shading_rgb_accumulation = np.zeros((len(vertices), 3), dtype=np.float64)
+    luminance_accumulation = np.zeros(len(vertices), dtype=np.float64)
     weights = np.zeros(len(vertices), dtype=np.float64)
     per_view = {}
     cameras = []
@@ -220,8 +410,24 @@ def vertex_log_ratios(
     for name in VIEW_ORDER:
         source_handle, source = image_array(source_dir / f"{name}.png")
         edited_handle, edited = image_array(edited_dir / f"{name}.png")
+        mask_handle = None
+        edited_mask = None
+        shading_handle = None
+        shading_rgb_image = None
+        if edited_mask_dir is not None:
+            mask_handle, edited_mask = image_array(
+                edited_mask_dir / f"{name}.png"
+            )
+        if neutral_shading_view_dir is not None:
+            shading_handle, shading_rgb_image = image_array(
+                neutral_shading_view_dir / f"{name}.png"
+            )
         if source.shape != edited.shape or source.shape[:2] != (512, 512):
             raise RuntimeError(f"source/edited view mismatch for {name}")
+        if edited_mask is not None and edited_mask.shape[:2] != (512, 512):
+            raise RuntimeError(f"edited mask canvas mismatch for {name}")
+        if shading_rgb_image is not None and shading_rgb_image.shape[:2] != (512, 512):
+            raise RuntimeError(f"neutral shading canvas mismatch for {name}")
         camera, direction = camera_from_contract(
             name, manifest["views"][name], manifest["ortho_scale"]
         )
@@ -256,13 +462,60 @@ def vertex_log_ratios(
         )
         source_rgb = np.clip(bilinear(source, xy), 0.0, 1.0)
         edited_rgb = np.clip(bilinear(edited, xy), 0.0, 1.0)
+        shading_rgb = (
+            np.clip(bilinear(shading_rgb_image, xy), 0.0, 1.0)
+            if shading_rgb_image is not None
+            else np.ones_like(edited_rgb)
+        )
+        if edited_mask is not None:
+            mask_probability = bilinear(edited_mask, xy)[:, 0]
+            foreground = mask_probability >= 0.5
+            foreground_distance = np.ones(len(foreground), dtype=np.float64)
+            foreground_chroma = np.ones(len(foreground), dtype=np.float64)
+            foreground_luminance = np.ones(len(foreground), dtype=np.float64)
+        else:
+            (
+                foreground,
+                foreground_distance,
+                foreground_chroma,
+                foreground_luminance,
+            ) = edited_foreground_mask(
+                edited,
+                xy,
+                edited_rgb,
+                edited_foreground_distance_threshold,
+                edited_foreground_chroma_threshold,
+                edited_foreground_luminance_threshold,
+            )
+        rejected_background_count = int(np.count_nonzero(~foreground))
+        visible = visible[foreground]
+        source_rgb = source_rgb[foreground]
+        edited_rgb = edited_rgb[foreground]
+        shading_rgb = shading_rgb[foreground]
+        facing_visible = facing[visible]
+        if not len(visible):
+            raise RuntimeError(
+                f"edited view contains no foreground samples for visible {name} vertices"
+            )
         source_log = np.log(source_rgb + 0.025)
         edited_log = np.log(edited_rgb + 0.025)
         source_luminance = source_log.mean(axis=1, keepdims=True)
         edited_luminance = edited_log.mean(axis=1, keepdims=True)
+        luminance_delta = np.clip(
+            edited_luminance[:, 0] - source_luminance[:, 0],
+            math.log(0.25),
+            math.log(4.0),
+        )
         source_chroma = source_log - source_luminance
         edited_chroma = edited_log - edited_luminance
-        if colour_transfer_mode == "relative_chroma":
+        if colour_transfer_mode == "relative_rgb":
+            colour_field = np.clip(
+                np.log(edited_rgb + relative_rgb_epsilon)
+                - np.log(source_rgb + relative_rgb_epsilon),
+                math.log(0.02),
+                math.log(50.0),
+            )
+        elif colour_transfer_mode == "relative_chroma":
             colour_field = (
                 edited_chroma
                 - source_chroma
@@ -274,16 +527,50 @@ def vertex_log_ratios(
             # UV texture remains the luminance/detail authority in main().
             colour_field = edited_chroma
         colour_field = np.clip(colour_field, math.log(0.18), math.log(5.5))
-        view_weight = np.square(np.clip(facing[visible], 0.0, 1.0))
-        accumulation[visible] += colour_field * view_weight[:, None]
-        weights[visible] += view_weight
+        view_weight = np.square(np.clip(facing_visible, 0.0, 1.0))
+        if view_fusion_mode == "dominant_facing_view":
+            better = view_weight > weights[visible]
+            chosen = visible[better]
+            chosen_weight = view_weight[better]
+            accumulation[chosen] = colour_field[better] * chosen_weight[:, None]
+            edited_rgb_accumulation[chosen] = (
+                edited_rgb[better] * chosen_weight[:, None]
+            )
+            shading_rgb_accumulation[chosen] = (
+                shading_rgb[better] * chosen_weight[:, None]
+            )
+            luminance_accumulation[chosen] = luminance_delta[better] * chosen_weight
+            weights[chosen] = chosen_weight
+        else:
+            accumulation[visible] += colour_field * view_weight[:, None]
+            edited_rgb_accumulation[visible] += edited_rgb * view_weight[:, None]
+            shading_rgb_accumulation[visible] += shading_rgb * view_weight[:, None]
+            luminance_accumulation[visible] += luminance_delta * view_weight
+            weights[visible] += view_weight
         per_view[name] = {
             "candidate_vertex_count": int(len(candidates)),
             "visible_vertex_count": int(len(visible)),
+            "edited_background_rejected_vertex_count": rejected_background_count,
+            "foreground_authority": (
+                "external_alpha_mask" if edited_mask is not None else "colour_heuristic"
+            ),
+            "minimum_accepted_foreground_distance": float(
+                foreground_distance[foreground].min()
+            ),
+            "minimum_accepted_foreground_chroma": float(
+                foreground_chroma[foreground].min()
+            ),
+            "minimum_accepted_foreground_luminance_delta": float(
+                foreground_luminance[foreground].min()
+            ),
             "mean_facing_weight": float(view_weight.mean()),
         }
         bpy.data.images.remove(source_handle)
         bpy.data.images.remove(edited_handle)
+        if mask_handle is not None:
+            bpy.data.images.remove(mask_handle)
+        if shading_handle is not None:
+            bpy.data.images.remove(shading_handle)
 
     covered = weights > 1.0e-8
     covered_count = int(np.count_nonzero(covered))
@@ -297,18 +584,46 @@ def vertex_log_ratios(
         )
     colour_field = np.zeros_like(accumulation)
     colour_field[covered] = accumulation[covered] / weights[covered, None]
+    edited_rgb_field = np.zeros_like(edited_rgb_accumulation)
+    edited_rgb_field[covered] = (
+        edited_rgb_accumulation[covered] / weights[covered, None]
+    )
+    shading_rgb_field = np.zeros_like(shading_rgb_accumulation)
+    shading_rgb_field[covered] = (
+        shading_rgb_accumulation[covered] / weights[covered, None]
+    )
+    luminance_field = np.zeros(len(vertices), dtype=np.float64)
+    luminance_field[covered] = luminance_accumulation[covered] / weights[covered]
 
-    missing = np.flatnonzero(~covered)
-    if len(missing):
-        tree = KDTree(int(np.count_nonzero(covered)))
-        for slot, index in enumerate(np.flatnonzero(covered)):
-            tree.insert(Vector(vertices[index]), slot)
-        tree.balance()
-        covered_indices = np.flatnonzero(covered)
-        for index in missing:
-            _, slot, _ = tree.find(Vector(vertices[index]))
-            colour_field[index] = colour_field[covered_indices[slot]]
-    return colour_field.astype(np.float32), covered, per_view, cameras
+    edges = [tuple(edge.vertices) for edge in mesh.data.edges]
+    colour_field, field_available = topology_fill(
+        colour_field, covered, edges, vertices
+    )
+    edited_rgb_field, rgb_available = topology_fill(
+        edited_rgb_field, covered, edges, vertices
+    )
+    shading_rgb_field, shading_available = topology_fill(
+        shading_rgb_field, covered, edges, vertices
+    )
+    luminance_field, luminance_available = topology_fill(
+        luminance_field, covered, edges, vertices
+    )
+    if (
+        not np.array_equal(field_available, rgb_available)
+        or not np.array_equal(field_available, shading_available)
+        or not np.array_equal(field_available, luminance_available)
+    ):
+        raise RuntimeError("coat field fills disagree on available mesh components")
+    return (
+        colour_field.astype(np.float32),
+        edited_rgb_field.astype(np.float32),
+        shading_rgb_field.astype(np.float32),
+        luminance_field.astype(np.float32),
+        covered,
+        field_available,
+        per_view,
+        cameras,
+    )
 
 
 def sample_base_texture_for_loops(mesh, image):
@@ -400,6 +715,133 @@ def glb_json(path: Path):
     return json.loads(payload[20 : 20 + json_length].decode("utf-8"))
 
 
+def decode_glb(path: Path):
+    raw = path.read_bytes()
+    if len(raw) < 28:
+        raise RuntimeError("GLB is truncated")
+    magic, version, declared = struct.unpack_from("<4sII", raw, 0)
+    if magic != b"glTF" or version != 2 or declared != len(raw):
+        raise RuntimeError("GLB header is invalid")
+    offset = 12
+    chunks = {}
+    while offset < len(raw):
+        length, chunk_type = struct.unpack_from("<II", raw, offset)
+        offset += 8
+        chunks[chunk_type] = raw[offset : offset + length]
+        offset += length
+    if set(chunks) != {0x4E4F534A, 0x004E4942}:
+        raise RuntimeError("GLB must contain exactly JSON and BIN chunks")
+    document = json.loads(chunks[0x4E4F534A].decode("utf-8").rstrip(" \x00"))
+    declared_binary = document["buffers"][0]["byteLength"]
+    return document, chunks[0x004E4942][:declared_binary]
+
+
+def buffer_view_payload(document, binary, index):
+    view = document["bufferViews"][index]
+    start = int(view.get("byteOffset", 0))
+    length = int(view["byteLength"])
+    payload = binary[start : start + length]
+    if len(payload) != length:
+        raise RuntimeError(f"bufferView {index} exceeds embedded BIN")
+    return payload
+
+
+def encode_glb(document, binary):
+    value = copy.deepcopy(document)
+    value["buffers"][0]["byteLength"] = len(binary)
+    encoded_json = json.dumps(value, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    encoded_json += b" " * ((-len(encoded_json)) % 4)
+    encoded_binary = binary + b"\x00" * ((-len(binary)) % 4)
+    total = 12 + 8 + len(encoded_json) + 8 + len(encoded_binary)
+    return b"".join(
+        (
+            struct.pack("<4sII", b"glTF", 2, total),
+            struct.pack("<II", len(encoded_json), 0x4E4F534A),
+            encoded_json,
+            struct.pack("<II", len(encoded_binary), 0x004E4942),
+            encoded_binary,
+        )
+    )
+
+
+def patch_embedded_base_color(source_glb, texture_png, output_glb):
+    document, binary = decode_glb(source_glb)
+    materials = document.get("materials", [])
+    textures = document.get("textures", [])
+    images = document.get("images", [])
+    if len(materials) != 1:
+        raise RuntimeError("container patch requires exactly one source material")
+    texture_index = materials[0].get("pbrMetallicRoughness", {}).get(
+        "baseColorTexture", {}
+    ).get("index")
+    if not isinstance(texture_index, int) or not 0 <= texture_index < len(textures):
+        raise RuntimeError("source GLB has no unambiguous Base Color texture")
+    image_index = textures[texture_index].get("source")
+    if not isinstance(image_index, int) or not 0 <= image_index < len(images):
+        raise RuntimeError("source GLB has no unambiguous Base Color image")
+    image = images[image_index]
+    view_index = image.get("bufferView")
+    if not isinstance(view_index, int) or image.get("mimeType") != "image/png":
+        raise RuntimeError("source Base Color must be one embedded PNG")
+    payload = texture_png.read_bytes()
+    if not payload.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise RuntimeError("baked Base Color is not a PNG")
+
+    updated = copy.deepcopy(document)
+    target = updated["bufferViews"][view_index]
+    start = int(target.get("byteOffset", 0))
+    old_length = int(target["byteLength"])
+    old_end = start + old_length
+    later_offsets = [
+        int(view.get("byteOffset", 0))
+        for index, view in enumerate(updated["bufferViews"])
+        if index != view_index and int(view.get("byteOffset", 0)) >= old_end
+    ]
+    tail_start = min(later_offsets, default=len(binary))
+    padded = payload + b"\x00" * ((-len(payload)) % 4)
+    new_binary = binary[:start] + padded + binary[tail_start:]
+    delta = start + len(padded) - tail_start
+    target["byteLength"] = len(payload)
+    for index, view in enumerate(updated["bufferViews"]):
+        if index != view_index and int(view.get("byteOffset", 0)) >= tail_start:
+            view["byteOffset"] = int(view.get("byteOffset", 0)) + delta
+    updated["buffers"][0]["byteLength"] = len(new_binary)
+
+    unchanged = 0
+    for index in range(len(document["bufferViews"])):
+        if index == view_index:
+            continue
+        if buffer_view_payload(document, binary, index) != buffer_view_payload(
+            updated, new_binary, index
+        ):
+            raise RuntimeError(f"container patch changed protected bufferView {index}")
+        unchanged += 1
+    output_glb.write_bytes(encode_glb(updated, new_binary))
+    decoded, decoded_binary = decode_glb(output_glb)
+    if buffer_view_payload(decoded, decoded_binary, view_index) != payload:
+        raise RuntimeError("Base Color payload failed GLB readback")
+    for key in ("nodes", "meshes", "skins", "accessors", "animations"):
+        if decoded.get(key) != document.get(key):
+            raise RuntimeError(f"container patch changed protected GLB JSON: {key}")
+    return {
+        "method": "embedded_base_color_buffer_view_replacement_v1",
+        "base_color_image_index": image_index,
+        "base_color_buffer_view_index": view_index,
+        "source_payload_size_bytes": old_length,
+        "replacement_payload_size_bytes": len(payload),
+        "non_target_buffer_views_unchanged": unchanged,
+        "protected_json_sections_unchanged": [
+            "nodes",
+            "meshes",
+            "skins",
+            "accessors",
+            "animations",
+        ],
+    }
+
+
 def main():
     args = parse_argv()
     if args.texture_size not in {512, 1024, 2048, 4096}:
@@ -408,13 +850,39 @@ def main():
         raise RuntimeError("--output-stem must match [a-z0-9][a-z0-9_-]{0,63}")
     if not 0.40 <= args.minimum_direct_coverage <= 0.95:
         raise RuntimeError("--minimum-direct-coverage must be in [0.40, 0.95]")
+    if not 0.005 <= args.edited_foreground_distance_threshold <= 0.20:
+        raise RuntimeError(
+            "--edited-foreground-distance-threshold must be in [0.005, 0.20]"
+        )
+    if not 0.0 <= args.edited_foreground_chroma_threshold <= 0.20:
+        raise RuntimeError(
+            "--edited-foreground-chroma-threshold must be in [0, 0.20]"
+        )
+    if not 0.0 <= args.edited_foreground_luminance_threshold <= 0.40:
+        raise RuntimeError(
+            "--edited-foreground-luminance-threshold must be in [0, 0.40]"
+        )
     if not 0.0 <= args.luminance_transfer_strength <= 1.0:
         raise RuntimeError("--luminance-transfer-strength must be in [0, 1]")
     if not 0.0 <= args.absolute_chroma_strength <= 1.0:
         raise RuntimeError("--absolute-chroma-strength must be in [0, 1]")
+    if not 0.0 <= args.absolute_rgb_strength <= 1.0:
+        raise RuntimeError("--absolute-rgb-strength must be in [0, 1]")
+    if not 0.0 <= args.relative_rgb_strength <= 1.0:
+        raise RuntimeError("--relative-rgb-strength must be in [0, 1]")
+    if not 0.001 <= args.relative_rgb_epsilon <= 0.025:
+        raise RuntimeError("--relative-rgb-epsilon must be in [0.001, 0.025]")
+    if not 0.0 <= args.pattern_luminance_strength <= 2.0:
+        raise RuntimeError("--pattern-luminance-strength must be in [0, 2]")
     input_glb = args.input_glb.resolve()
     source_dir = args.source_view_dir.resolve()
     edited_dir = args.edited_view_dir.resolve()
+    edited_mask_dir = args.edited_mask_dir.resolve() if args.edited_mask_dir else None
+    neutral_shading_view_dir = (
+        args.neutral_shading_view_dir.resolve()
+        if args.neutral_shading_view_dir
+        else None
+    )
     output_root = require_new_directory(args.output_root)
     view_manifest = load_json(source_dir / "render_manifest.json")
     if (
@@ -430,6 +898,22 @@ def main():
             path = directory / f"{name}.png"
             if path.is_symlink() or not path.is_file():
                 raise RuntimeError(f"missing projection input: {path}")
+    if edited_mask_dir is not None:
+        for name in VIEW_ORDER:
+            path = edited_mask_dir / f"{name}.png"
+            if path.is_symlink() or not path.is_file():
+                raise RuntimeError(f"missing edited foreground mask: {path}")
+    if args.colour_transfer_mode == "neutral_shading_division" and (
+        neutral_shading_view_dir is None
+    ):
+        raise RuntimeError(
+            "neutral_shading_division requires --neutral-shading-view-dir"
+        )
+    if neutral_shading_view_dir is not None:
+        for name in VIEW_ORDER:
+            path = neutral_shading_view_dir / f"{name}.png"
+            if path.is_symlink() or not path.is_file():
+                raise RuntimeError(f"missing neutral shading view: {path}")
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.gltf(filepath=str(input_glb))
@@ -440,11 +924,20 @@ def main():
         other.hide_render = other != mesh
     bpy.context.view_layer.update()
 
-    material, principled, base_nodes, original_base_image = base_colour_binding(mesh)
+    _material, _principled, _base_nodes, original_base_image = base_colour_binding(mesh)
     vertices, normals, polygons = world_geometry(mesh)
     diagonal = float(np.linalg.norm(vertices.max(axis=0) - vertices.min(axis=0)))
     tolerance = diagonal * args.visibility_tolerance_ratio
-    colour_field, covered, per_view, cameras = vertex_log_ratios(
+    (
+        colour_field,
+        edited_rgb_field,
+        shading_rgb_field,
+        luminance_field,
+        covered,
+        field_available,
+        per_view,
+        cameras,
+    ) = vertex_log_ratios(
         mesh,
         vertices,
         normals,
@@ -455,12 +948,61 @@ def main():
         args.minimum_direct_coverage,
         args.luminance_transfer_strength,
         args.colour_transfer_mode,
+        args.edited_foreground_distance_threshold,
+        args.edited_foreground_chroma_threshold,
+        args.edited_foreground_luminance_threshold,
+        args.relative_rgb_epsilon,
+        args.view_fusion_mode,
+        edited_mask_dir,
+        neutral_shading_view_dir,
     )
 
     loop_vertex = np.empty(len(mesh.data.loops), dtype=np.int32)
     mesh.data.loops.foreach_get("vertex_index", loop_vertex)
     base_rgb = sample_base_texture_for_loops(mesh, original_base_image)
-    if args.colour_transfer_mode == "relative_chroma":
+    if args.colour_transfer_mode == "neutral_shading_division":
+        rec709 = np.asarray((0.2126, 0.7152, 0.0722), dtype=np.float32)
+        neutral_base_colour = 0.5
+        shading_luminance = shading_rgb_field[loop_vertex] @ rec709
+        illumination = np.maximum(
+            shading_luminance / neutral_base_colour,
+            0.08,
+        )
+        target_rgb = np.clip(
+            edited_rgb_field[loop_vertex] / illumination[:, None],
+            0.0,
+            1.0,
+        )
+        target_rgb = np.where(
+            field_available[loop_vertex, None], target_rgb, base_rgb
+        )
+        corner_rgb = np.clip(
+            (1.0 - args.absolute_rgb_strength) * base_rgb
+            + args.absolute_rgb_strength * target_rgb,
+            0.0,
+            1.0,
+        )
+    elif args.colour_transfer_mode == "absolute_edited_rgb":
+        target_rgb = np.where(
+            field_available[loop_vertex, None],
+            edited_rgb_field[loop_vertex],
+            base_rgb,
+        )
+        corner_rgb = np.clip(
+            (1.0 - args.absolute_rgb_strength) * base_rgb
+            + args.absolute_rgb_strength * target_rgb,
+            0.0,
+            1.0,
+        )
+    elif args.colour_transfer_mode == "relative_rgb":
+        ratio = np.exp(args.relative_rgb_strength * colour_field[loop_vertex])
+        corner_rgb = np.clip(
+            (base_rgb + args.relative_rgb_epsilon) * ratio
+            - args.relative_rgb_epsilon,
+            0.0,
+            1.0,
+        )
+    elif args.colour_transfer_mode == "relative_chroma":
         candidate_rgb = base_rgb * np.exp(colour_field[loop_vertex])
     else:
         base_log = np.log(base_rgb + 0.025)
@@ -474,42 +1016,35 @@ def main():
             np.exp(base_geometric_luminance + blended_chroma) - 0.025,
             0.0,
         )
-    rec709 = np.asarray((0.2126, 0.7152, 0.0722), dtype=np.float32)
-    base_luminance = base_rgb @ rec709
-    candidate_luminance = candidate_rgb @ rec709
-    luminance_normalization = (base_luminance + 1.0e-5) / (
-        candidate_luminance + 1.0e-5
-    )
-    corner_rgb = np.clip(candidate_rgb * luminance_normalization[:, None], 0.0, 1.0)
+    if args.colour_transfer_mode not in {
+        "absolute_edited_rgb",
+        "relative_rgb",
+        "neutral_shading_division",
+    }:
+        rec709 = np.asarray((0.2126, 0.7152, 0.0722), dtype=np.float32)
+        base_luminance = base_rgb @ rec709
+        candidate_luminance = candidate_rgb @ rec709
+        desired_luminance = np.clip(
+            base_luminance
+            * np.exp(args.pattern_luminance_strength * luminance_field[loop_vertex]),
+            0.0,
+            1.0,
+        )
+        luminance_normalization = (desired_luminance + 1.0e-5) / (
+            candidate_luminance + 1.0e-5
+        )
+        corner_rgb = np.clip(
+            candidate_rgb * luminance_normalization[:, None], 0.0, 1.0
+        )
     texture_path = output_root / f"{args.output_stem}_base_color.png"
-    baked_image = bake_corner_colours(mesh, corner_rgb, texture_path, args.texture_size)
+    bake_corner_colours(mesh, corner_rgb, texture_path, args.texture_size)
 
-    for node in base_nodes:
-        node.image = baked_image
-    for socket in (principled.inputs.get("Metallic"), principled.inputs.get("Roughness")):
-        if socket is not None:
-            for link in list(socket.links):
-                material.node_tree.links.remove(link)
-    principled.inputs["Metallic"].default_value = 0.0
-    principled.inputs["Roughness"].default_value = 0.82
     for camera in cameras:
         bpy.data.objects.remove(camera, do_unlink=True)
-    for armature in [item for item in bpy.context.scene.objects if item.type == "ARMATURE"]:
-        armature.data.pose_position = "POSE"
-    for action in bpy.data.actions:
-        if action.name.startswith("Walking"):
-            action.name = "Walking"
-        elif action.name.startswith("Idle"):
-            action.name = "Idle"
 
     output_glb = output_root / f"animated_walk_idle_{args.output_stem}.glb"
-    bpy.ops.export_scene.gltf(
-        filepath=str(output_glb),
-        export_format="GLB",
-        export_animations=True,
-        export_skins=True,
-        export_morph=True,
-        export_apply=False,
+    container_patch = patch_embedded_base_color(
+        input_glb, texture_path, output_glb
     )
     document = glb_json(output_glb)
     animations = sorted(item.get("name") for item in document.get("animations", []))
@@ -538,33 +1073,80 @@ def main():
         "input_glb": str(input_glb),
         "source_view_dir": str(source_dir),
         "edited_view_dir": str(edited_dir),
-        "projection_method": "visibility_weighted_multiview_log_chroma_linear_luminance_preserved_v5",
+        "edited_mask_dir": str(edited_mask_dir) if edited_mask_dir else None,
+        "neutral_shading_view_dir": (
+            str(neutral_shading_view_dir) if neutral_shading_view_dir else None
+        ),
+        "neutral_shading_division": {
+            "enabled": args.colour_transfer_mode == "neutral_shading_division",
+            "neutral_base_color_linear": 0.5,
+            "minimum_illumination_factor": 0.08,
+            "method": "edited_rgb_divided_by_neutral_same_camera_rec709_shading_v1",
+        },
+        "foreground_authority": (
+            "external_alpha_mask" if edited_mask_dir else "colour_heuristic"
+        ),
+        "projection_method": (
+            "geometry_locked_multiview_surface_field_with_optional_neutral_"
+            "shading_division_v6"
+        ),
         "not_global_rgb_factor": True,
         "colour_transfer_mode": args.colour_transfer_mode,
         "absolute_chroma_strength": args.absolute_chroma_strength,
+        "absolute_rgb_strength": args.absolute_rgb_strength,
+        "relative_rgb_strength": args.relative_rgb_strength,
+        "relative_rgb_epsilon": args.relative_rgb_epsilon,
+        "relative_rgb_is_spatial_edited_over_source_reflectance_ratio": (
+            args.colour_transfer_mode == "relative_rgb"
+        ),
+        "absolute_rgb_is_spatial_flux_field_not_global_factor": (
+            args.colour_transfer_mode == "absolute_edited_rgb"
+        ),
+        "pattern_luminance_strength": args.pattern_luminance_strength,
+        "spatial_luminance_method": "edited_over_source_log_luminance_delta_v1",
         "explicit_srgb_to_linear_input_decode": True,
         "bake_output_colourspace": "sRGB",
         "luminance_transfer_strength": args.luminance_transfer_strength,
-        "per_uv_corner_rec709_linear_luminance_preserved": True,
+        "per_uv_corner_rec709_linear_luminance_preserved": (
+            args.pattern_luminance_strength == 0.0
+        ),
         "geometry_skin_skeleton_and_actions_preserved_by_design": True,
         "vertex_count": len(mesh.data.vertices),
         "polygon_count": len(mesh.data.polygons),
         "loop_count": len(mesh.data.loops),
         "directly_covered_vertex_count": int(np.count_nonzero(covered)),
         "nearest_filled_vertex_count": int(np.count_nonzero(~covered)),
+        "field_available_vertex_count": int(np.count_nonzero(field_available)),
+        "original_texture_preserved_vertex_count": int(
+            np.count_nonzero(~field_available)
+        ),
         "direct_coverage_ratio": float(np.mean(covered)),
         "minimum_direct_coverage_required": args.minimum_direct_coverage,
         "visibility_tolerance": tolerance,
+        "edited_foreground_distance_threshold": (
+            args.edited_foreground_distance_threshold
+        ),
+        "edited_foreground_chroma_threshold": (
+            args.edited_foreground_chroma_threshold
+        ),
+        "edited_foreground_luminance_threshold": (
+            args.edited_foreground_luminance_threshold
+        ),
+        "view_fusion_mode": args.view_fusion_mode,
+        "uncovered_fill_method": (
+            "nearest_covered_vertex_over_mesh_edges_and_coincident_export_seams_v2"
+        ),
         "per_view": per_view,
         "texture_size": args.texture_size,
         "base_color_texture": str(texture_path),
         "output_glb": str(output_glb),
+        "container_patch": container_patch,
         "readback": {
             "animations": animations,
             "skin_count": len(document.get("skins", [])),
             "skinned_primitive_count": len(skinned),
         },
-        "material_policy": {"metallic": 0.0, "roughness": 0.82},
+        "material_policy": "all_source_material_fields_except_base_color_payload_preserved",
         "next_gate": "walking_visual_coat_and_deformation_review",
     }
     (output_root / "manifest.json").write_text(

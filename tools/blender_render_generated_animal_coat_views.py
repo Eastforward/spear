@@ -34,6 +34,14 @@ def parse_argv():
     parser.add_argument("--width", type=int, default=512)
     parser.add_argument("--height", type=int, default=512)
     parser.add_argument("--samples", type=int, default=32)
+    parser.add_argument(
+        "--write-neutral-shading-pass",
+        action="store_true",
+        help=(
+            "Also render front/back/left/right with a constant linear-grey "
+            "Base Color so the projector can divide preview illumination out."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -108,6 +116,7 @@ def main():
     for other in [item for item in bpy.context.scene.objects if item.type == "MESH"]:
         other.hide_render = other != mesh
     preview_material_changes = 0
+    principled_nodes = []
     for material in {
         slot.material for slot in mesh.material_slots if slot.material is not None
     }:
@@ -116,6 +125,7 @@ def main():
         for node in material.node_tree.nodes:
             if node.type != "BSDF_PRINCIPLED":
                 continue
+            principled_nodes.append((material, node))
             metallic = node.inputs.get("Metallic")
             roughness = node.inputs.get("Roughness")
             if metallic is None or roughness is None:
@@ -191,6 +201,37 @@ def main():
             "camera_direction_to_subject": list((center - camera.location).normalized()),
         }
 
+    neutral_shading = None
+    if args.write_neutral_shading_pass:
+        neutral_value = 0.5
+        neutral_dir = output_dir / "neutral_shading"
+        neutral_dir.mkdir()
+        for material, node in principled_nodes:
+            base_colour = node.inputs.get("Base Color")
+            if base_colour is None:
+                raise RuntimeError("Principled material has no Base Color input")
+            for link in list(base_colour.links):
+                material.node_tree.links.remove(link)
+            base_colour.default_value = (
+                neutral_value,
+                neutral_value,
+                neutral_value,
+                1.0,
+            )
+        bpy.context.view_layer.update()
+        for name in VIEW_ORDER:
+            camera.location = Vector(views[name]["camera_location"])
+            direction = Vector(views[name]["camera_direction_to_subject"])
+            camera.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+            scene.render.filepath = str(neutral_dir / f"{name}.png")
+            bpy.ops.render.render(write_still=True)
+        neutral_shading = {
+            "directory": str(neutral_dir),
+            "base_color_linear": neutral_value,
+            "same_camera_lighting_and_view_transform_as_source": True,
+            "purpose": "estimate_spatial_preview_illumination_not_coat_colour",
+        }
+
     manifest = {
         "schema": SCHEMA,
         "input_glb": str(input_glb),
@@ -211,6 +252,7 @@ def main():
         "ortho_scale": float(ortho_scale),
         "views": views,
         "lighting": "fixed_neutral_two_area_v1",
+        "neutral_shading_pass": neutral_shading,
         "render_only_material_preview": {
             "principled_nodes_changed": preview_material_changes,
             "metallic": 0.0,

@@ -36,6 +36,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--target-description", required=True)
     parser.add_argument(
+        "--coat-detail-instruction",
+        default=(
+            "Follow Image 2 for breed-correct regional colour and pattern "
+            "placement. Preserve Image 1's existing fur length and surface "
+            "detail; change only colour and coat pattern pixels."
+        ),
+        help=(
+            "Breed/coat-specific rendering semantics, for example merling, "
+            "ticking, masks, blaze, socks, or points."
+        ),
+    )
+    parser.add_argument(
+        "--negative-description",
+        default="",
+        help=(
+            "Breed/coat-specific forbidden appearance. This is appended to "
+            "the generic structural negative prompt and receives native CFG."
+        ),
+    )
+    parser.add_argument(
         "--snapshot",
         type=Path,
         default=Path(DEFAULT_SNAPSHOT) if DEFAULT_SNAPSHOT else None,
@@ -154,24 +174,21 @@ def main() -> int:
         + "Precise object edit of a fixed 2x2 orthographic montage of one 3D animal: "
         "front at top-left, back at top-right, left side at bottom-left, right "
         "side at bottom-right. Change only the coat pixels in all four panels "
-        f"to this exact target: {args.target_description}. A ticked coat means "
-        "microscopic alternating colour bands on each individual hair; from a "
-        "normal viewing distance the body must look smooth, even, and finely "
-        "salt-and-pepper blue-grey over warm beige, never striped. Keep the "
+        f"to this exact target: {args.target_description}. "
+        f"Coat-specific instruction: {args.coat_detail_instruction} Keep the "
         "same individual, exact mesh silhouette, body and head shape, ears, "
         "muzzle, eyes, four legs, paws, one tail, pose, camera, crop, panel "
         "layout, neutral lighting, and background unchanged. Keep corresponding "
-        "body regions consistent across all views. Photorealistic short fur."
+        "body regions consistent across all views. Photorealistic animal coat."
     )
     negative_prompt = (
-        "saturated blue fur, pure blue fur, cyan fur, navy fur, blue-dyed animal, "
-        "monochrome blue coat, body stripes, parallel lines, contour lines, mackerel tabby, classic "
-        "tabby, spots, leg bars, tail rings, necklace markings, white patches, "
-        "pink-dyed face, pink-dyed paws, geometry change, silhouette change, "
+        "geometry change, silhouette change, fur extending outside the source silhouette, "
         "pose change, camera change, crop, panel reordering, extra animal, "
         "extra limb, missing limb, fused legs, extra tail, missing tail, text, "
         "watermark, illustration, cartoon"
     )
+    if args.negative_description.strip():
+        negative_prompt += ", " + args.negative_description.strip()
     tokenizer = AutoTokenizer.from_pretrained(snapshot / "tokenizer", local_files_only=True)
     for label, text in (("positive", prompt), ("negative", negative_prompt)):
         chat = tokenizer.apply_chat_template(
@@ -254,6 +271,8 @@ def main() -> int:
         "prompt": prompt,
         "negative_prompt": negative_prompt,
         "target_description": args.target_description,
+        "coat_detail_instruction": args.coat_detail_instruction,
+        "breed_coat_negative_description": args.negative_description,
         "input_view_dir": str(args.input_view_dir.resolve()),
         "appearance_reference_board": (
             str(appearance_reference_path) if appearance_reference_path is not None else None
