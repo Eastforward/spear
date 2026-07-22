@@ -3,7 +3,9 @@ import json
 import math
 import os
 import tempfile
+import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -151,6 +153,58 @@ class GpurirCliTests(unittest.TestCase):
 
         with self.assertRaises(SystemExit):
             mod.parse_args(["--animal", "unicorn"])
+
+
+class GpurirInstanceIsolationTests(unittest.TestCase):
+    def test_instance_uses_port_isolated_temp_log_shared_memory_and_gpu(self):
+        mod = load_module()
+        command_line = types.SimpleNamespace()
+        config = types.SimpleNamespace(
+            SPEAR=types.SimpleNamespace(
+                LAUNCH_MODE=None,
+                INSTANCE=types.SimpleNamespace(
+                    GAME_EXECUTABLE=None,
+                    TEMP_DIR=None,
+                    COMMAND_LINE_ARGS=command_line,
+                ),
+                ENVIRONMENT_VARS=types.SimpleNamespace(),
+            ),
+            SP_SERVICES=types.SimpleNamespace(
+                INITIALIZE_ENGINE_SERVICE=types.SimpleNamespace(
+                    OVERRIDE_GAME_DEFAULT_MAP=None,
+                    GAME_DEFAULT_MAP=None,
+                    FIXED_DELTA_TIME=None,
+                ),
+                RPC_SERVICE=types.SimpleNamespace(RPC_SERVER_PORT=None),
+            ),
+            SP_CORE=types.SimpleNamespace(SHARED_MEMORY_INITIAL_UNIQUE_ID=None),
+            defrost=lambda: None,
+            freeze=lambda: None,
+        )
+        configured = []
+        fake_spear = types.SimpleNamespace(
+            get_config=lambda user_config_files: config,
+            configure_system=lambda config: configured.append(config),
+            Instance=lambda config: types.SimpleNamespace(config=config),
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {"SPEAR_GRAPHICS_ADAPTER": "2", "SPEAR_RENDER_OFFSCREEN": "1"},
+            clear=False,
+        ), mock.patch.dict("sys.modules", {"spear": fake_spear}):
+            mod.configure_gpurir_instance(rpc_port=39102, fixed_delta_time=0.2)
+
+        self.assertEqual(config.SP_SERVICES.RPC_SERVICE.RPC_SERVER_PORT, 39102)
+        self.assertEqual(config.SPEAR.INSTANCE.TEMP_DIR, "tmp/spear_instance_39102")
+        self.assertEqual(command_line.log, "SpearSim_rpc_39102.log")
+        self.assertEqual(config.SP_CORE.SHARED_MEMORY_INITIAL_UNIQUE_ID, 391020000)
+        self.assertEqual(command_line.graphicsadapter, 2)
+        self.assertIsNone(command_line.renderoffscreen)
+        self.assertEqual(
+            config.SP_SERVICES.INITIALIZE_ENGINE_SERVICE.FIXED_DELTA_TIME, 0.2
+        )
+        self.assertEqual(configured, [config])
 
 
 class GpurirLayoutTests(unittest.TestCase):

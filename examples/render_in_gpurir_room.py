@@ -30,6 +30,7 @@ from render_in_apartment import (  # noqa: E402
     compute_asset_fit,
     compute_bounds_lift,
     get_actor_bounds_bottom_z,
+    parallel_instance_settings,
     read_frame,
     sample_ground_z,
     spawn_camera,
@@ -438,16 +439,40 @@ def compute_window_frame_layout(
     return pieces
 
 
-def configure_gpurir_instance(*, rpc_port):
+def configure_gpurir_instance(*, rpc_port, fixed_delta_time=None):
     import spear
 
+    graphics_adapter_env = os.environ.get("SPEAR_GRAPHICS_ADAPTER")
+    settings = parallel_instance_settings(
+        rpc_port,
+        graphics_adapter=(
+            int(graphics_adapter_env)
+            if graphics_adapter_env not in (None, "")
+            else None
+        ),
+    )
     config = spear.get_config(user_config_files=[])
     config.defrost()
     config.SPEAR.LAUNCH_MODE = "game"
     config.SPEAR.INSTANCE.GAME_EXECUTABLE = SPEARSIM_EXECUTABLE
     config.SP_SERVICES.INITIALIZE_ENGINE_SERVICE.OVERRIDE_GAME_DEFAULT_MAP = True
     config.SP_SERVICES.INITIALIZE_ENGINE_SERVICE.GAME_DEFAULT_MAP = EMPTY_MAP
-    config.SP_SERVICES.RPC_SERVICE.RPC_SERVER_PORT = int(rpc_port)
+    config.SP_SERVICES.RPC_SERVICE.RPC_SERVER_PORT = settings["rpc_port"]
+    config.SPEAR.INSTANCE.TEMP_DIR = settings["temp_dir"]
+    config.SPEAR.INSTANCE.COMMAND_LINE_ARGS.log = settings["log"]
+    config.SP_CORE.SHARED_MEMORY_INITIAL_UNIQUE_ID = settings[
+        "shared_memory_initial_unique_id"
+    ]
+    if settings["graphics_adapter"] is not None:
+        config.SPEAR.INSTANCE.COMMAND_LINE_ARGS.graphicsadapter = settings[
+            "graphics_adapter"
+        ]
+    if os.environ.get("SPEAR_RENDER_OFFSCREEN", "0") == "1":
+        config.SPEAR.INSTANCE.COMMAND_LINE_ARGS.renderoffscreen = None
+    if fixed_delta_time is not None:
+        config.SP_SERVICES.INITIALIZE_ENGINE_SERVICE.FIXED_DELTA_TIME = float(
+            fixed_delta_time
+        )
     config.SPEAR.ENVIRONMENT_VARS.VK_ICD_FILENAMES = "/etc/vulkan/icd.d/nvidia_icd.json"
     config.freeze()
     spear.configure_system(config=config)
