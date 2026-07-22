@@ -220,5 +220,46 @@ Two failures are intentionally retained as lessons:
 The identity bake also exposed and fixed a double-sRGB conversion: an original
 mean RGB near `(179, 118, 53)` incorrectly became `(217, 180, 122)` before the
 fix and returned to approximately `(179, 118, 53)` afterward. The canary's
-four-view direct vertex coverage was `0.454771`; uncovered vertices used the
-nearest covered 3D vertex and therefore still require moving visual review.
+four-view direct vertex coverage was `0.454771`. That historical run used a
+nearest covered 3D vertex for uncovered areas; the production projector now
+uses mesh-edge and coincident-export-seam propagation and leaves disconnected
+components on the original texture.
+
+## Border Collie cross-validation and instance attributes
+
+The Border Collie cross-validation used an independently generated FLUX →
+Pixel3D mesh, not a reshaped Beagle or Labrador template. After topology/PBR
+repair, TokenRig, cardinal heading normalization, four-foot support-plane
+leveling and reviewed motion retarget, the accepted mesh remains the authority
+for all instance variants.
+
+`tools/blender_build_generated_animal_instance_ofat.py` emits one baseline and
+eight one-factor-at-a-time variants:
+
+- size: `small / medium / large` through one uniform instance root;
+- body build: `slim / standard / stocky` through bounded semantic torso
+  deformation (`0.84 / 1.00 / 1.16`);
+- life stage: `young / adult / senior` through bounded head proportions
+  (`1.12 / 1.00 / 0.97`); senior additionally receives a local semantic-UV
+  muzzle greying cue that preserves already-light fur and never uses a global
+  RGB material factor;
+- breed-scoped coat: `black_white / blue_merle / red_white`, where both
+  nonbaseline coats must provide the real-reference, undistilled-FLUX
+  multiview projection evidence described above.
+
+The reviewed Border Collie batch measured torso RMS ratios of approximately
+`0.911 / 1.000 / 1.092` and head RMS ratios of approximately
+`1.095 / 1.000 / 0.976`. All variants retain one skin, one skinned primitive,
+and exact `Idle` and `Walking` action names. Coat GLBs must additionally match
+the baseline topology, UV, skin weights, rest skeleton and action-keyframe
+signatures exactly; only the embedded Base Color PNG payload may differ.
+
+Every emitted instance, including FLUX coat variants, is re-imported and sent
+through the same runtime preparation. The accepted rest mesh is translated as
+one rigid asset so its lowest sole vertex is at local `Z=0`; geometry, skin and
+animation data are not baked or rewritten by grounding. A fixed, asset-specific
+mouth emitter is then derived from the forward part of that concrete mesh's
+semantic head region and recorded in AVEngine local coordinates (`X` forward,
+`Y` up, `Z` left). This deliberately simple anchor is recomputed after size,
+body-build and life-stage realization, so Apartment RIR binding uses the actual
+instance height rather than a dog- or cat-wide template height.

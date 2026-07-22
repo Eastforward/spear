@@ -45,6 +45,43 @@ def test_generated_instance_ofat_covers_attributes_without_rgb_coat_tint():
     assert "patch_glb_base_color_factor" not in text
 
 
+def test_generated_instance_ofat_uses_reviewed_visible_shape_ranges():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert 'BUILD_RATIOS = {"slim": 0.84, "standard": 1.0, "stocky": 1.16}' in text
+    assert 'HEAD_RATIOS = {"young": 1.12, "adult": 1.0, "senior": 0.97}' in text
+    assert "torso_weighted_lateral_vertical_rms_ratio" in text
+    assert "head_weighted_radius_rms_ratio" in text
+
+
+def test_generated_instance_ofat_senior_cue_is_local_not_global_tint():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert "apply_senior_muzzle_surface_cue" in text
+    assert "textured.rasterize_muzzle_mask" in text
+    assert '"semantic_uv_muzzle_neutral_gray_floor_v1"' in text
+    assert '"already_light_fur_luminance_preserved": True' in text
+    assert '"global_rgb_material_factor_used": False' in text
+
+
+def test_generated_instance_ofat_grounds_every_variant_and_derives_emitter():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert "def rest_world_coordinates" in text
+    assert "armature.data.pose_position = \"REST\"" in text
+    assert "def ground_instance_root" in text
+    assert '"rest_mesh_minimum_z_to_asset_root_zero_v1"' in text
+    assert "abs(minimum_after) > GROUND_TOLERANCE_M" in text
+    assert "def derive_muzzle_emitter" in text
+    assert '"semantic_head_forward_quantile_rest_mesh_v1"' in text
+    assert '"asset_specific_not_species_template": True' in text
+    assert '"mouth_animation_required": False' in text
+    assert text.index("ground_instance_root(mesh, armature, root)") < text.index(
+        "stable.export_instance(output)"
+    )
+    assert "shutil.copyfile" not in text
+
+
 def test_generated_instance_ofat_requires_real_reference_flux_evidence():
     text = SCRIPT.read_text(encoding="utf-8")
 

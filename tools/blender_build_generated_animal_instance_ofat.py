@@ -17,7 +17,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import struct
 import sys
 
@@ -31,14 +30,19 @@ if str(SPEAR_ROOT) not in sys.path:
     sys.path.insert(0, str(SPEAR_ROOT))
 
 from tools import blender_build_stable_quadruped_instance as stable  # noqa: E402
+from tools import blender_build_stable_animal_instance as textured  # noqa: E402
 from tools import blender_robust_swap_mesh_keep_rig as robust  # noqa: E402
 
 
 SCHEMA = "avengine_generated_animal_instance_ofat_v2"
 SIZE_RATIOS = {"small": 0.85, "medium": 1.0, "large": 1.15}
-BUILD_RATIOS = {"slim": 0.90, "standard": 1.0, "stocky": 1.10}
-HEAD_RATIOS = {"young": 1.08, "adult": 1.0, "senior": 0.98}
+BUILD_RATIOS = {"slim": 0.84, "standard": 1.0, "stocky": 1.16}
+HEAD_RATIOS = {"young": 1.12, "adult": 1.0, "senior": 0.97}
+SENIOR_MUZZLE_GRAY_MIX = 0.55
+SENIOR_MUZZLE_GRAY_FLOOR = 0.68
 IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_]{0,63}")
+GROUND_TOLERANCE_M = 1.0e-6
+MUZZLE_FORWARD_QUANTILE = 0.82
 
 
 def parse_key_paths(values, label):
@@ -162,9 +166,23 @@ def weighted_center(coordinates, weights):
     return np.sum(coordinates * weights[:, None], axis=0) / total
 
 
+def weighted_rms_radius(coordinates, weights, axes):
+    center = weighted_center(coordinates, weights)
+    selected = list(axes)
+    offsets = coordinates[:, selected] - center[selected]
+    return float(
+        np.sqrt(
+            np.sum(weights * np.sum(np.square(offsets), axis=1))
+            / float(weights.sum())
+        )
+    )
+
+
 def apply_shape(mesh, base_coordinates, body_build, life_stage):
     coordinates = base_coordinates.copy()
     head, torso = shape_weights(coordinates)
+    torso_rms_before = weighted_rms_radius(coordinates, torso, (1, 2))
+    head_rms_before = weighted_rms_radius(coordinates, head, (0, 1, 2))
     torso_center = weighted_center(coordinates, torso)
     head_center = weighted_center(coordinates, head)
     girth = BUILD_RATIOS[body_build]
@@ -176,6 +194,8 @@ def apply_shape(mesh, base_coordinates, body_build, life_stage):
     head_scale = HEAD_RATIOS[life_stage]
     scaled_head = head_center + (coordinates - head_center) * head_scale
     coordinates += (scaled_head - coordinates) * head[:, None]
+    torso_rms_after = weighted_rms_radius(coordinates, torso, (1, 2))
+    head_rms_after = weighted_rms_radius(coordinates, head, (0, 1, 2))
     mesh.data.vertices.foreach_set("co", coordinates.reshape(-1))
     mesh.data.update()
     return {
@@ -186,6 +206,145 @@ def apply_shape(mesh, base_coordinates, body_build, life_stage):
         "head_scale": head_scale,
         "soft_geometric_transition": True,
         "coat_pixels_modified": False,
+        "semantic_measurements": {
+            "torso_weighted_lateral_vertical_rms_before": torso_rms_before,
+            "torso_weighted_lateral_vertical_rms_after": torso_rms_after,
+            "torso_weighted_lateral_vertical_rms_ratio": (
+                torso_rms_after / max(torso_rms_before, 1.0e-12)
+            ),
+            "head_weighted_radius_rms_before": head_rms_before,
+            "head_weighted_radius_rms_after": head_rms_after,
+            "head_weighted_radius_rms_ratio": (
+                head_rms_after / max(head_rms_before, 1.0e-12)
+            ),
+        },
+    }, head, coordinates
+
+
+def apply_senior_muzzle_surface_cue(mesh, head, coordinates, output_texture):
+    """Add a local senior muzzle cue without redefining the breed coat.
+
+    The UV mask is derived from the accepted generated mesh's semantic head
+    region.  Dark muzzle pixels are lifted toward neutral grey; already-light
+    fur keeps its measured luminance, so a white blaze is never darkened into
+    an artificial painted patch.  This is spatial age evidence, not a global
+    material factor and not one of the three FLUX-authored coat identities.
+    """
+
+    node = textured.color_image_node(mesh)
+    source = node.image
+    width, height = map(int, source.size)
+    if width <= 0 or height <= 0:
+        raise RuntimeError("senior source Base Color is not loaded")
+    pixels = np.empty(width * height * 4, dtype=np.float32)
+    source.pixels.foreach_get(pixels)
+    pixels = pixels.reshape((height, width, 4))
+    rgb = pixels[:, :, :3]
+    luminance = (
+        0.2126 * rgb[:, :, 0]
+        + 0.7152 * rgb[:, :, 1]
+        + 0.0722 * rgb[:, :, 2]
+    )
+    mask, mask_record = textured.rasterize_muzzle_mask(
+        mesh, head, coordinates, width, height
+    )
+    target_luminance = np.maximum(luminance, SENIOR_MUZZLE_GRAY_FLOOR)
+    neutral = np.repeat(target_luminance[:, :, None], 3, axis=2)
+    alpha = np.clip(mask * SENIOR_MUZZLE_GRAY_MIX, 0.0, 1.0)[:, :, None]
+    rgb[:] = np.clip(rgb * (1.0 - alpha) + neutral * alpha, 0.0, 1.0)
+
+    realized = source.copy()
+    realized.name = "GeneratedAnimalSeniorBaseColor"
+    realized.pixels.foreach_set(pixels.reshape(-1))
+    realized.update()
+    realized.filepath_raw = str(output_texture)
+    realized.file_format = "PNG"
+    realized.save()
+    reloaded = bpy.data.images.load(str(output_texture), check_existing=False)
+    reloaded.colorspace_settings.name = "sRGB"
+    reloaded.pack()
+    node.image = reloaded
+    return {
+        "method": "semantic_uv_muzzle_neutral_gray_floor_v1",
+        "age_surface_pixels_modified": True,
+        "global_rgb_material_factor_used": False,
+        "muzzle_gray_mix": SENIOR_MUZZLE_GRAY_MIX,
+        "muzzle_gray_luminance_floor": SENIOR_MUZZLE_GRAY_FLOOR,
+        "already_light_fur_luminance_preserved": True,
+        "output_texture": str(output_texture.resolve()),
+        **mask_record,
+    }
+
+
+def rest_world_coordinates(mesh, armature):
+    """Return undeformed mesh coordinates in the exported asset-root frame."""
+
+    previous_pose_position = armature.data.pose_position
+    armature.data.pose_position = "REST"
+    bpy.context.view_layer.update()
+    try:
+        matrix = np.asarray(mesh.matrix_world, dtype=np.float64)
+        local = stable.mesh_coordinates(mesh)
+        homogeneous = np.column_stack((local, np.ones(len(local), dtype=np.float64)))
+        return (homogeneous @ matrix.T)[:, :3]
+    finally:
+        armature.data.pose_position = previous_pose_position
+        bpy.context.view_layer.update()
+
+
+def ground_instance_root(mesh, armature, root):
+    """Translate the instance root so the rest-mesh sole minimum is exactly Z=0."""
+
+    before = rest_world_coordinates(mesh, armature)
+    minimum_before = float(before[:, 2].min())
+    root.location.z -= minimum_before
+    bpy.context.view_layer.update()
+    after = rest_world_coordinates(mesh, armature)
+    minimum_after = float(after[:, 2].min())
+    if abs(minimum_after) > GROUND_TOLERANCE_M:
+        raise RuntimeError(
+            f"generated instance grounding readback failed: min_z={minimum_after}"
+        )
+    return {
+        "method": "rest_mesh_minimum_z_to_asset_root_zero_v1",
+        "rest_minimum_z_before_m": minimum_before,
+        "root_translation_z_m": float(root.location.z),
+        "rest_minimum_z_after_m": minimum_after,
+        "tolerance_m": GROUND_TOLERANCE_M,
+        "passed": True,
+    }
+
+
+def derive_muzzle_emitter(mesh, armature):
+    """Derive a simple fixed mouth emitter from this concrete asset's rest mesh."""
+
+    world = rest_world_coordinates(mesh, armature)
+    semantic = robust.dog_region_coords(world, "positive-x")
+    head, _torso = shape_weights(world)
+    candidates = np.flatnonzero(head > 0.25)
+    if len(candidates) < 20:
+        raise RuntimeError("generated animal lacks enough head vertices for emitter")
+    threshold = float(
+        np.quantile(semantic[candidates, 0], MUZZLE_FORWARD_QUANTILE)
+    )
+    muzzle = candidates[semantic[candidates, 0] >= threshold]
+    if len(muzzle) < 4:
+        raise RuntimeError("generated animal lacks enough forward muzzle vertices")
+    weights = np.maximum(head[muzzle], 1.0e-6)
+    point = weighted_center(semantic[muzzle], weights)
+    # A fixed emitter should stay on the animal's sagittal plane instead of
+    # inheriting an arbitrary left/right surface sample from an asymmetric mesh.
+    point[2] = 0.0
+    return {
+        "method": "semantic_head_forward_quantile_rest_mesh_v1",
+        "coordinate_system": "avengine_local_x_forward_y_up_z_left_m",
+        "emitter_offset_m": [float(value) for value in point],
+        "local_forward_axis": [1.0, 0.0, 0.0],
+        "muzzle_forward_quantile": MUZZLE_FORWARD_QUANTILE,
+        "candidate_vertex_count": int(len(candidates)),
+        "selected_vertex_count": int(len(muzzle)),
+        "asset_specific_not_species_template": True,
+        "mouth_animation_required": False,
     }
 
 
@@ -450,29 +609,46 @@ def main():
         variant_root.mkdir()
         output = variant_root / "instance.glb"
         if changed_attribute == "coat":
-            shutil.copyfile(coat_glbs[attributes["coat"]], output)
+            mesh, armature = import_asset(coat_glbs[attributes["coat"]])
             shape = {
                 "torso_girth_scale": 1.0,
                 "torso_vertical_scale": 1.0,
                 "head_scale": 1.0,
                 "coat_pixels_modified": True,
             }
+            life_stage_surface = {
+                "method": "none",
+                "age_surface_pixels_modified": False,
+            }
             source_path = coat_glbs[attributes["coat"]]
         else:
-            mesh, _armature = import_asset(input_glb)
+            mesh, armature = import_asset(input_glb)
             base_coordinates = stable.mesh_coordinates(mesh)
-            shape = apply_shape(
+            shape, head, shaped_coordinates = apply_shape(
                 mesh,
                 base_coordinates,
                 attributes["body_build"],
                 attributes["life_stage"],
             )
-            stable.install_instance_scale(
-                list(bpy.data.objects), SIZE_RATIOS[attributes["size"]], 0
-            )
-            bpy.context.view_layer.update()
-            stable.export_instance(output)
+            if attributes["life_stage"] == "senior":
+                life_stage_surface = apply_senior_muzzle_surface_cue(
+                    mesh,
+                    head,
+                    shaped_coordinates,
+                    variant_root / "senior_base_color.png",
+                )
+            else:
+                life_stage_surface = {
+                    "method": "none",
+                    "age_surface_pixels_modified": False,
+                }
             source_path = input_glb
+        root = stable.install_instance_scale(
+            list(bpy.data.objects), SIZE_RATIOS[attributes["size"]], 0
+        )
+        grounding = ground_instance_root(mesh, armature, root)
+        emitter = derive_muzzle_emitter(mesh, armature)
+        stable.export_instance(output)
         readback = output_readback(output)
         record = {
             "schema": SCHEMA,
@@ -488,6 +664,9 @@ def main():
             "attributes": {"breed": args.breed, **attributes},
             "size_ratio": SIZE_RATIOS[attributes["size"]],
             "shape": shape,
+            "life_stage_surface": life_stage_surface,
+            "grounding": grounding,
+            "emitter_anchor": emitter,
             "appearance": coat_evidence[attributes["coat"]],
             "readback": readback,
             "actual_generated_mesh_preserved": True,
