@@ -1,0 +1,3038 @@
+{
+  "schema": "avengine_audioset_indoor_animal_source_registry_v1",
+  "state_classification": "research_candidate",
+  "ontology_snapshot": {
+    "source_url": "https://github.com/audioset/ontology",
+    "revision": "d417d32bf59c711abb5910fd2f76a0eb44697991",
+    "artifact_path": "data/controlled_source_attributes_v1/audioset_ontology_v1.json",
+    "sha256": "9c685f4403eecc3ca9be37fd7285cf212feaaea6ff7229d3e7ca89e0d1f2d15d",
+    "license": "CC-BY-SA-4.0",
+    "license_snapshot_path": "data/controlled_source_attributes_v1/audioset_ontology_README_v1.md"
+  },
+  "scope_contract": {
+    "meaning": "all visible source entities below the official AudioSet Animal node, classified by physically plausible indoor venue",
+    "apartment_common": "ordinary apartment occurrence is plausible",
+    "apartment_conditional": "requires pet, intrusion, terrarium, cage, or rescue context",
+    "specialized_indoor_only": "requires barn, stable, clinic, aviary, zoo, insectarium, or aquarium; do not place in a normal apartment",
+    "sound_event_nodes_do_not_create_duplicate_meshes": true
+  },
+  "motion_family_contracts": {
+    "amphibian_hop": {
+      "required_actions": [
+        "Idle",
+        "Hop"
+      ],
+      "separate_pose_direction_rig_and_deformation_gates": true,
+      "formal_dataset_registration_authorized": false
+    },
+    "aquatic_cetacean": {
+      "required_actions": [
+        "IdleSwim",
+        "Swimming"
+      ],
+      "separate_pose_direction_rig_and_deformation_gates": true,
+      "formal_dataset_registration_authorized": false
+    },
+    "bird_perching_flight": {
+      "required_actions": [
+        "PerchedIdle",
+        "Hop",
+        "Flying"
+      ],
+      "separate_pose_direction_rig_and_deformation_gates": true,
+      "formal_dataset_registration_authorized": false
+    },
+    "bird_terrestrial": {
+      "required_actions": [
+        "Idle",
+        "Walking",
+        "Hop"
+      ],
+      "separate_pose_direction_rig_and_deformation_gates": true,
+      "formal_dataset_registration_authorized": false
+    },
+    "insect_crawl_flight": {
+      "required_actions": [
+        "Idle",
+        "Crawl",
+        "Flying"
+      ],
+      "separate_pose_direction_rig_and_deformation_gates": true,
+      "formal_dataset_registration_authorized": false
+    },
+    "quadruped_bovid": {
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "separate_pose_direction_rig_and_deformation_gates": true,
+      "formal_dataset_registration_authorized": false
+    },
+    "quadruped_canid": {
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "separate_pose_direction_rig_and_deformation_gates": true,
+      "formal_dataset_registration_authorized": false
+    },
+    "quadruped_equid": {
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "separate_pose_direction_rig_and_deformation_gates": true,
+      "formal_dataset_registration_authorized": false
+    },
+    "quadruped_felid": {
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "separate_pose_direction_rig_and_deformation_gates": true,
+      "formal_dataset_registration_authorized": false
+    },
+    "quadruped_rodent": {
+      "required_actions": [
+        "Idle",
+        "Scurry"
+      ],
+      "separate_pose_direction_rig_and_deformation_gates": true,
+      "formal_dataset_registration_authorized": false
+    },
+    "quadruped_small_ungulate": {
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "separate_pose_direction_rig_and_deformation_gates": true,
+      "formal_dataset_registration_authorized": false
+    },
+    "quadruped_suid": {
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "separate_pose_direction_rig_and_deformation_gates": true,
+      "formal_dataset_registration_authorized": false
+    },
+    "serpent_slither": {
+      "required_actions": [
+        "Idle",
+        "Slither"
+      ],
+      "separate_pose_direction_rig_and_deformation_gates": true,
+      "formal_dataset_registration_authorized": false
+    }
+  },
+  "summary": {
+    "audioset_animal_node_count": 73,
+    "visible_source_count": 32,
+    "acoustic_event_node_count": 37,
+    "ontology_container_count": 4,
+    "apartment_common_count": 7,
+    "apartment_conditional_count": 8,
+    "specialized_indoor_only_count": 17
+  },
+  "sources": [
+    {
+      "source_id": "dog",
+      "audioset_node_id": "/m/0bt9lr",
+      "motion_family": "quadruped_canid",
+      "indoor_scope": "apartment_common",
+      "scene_domains": [
+        "apartment",
+        "veterinary_clinic"
+      ],
+      "appearance_attribute": "coat_tone",
+      "implementation_status": "strict_canary_validated",
+      "taxonomy_variants": [],
+      "audioset_name": "Dog",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "coat_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/0bt9lr",
+          "name": "Dog",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/05tny_",
+          "name": "Bark",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/07srf8z",
+          "name": "Bay",
+          "dataset_eligible": false,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/07rc7d9",
+          "name": "Bow-wow",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/0ghcn6",
+          "name": "Growling",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/07qf0zm",
+          "name": "Howl",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/t/dd00136",
+          "name": "Whimper (dog)",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/07r_k2n",
+          "name": "Yip",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "cat",
+      "audioset_node_id": "/m/01yrx",
+      "motion_family": "quadruped_felid",
+      "indoor_scope": "apartment_common",
+      "scene_domains": [
+        "apartment",
+        "veterinary_clinic"
+      ],
+      "appearance_attribute": "coat_tone",
+      "implementation_status": "strict_canary_validated",
+      "taxonomy_variants": [],
+      "audioset_name": "Cat",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "coat_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/01yrx",
+          "name": "Cat",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/0f25s6",
+          "name": "Cat communication",
+          "dataset_eligible": false,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/07r81j2",
+          "name": "Caterwaul",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/0ghcn6",
+          "name": "Growling",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/07rjwbb",
+          "name": "Hiss",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/07qrkrw",
+          "name": "Meow",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/02yds9",
+          "name": "Purr",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "horse",
+      "audioset_node_id": "/m/03k3r",
+      "motion_family": "quadruped_equid",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "barn_stable",
+        "large_animal_clinic"
+      ],
+      "appearance_attribute": "coat_tone",
+      "implementation_status": "strict_canary_in_progress",
+      "taxonomy_variants": [],
+      "audioset_name": "Horse",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "coat_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/03k3r",
+          "name": "Horse",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07rv9rh",
+          "name": "Clip-clop",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/07q5rw0",
+          "name": "Neigh, whinny",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/t/dd00140",
+          "name": "Nicker",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/t/dd00139",
+          "name": "Snort (horse)",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "donkey",
+      "audioset_node_id": "/m/0ffhf",
+      "motion_family": "quadruped_equid",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "barn_stable",
+        "large_animal_clinic"
+      ],
+      "appearance_attribute": "coat_tone",
+      "implementation_status": "native_motion_guide_available",
+      "taxonomy_variants": [],
+      "audioset_name": "Donkey, ass",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "coat_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/0ffhf",
+          "name": "Donkey, ass",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "cattle",
+      "audioset_node_id": "/m/01xq0k1",
+      "motion_family": "quadruped_bovid",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "barn_stable",
+        "large_animal_clinic"
+      ],
+      "appearance_attribute": "coat_tone",
+      "implementation_status": "native_motion_guide_available",
+      "taxonomy_variants": [
+        "cow",
+        "bull"
+      ],
+      "audioset_name": "Cattle, bovinae",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "coat_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/01xq0k1",
+          "name": "Cattle, bovinae",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/0239kh",
+          "name": "Cowbell",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/07rpkh9",
+          "name": "Moo",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "yak",
+      "audioset_node_id": "/m/01hhp3",
+      "motion_family": "quadruped_bovid",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "barn_stable",
+        "large_animal_clinic"
+      ],
+      "appearance_attribute": "coat_tone",
+      "implementation_status": "strict_profile_and_guide_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Yak",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "coat_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/01hhp3",
+          "name": "Yak",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "pig",
+      "audioset_node_id": "/m/068zj",
+      "motion_family": "quadruped_suid",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "barn_stable",
+        "veterinary_clinic"
+      ],
+      "appearance_attribute": "skin_coat_tone",
+      "implementation_status": "strict_profile_and_guide_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Pig",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "skin_coat_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/068zj",
+          "name": "Pig",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/t/dd00018",
+          "name": "Oink",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "goat",
+      "audioset_node_id": "/m/03fwl",
+      "motion_family": "quadruped_small_ungulate",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "barn_stable",
+        "veterinary_clinic"
+      ],
+      "appearance_attribute": "coat_tone",
+      "implementation_status": "strict_profile_and_guide_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Goat",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "coat_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/03fwl",
+          "name": "Goat",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07q0h5t",
+          "name": "Bleat",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "sheep",
+      "audioset_node_id": "/m/07bgp",
+      "motion_family": "quadruped_small_ungulate",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "barn_stable",
+        "veterinary_clinic"
+      ],
+      "appearance_attribute": "fleece_tone",
+      "implementation_status": "strict_profile_and_guide_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Sheep",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "fleece_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/07bgp",
+          "name": "Sheep",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07q0h5t",
+          "name": "Bleat",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "fowl_generic",
+      "audioset_node_id": "/m/025rv6n",
+      "motion_family": "bird_terrestrial",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "barn_coop",
+        "aviary"
+      ],
+      "appearance_attribute": "plumage_tone",
+      "implementation_status": "bird_adapter_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Fowl",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking",
+        "Hop"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "plumage_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/025rv6n",
+          "name": "Fowl",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "chicken_rooster",
+      "audioset_node_id": "/m/09b5t",
+      "motion_family": "bird_terrestrial",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "barn_coop",
+        "aviary"
+      ],
+      "appearance_attribute": "plumage_tone",
+      "implementation_status": "bird_adapter_required",
+      "taxonomy_variants": [
+        "hen",
+        "rooster"
+      ],
+      "audioset_name": "Chicken, rooster",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking",
+        "Hop"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "plumage_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/09b5t",
+          "name": "Chicken, rooster",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07st89h",
+          "name": "Cluck",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/07qn5dc",
+          "name": "Crowing, cock-a-doodle-doo",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "turkey",
+      "audioset_node_id": "/m/01rd7k",
+      "motion_family": "bird_terrestrial",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "barn_coop",
+        "aviary"
+      ],
+      "appearance_attribute": "plumage_tone",
+      "implementation_status": "bird_adapter_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Turkey",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking",
+        "Hop"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "plumage_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/01rd7k",
+          "name": "Turkey",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07svc2k",
+          "name": "Gobble",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "duck",
+      "audioset_node_id": "/m/09ddx",
+      "motion_family": "bird_terrestrial",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "barn_coop",
+        "aviary",
+        "indoor_waterfowl_habitat"
+      ],
+      "appearance_attribute": "plumage_tone",
+      "implementation_status": "bird_adapter_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Duck",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking",
+        "Hop"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "plumage_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/09ddx",
+          "name": "Duck",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07qdb04",
+          "name": "Quack",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "goose",
+      "audioset_node_id": "/m/0dbvp",
+      "motion_family": "bird_terrestrial",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "barn_coop",
+        "aviary",
+        "indoor_waterfowl_habitat"
+      ],
+      "appearance_attribute": "plumage_tone",
+      "implementation_status": "bird_adapter_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Goose",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking",
+        "Hop"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "plumage_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/0dbvp",
+          "name": "Goose",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07qwf61",
+          "name": "Honk",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "roaring_big_cat",
+      "audioset_node_id": "/m/0cdnk",
+      "motion_family": "quadruped_felid",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "zoo_enclosure",
+        "wildlife_clinic"
+      ],
+      "appearance_attribute": "coat_tone",
+      "implementation_status": "strict_profile_and_guide_required",
+      "taxonomy_variants": [
+        "lion",
+        "tiger"
+      ],
+      "audioset_name": "Roaring cats (lions, tigers)",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "coat_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/0cdnk",
+          "name": "Roaring cats (lions, tigers)",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/0ghcn6",
+          "name": "Growling",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/04cvmfc",
+          "name": "Roar",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "bird_generic",
+      "audioset_node_id": "/m/015p6",
+      "motion_family": "bird_perching_flight",
+      "indoor_scope": "apartment_conditional",
+      "scene_domains": [
+        "apartment",
+        "aviary",
+        "wildlife_clinic"
+      ],
+      "appearance_attribute": "plumage_tone",
+      "implementation_status": "bird_adapter_required",
+      "taxonomy_variants": [
+        "songbird",
+        "parrot"
+      ],
+      "audioset_name": "Bird",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "PerchedIdle",
+        "Hop",
+        "Flying"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "plumage_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/015p6",
+          "name": "Bird",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/05_wcq",
+          "name": "Bird flight, flapping wings",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/020bb7",
+          "name": "Bird vocalization, bird call, bird song",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/07pggtn",
+          "name": "Chirp, tweet",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/07sx8x_",
+          "name": "Squawk",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "pigeon_dove",
+      "audioset_node_id": "/m/0h0rv",
+      "motion_family": "bird_perching_flight",
+      "indoor_scope": "apartment_conditional",
+      "scene_domains": [
+        "apartment",
+        "aviary",
+        "wildlife_clinic"
+      ],
+      "appearance_attribute": "plumage_tone",
+      "implementation_status": "bird_adapter_required",
+      "taxonomy_variants": [
+        "pigeon",
+        "dove"
+      ],
+      "audioset_name": "Pigeon, dove",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "PerchedIdle",
+        "Hop",
+        "Flying"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "plumage_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/0h0rv",
+          "name": "Pigeon, dove",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07r_25d",
+          "name": "Coo",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "crow",
+      "audioset_node_id": "/m/04s8yn",
+      "motion_family": "bird_perching_flight",
+      "indoor_scope": "apartment_conditional",
+      "scene_domains": [
+        "aviary",
+        "wildlife_clinic"
+      ],
+      "appearance_attribute": "plumage_tone",
+      "implementation_status": "bird_adapter_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Crow",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "PerchedIdle",
+        "Hop",
+        "Flying"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "plumage_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/04s8yn",
+          "name": "Crow",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07r5c2p",
+          "name": "Caw",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "owl",
+      "audioset_node_id": "/m/09d5_",
+      "motion_family": "bird_perching_flight",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "aviary",
+        "wildlife_clinic",
+        "zoo_enclosure"
+      ],
+      "appearance_attribute": "plumage_tone",
+      "implementation_status": "bird_adapter_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Owl",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "PerchedIdle",
+        "Hop",
+        "Flying"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "plumage_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/09d5_",
+          "name": "Owl",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07r_80w",
+          "name": "Hoot",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "gull",
+      "audioset_node_id": "/m/01dwxx",
+      "motion_family": "bird_perching_flight",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "aviary",
+        "wildlife_clinic"
+      ],
+      "appearance_attribute": "plumage_tone",
+      "implementation_status": "bird_adapter_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Gull, seagull",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "PerchedIdle",
+        "Hop",
+        "Flying"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "plumage_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/01dwxx",
+          "name": "Gull, seagull",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "wild_canid",
+      "audioset_node_id": "/m/01z5f",
+      "motion_family": "quadruped_canid",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "zoo_enclosure",
+        "wildlife_clinic"
+      ],
+      "appearance_attribute": "coat_tone",
+      "implementation_status": "native_motion_guide_available",
+      "taxonomy_variants": [
+        "wolf",
+        "fox"
+      ],
+      "audioset_name": "Canidae, dogs, wolves",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Walking"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "coat_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/01z5f",
+          "name": "Canidae, dogs, wolves",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/0ghcn6",
+          "name": "Growling",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/07qf0zm",
+          "name": "Howl",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "rodent_generic",
+      "audioset_node_id": "/m/06hps",
+      "motion_family": "quadruped_rodent",
+      "indoor_scope": "apartment_conditional",
+      "scene_domains": [
+        "apartment",
+        "laboratory",
+        "veterinary_clinic"
+      ],
+      "appearance_attribute": "coat_tone",
+      "implementation_status": "strict_profile_and_guide_required",
+      "taxonomy_variants": [
+        "rat",
+        "mouse"
+      ],
+      "audioset_name": "Rodents, rats, mice",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Scurry"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "coat_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/06hps",
+          "name": "Rodents, rats, mice",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07r4gkf",
+          "name": "Patter",
+          "dataset_eligible": false,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "mouse",
+      "audioset_node_id": "/m/04rmv",
+      "motion_family": "quadruped_rodent",
+      "indoor_scope": "apartment_common",
+      "scene_domains": [
+        "apartment",
+        "laboratory",
+        "veterinary_clinic"
+      ],
+      "appearance_attribute": "coat_tone",
+      "implementation_status": "strict_profile_and_guide_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Mouse",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Scurry"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "coat_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/04rmv",
+          "name": "Mouse",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "chipmunk",
+      "audioset_node_id": "/m/02021",
+      "motion_family": "quadruped_rodent",
+      "indoor_scope": "apartment_conditional",
+      "scene_domains": [
+        "wildlife_clinic",
+        "laboratory"
+      ],
+      "appearance_attribute": "coat_tone",
+      "implementation_status": "strict_profile_and_guide_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Chipmunk",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Scurry"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "coat_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/02021",
+          "name": "Chipmunk",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "insect_generic",
+      "audioset_node_id": "/m/03vt0",
+      "motion_family": "insect_crawl_flight",
+      "indoor_scope": "apartment_common",
+      "scene_domains": [
+        "apartment",
+        "laboratory",
+        "insectarium"
+      ],
+      "appearance_attribute": "exoskeleton_tone",
+      "implementation_status": "insect_adapter_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Insect",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Crawl",
+        "Flying"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "exoskeleton_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/03vt0",
+          "name": "Insect",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "cricket",
+      "audioset_node_id": "/m/09xqv",
+      "motion_family": "insect_crawl_flight",
+      "indoor_scope": "apartment_common",
+      "scene_domains": [
+        "apartment",
+        "laboratory",
+        "insectarium"
+      ],
+      "appearance_attribute": "exoskeleton_tone",
+      "implementation_status": "insect_adapter_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Cricket",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Crawl",
+        "Flying"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "exoskeleton_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/09xqv",
+          "name": "Cricket",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "mosquito",
+      "audioset_node_id": "/m/09f96",
+      "motion_family": "insect_crawl_flight",
+      "indoor_scope": "apartment_common",
+      "scene_domains": [
+        "apartment",
+        "laboratory",
+        "insectarium"
+      ],
+      "appearance_attribute": "exoskeleton_tone",
+      "implementation_status": "insect_adapter_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Mosquito",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Crawl",
+        "Flying"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "exoskeleton_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/09f96",
+          "name": "Mosquito",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "housefly",
+      "audioset_node_id": "/m/0h2mp",
+      "motion_family": "insect_crawl_flight",
+      "indoor_scope": "apartment_common",
+      "scene_domains": [
+        "apartment",
+        "laboratory",
+        "insectarium"
+      ],
+      "appearance_attribute": "exoskeleton_tone",
+      "implementation_status": "insect_adapter_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Fly, housefly",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Crawl",
+        "Flying"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "exoskeleton_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/0h2mp",
+          "name": "Fly, housefly",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07pjwq1",
+          "name": "Buzz",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "bee_wasp",
+      "audioset_node_id": "/m/01h3n",
+      "motion_family": "insect_crawl_flight",
+      "indoor_scope": "apartment_conditional",
+      "scene_domains": [
+        "apartment",
+        "laboratory",
+        "insectarium"
+      ],
+      "appearance_attribute": "exoskeleton_tone",
+      "implementation_status": "insect_adapter_required",
+      "taxonomy_variants": [
+        "bee",
+        "wasp"
+      ],
+      "audioset_name": "Bee, wasp, etc.",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Crawl",
+        "Flying"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "exoskeleton_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/01h3n",
+          "name": "Bee, wasp, etc.",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07pjwq1",
+          "name": "Buzz",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "frog",
+      "audioset_node_id": "/m/09ld4",
+      "motion_family": "amphibian_hop",
+      "indoor_scope": "apartment_conditional",
+      "scene_domains": [
+        "terrarium",
+        "laboratory",
+        "zoo_enclosure"
+      ],
+      "appearance_attribute": "skin_tone",
+      "implementation_status": "amphibian_adapter_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Frog",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Hop"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "skin_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/09ld4",
+          "name": "Frog",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07st88b",
+          "name": "Croak",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "snake",
+      "audioset_node_id": "/m/078jl",
+      "motion_family": "serpent_slither",
+      "indoor_scope": "apartment_conditional",
+      "scene_domains": [
+        "terrarium",
+        "laboratory",
+        "zoo_enclosure"
+      ],
+      "appearance_attribute": "scale_tone",
+      "implementation_status": "serpent_adapter_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Snake",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "Idle",
+        "Slither"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "scale_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/078jl",
+          "name": "Snake",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        },
+        {
+          "audioset_id": "/m/07rjwbb",
+          "name": "Hiss",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        },
+        {
+          "audioset_id": "/m/07qn4z3",
+          "name": "Rattle",
+          "dataset_eligible": true,
+          "kind": "sound_event"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    },
+    {
+      "source_id": "whale",
+      "audioset_node_id": "/m/032n05",
+      "motion_family": "aquatic_cetacean",
+      "indoor_scope": "specialized_indoor_only",
+      "scene_domains": [
+        "indoor_aquarium"
+      ],
+      "appearance_attribute": "skin_tone",
+      "implementation_status": "aquatic_adapter_required",
+      "taxonomy_variants": [],
+      "audioset_name": "Whale vocalization",
+      "route": "strict_native_i2i_i23d_rig_v1",
+      "required_actions": [
+        "IdleSwim",
+        "Swimming"
+      ],
+      "instance_attribute_contract": {
+        "maximum_values_per_randomized_attribute": 3,
+        "required_domains": [
+          "size",
+          "body_build",
+          "life_stage",
+          "skin_tone"
+        ],
+        "sampling": "code_only_complete_prompt_and_json",
+        "relative_edit_history_forbidden": true
+      },
+      "acoustic_events": [
+        {
+          "audioset_id": "/m/032n05",
+          "name": "Whale vocalization",
+          "dataset_eligible": true,
+          "kind": "source_class"
+        }
+      ],
+      "audio_schedule_contract": {
+        "species_authenticated_clip_required": true,
+        "short_event_repeat_threshold": true,
+        "minimum_silence_between_repeats": true,
+        "event_timestamps_recorded": true
+      },
+      "formal_dataset_registration_authorized": false
+    }
+  ],
+  "ontology_nodes": [
+    {
+      "audioset_id": "/m/01280g",
+      "name": "Wild animals",
+      "role": "ontology_container",
+      "parent_ids": [
+        "/m/0jbk"
+      ],
+      "child_ids": [
+        "/m/015p6",
+        "/m/01z5f",
+        "/m/032n05",
+        "/m/03vt0",
+        "/m/06hps",
+        "/m/078jl",
+        "/m/09ld4",
+        "/m/0cdnk"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": []
+    },
+    {
+      "audioset_id": "/m/015p6",
+      "name": "Bird",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/01280g"
+      ],
+      "child_ids": [
+        "/m/01dwxx",
+        "/m/020bb7",
+        "/m/04s8yn",
+        "/m/05_wcq",
+        "/m/09d5_",
+        "/m/0h0rv"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "bird_generic"
+      ]
+    },
+    {
+      "audioset_id": "/m/01dwxx",
+      "name": "Gull, seagull",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/015p6"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "gull"
+      ]
+    },
+    {
+      "audioset_id": "/m/01h3n",
+      "name": "Bee, wasp, etc.",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/03vt0"
+      ],
+      "child_ids": [
+        "/m/07pjwq1"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "bee_wasp"
+      ]
+    },
+    {
+      "audioset_id": "/m/01hhp3",
+      "name": "Yak",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/01xq0k1"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "yak"
+      ]
+    },
+    {
+      "audioset_id": "/m/01rd7k",
+      "name": "Turkey",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/025rv6n"
+      ],
+      "child_ids": [
+        "/m/07svc2k"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "turkey"
+      ]
+    },
+    {
+      "audioset_id": "/m/01xq0k1",
+      "name": "Cattle, bovinae",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/0ch8v"
+      ],
+      "child_ids": [
+        "/m/01hhp3",
+        "/m/0239kh",
+        "/m/07rpkh9"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "cattle"
+      ]
+    },
+    {
+      "audioset_id": "/m/01yrx",
+      "name": "Cat",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/068hy"
+      ],
+      "child_ids": [
+        "/m/02yds9",
+        "/m/07qrkrw",
+        "/m/07r81j2",
+        "/m/07rjwbb",
+        "/m/0f25s6",
+        "/m/0ghcn6"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "cat"
+      ]
+    },
+    {
+      "audioset_id": "/m/01z5f",
+      "name": "Canidae, dogs, wolves",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/01280g"
+      ],
+      "child_ids": [
+        "/m/07qf0zm",
+        "/m/0ghcn6"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "wild_canid"
+      ]
+    },
+    {
+      "audioset_id": "/m/02021",
+      "name": "Chipmunk",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/06hps"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "chipmunk"
+      ]
+    },
+    {
+      "audioset_id": "/m/020bb7",
+      "name": "Bird vocalization, bird call, bird song",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/015p6"
+      ],
+      "child_ids": [
+        "/m/07pggtn",
+        "/m/07sx8x_"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "bird_generic"
+      ]
+    },
+    {
+      "audioset_id": "/m/0239kh",
+      "name": "Cowbell",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/01xq0k1"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "cattle"
+      ]
+    },
+    {
+      "audioset_id": "/m/025rv6n",
+      "name": "Fowl",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/0ch8v"
+      ],
+      "child_ids": [
+        "/m/01rd7k",
+        "/m/09b5t",
+        "/m/09ddx",
+        "/m/0dbvp"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "fowl_generic"
+      ]
+    },
+    {
+      "audioset_id": "/m/02yds9",
+      "name": "Purr",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/01yrx"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "cat"
+      ]
+    },
+    {
+      "audioset_id": "/m/032n05",
+      "name": "Whale vocalization",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/01280g"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "whale"
+      ]
+    },
+    {
+      "audioset_id": "/m/03fwl",
+      "name": "Goat",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/0ch8v"
+      ],
+      "child_ids": [
+        "/m/07q0h5t"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "goat"
+      ]
+    },
+    {
+      "audioset_id": "/m/03k3r",
+      "name": "Horse",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/0ch8v"
+      ],
+      "child_ids": [
+        "/m/07q5rw0",
+        "/m/07rv9rh",
+        "/t/dd00139",
+        "/t/dd00140"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "horse"
+      ]
+    },
+    {
+      "audioset_id": "/m/03vt0",
+      "name": "Insect",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/01280g"
+      ],
+      "child_ids": [
+        "/m/01h3n",
+        "/m/09f96",
+        "/m/09xqv",
+        "/m/0h2mp"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "insect_generic"
+      ]
+    },
+    {
+      "audioset_id": "/m/04cvmfc",
+      "name": "Roar",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/0cdnk"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "roaring_big_cat"
+      ]
+    },
+    {
+      "audioset_id": "/m/04rmv",
+      "name": "Mouse",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/06hps"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "mouse"
+      ]
+    },
+    {
+      "audioset_id": "/m/04s8yn",
+      "name": "Crow",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/015p6"
+      ],
+      "child_ids": [
+        "/m/07r5c2p"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "crow"
+      ]
+    },
+    {
+      "audioset_id": "/m/05_wcq",
+      "name": "Bird flight, flapping wings",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/015p6"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "bird_generic"
+      ]
+    },
+    {
+      "audioset_id": "/m/05tny_",
+      "name": "Bark",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/0bt9lr"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "dog"
+      ]
+    },
+    {
+      "audioset_id": "/m/068hy",
+      "name": "Domestic animals, pets",
+      "role": "ontology_container",
+      "parent_ids": [
+        "/m/0jbk"
+      ],
+      "child_ids": [
+        "/m/01yrx",
+        "/m/0bt9lr"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": []
+    },
+    {
+      "audioset_id": "/m/068zj",
+      "name": "Pig",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/0ch8v"
+      ],
+      "child_ids": [
+        "/t/dd00018"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "pig"
+      ]
+    },
+    {
+      "audioset_id": "/m/06hps",
+      "name": "Rodents, rats, mice",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/01280g"
+      ],
+      "child_ids": [
+        "/m/02021",
+        "/m/04rmv",
+        "/m/07r4gkf"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "rodent_generic"
+      ]
+    },
+    {
+      "audioset_id": "/m/078jl",
+      "name": "Snake",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/01280g"
+      ],
+      "child_ids": [
+        "/m/07qn4z3",
+        "/m/07rjwbb"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "snake"
+      ]
+    },
+    {
+      "audioset_id": "/m/07bgp",
+      "name": "Sheep",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/0ch8v"
+      ],
+      "child_ids": [
+        "/m/07q0h5t"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "sheep"
+      ]
+    },
+    {
+      "audioset_id": "/m/07pggtn",
+      "name": "Chirp, tweet",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/020bb7"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "bird_generic"
+      ]
+    },
+    {
+      "audioset_id": "/m/07pjwq1",
+      "name": "Buzz",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/01h3n",
+        "/m/0h2mp"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "bee_wasp",
+        "housefly"
+      ]
+    },
+    {
+      "audioset_id": "/m/07q0h5t",
+      "name": "Bleat",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/03fwl",
+        "/m/07bgp"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "goat",
+        "sheep"
+      ]
+    },
+    {
+      "audioset_id": "/m/07q5rw0",
+      "name": "Neigh, whinny",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/03k3r"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "horse"
+      ]
+    },
+    {
+      "audioset_id": "/m/07qdb04",
+      "name": "Quack",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/09ddx"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "duck"
+      ]
+    },
+    {
+      "audioset_id": "/m/07qf0zm",
+      "name": "Howl",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/01z5f",
+        "/m/0bt9lr"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "dog",
+        "wild_canid"
+      ]
+    },
+    {
+      "audioset_id": "/m/07qn4z3",
+      "name": "Rattle",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/078jl"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "snake"
+      ]
+    },
+    {
+      "audioset_id": "/m/07qn5dc",
+      "name": "Crowing, cock-a-doodle-doo",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/09b5t"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "chicken_rooster"
+      ]
+    },
+    {
+      "audioset_id": "/m/07qrkrw",
+      "name": "Meow",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/01yrx"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "cat"
+      ]
+    },
+    {
+      "audioset_id": "/m/07qwf61",
+      "name": "Honk",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/0dbvp"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "goose"
+      ]
+    },
+    {
+      "audioset_id": "/m/07r4gkf",
+      "name": "Patter",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/06hps"
+      ],
+      "child_ids": [],
+      "restrictions": [
+        "blacklist"
+      ],
+      "dataset_eligible": false,
+      "mapped_source_ids": [
+        "rodent_generic"
+      ]
+    },
+    {
+      "audioset_id": "/m/07r5c2p",
+      "name": "Caw",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/04s8yn"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "crow"
+      ]
+    },
+    {
+      "audioset_id": "/m/07r81j2",
+      "name": "Caterwaul",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/01yrx"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "cat"
+      ]
+    },
+    {
+      "audioset_id": "/m/07r_25d",
+      "name": "Coo",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/0h0rv"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "pigeon_dove"
+      ]
+    },
+    {
+      "audioset_id": "/m/07r_80w",
+      "name": "Hoot",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/09d5_"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "owl"
+      ]
+    },
+    {
+      "audioset_id": "/m/07r_k2n",
+      "name": "Yip",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/0bt9lr"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "dog"
+      ]
+    },
+    {
+      "audioset_id": "/m/07rc7d9",
+      "name": "Bow-wow",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/0bt9lr"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "dog"
+      ]
+    },
+    {
+      "audioset_id": "/m/07rjwbb",
+      "name": "Hiss",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/01yrx",
+        "/m/078jl"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "cat",
+        "snake"
+      ]
+    },
+    {
+      "audioset_id": "/m/07rpkh9",
+      "name": "Moo",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/01xq0k1"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "cattle"
+      ]
+    },
+    {
+      "audioset_id": "/m/07rv9rh",
+      "name": "Clip-clop",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/03k3r"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "horse"
+      ]
+    },
+    {
+      "audioset_id": "/m/07srf8z",
+      "name": "Bay",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/0bt9lr"
+      ],
+      "child_ids": [],
+      "restrictions": [
+        "blacklist"
+      ],
+      "dataset_eligible": false,
+      "mapped_source_ids": [
+        "dog"
+      ]
+    },
+    {
+      "audioset_id": "/m/07st88b",
+      "name": "Croak",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/09ld4"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "frog"
+      ]
+    },
+    {
+      "audioset_id": "/m/07st89h",
+      "name": "Cluck",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/09b5t"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "chicken_rooster"
+      ]
+    },
+    {
+      "audioset_id": "/m/07svc2k",
+      "name": "Gobble",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/01rd7k"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "turkey"
+      ]
+    },
+    {
+      "audioset_id": "/m/07sx8x_",
+      "name": "Squawk",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/020bb7"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "bird_generic"
+      ]
+    },
+    {
+      "audioset_id": "/m/09b5t",
+      "name": "Chicken, rooster",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/025rv6n"
+      ],
+      "child_ids": [
+        "/m/07qn5dc",
+        "/m/07st89h"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "chicken_rooster"
+      ]
+    },
+    {
+      "audioset_id": "/m/09d5_",
+      "name": "Owl",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/015p6"
+      ],
+      "child_ids": [
+        "/m/07r_80w"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "owl"
+      ]
+    },
+    {
+      "audioset_id": "/m/09ddx",
+      "name": "Duck",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/025rv6n"
+      ],
+      "child_ids": [
+        "/m/07qdb04"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "duck"
+      ]
+    },
+    {
+      "audioset_id": "/m/09f96",
+      "name": "Mosquito",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/03vt0"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "mosquito"
+      ]
+    },
+    {
+      "audioset_id": "/m/09ld4",
+      "name": "Frog",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/01280g"
+      ],
+      "child_ids": [
+        "/m/07st88b"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "frog"
+      ]
+    },
+    {
+      "audioset_id": "/m/09xqv",
+      "name": "Cricket",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/03vt0"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "cricket"
+      ]
+    },
+    {
+      "audioset_id": "/m/0bt9lr",
+      "name": "Dog",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/068hy"
+      ],
+      "child_ids": [
+        "/m/05tny_",
+        "/m/07qf0zm",
+        "/m/07r_k2n",
+        "/m/07rc7d9",
+        "/m/07srf8z",
+        "/m/0ghcn6",
+        "/t/dd00136"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "dog"
+      ]
+    },
+    {
+      "audioset_id": "/m/0cdnk",
+      "name": "Roaring cats (lions, tigers)",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/01280g"
+      ],
+      "child_ids": [
+        "/m/04cvmfc",
+        "/m/0ghcn6"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "roaring_big_cat"
+      ]
+    },
+    {
+      "audioset_id": "/m/0ch8v",
+      "name": "Livestock, farm animals, working animals",
+      "role": "ontology_container",
+      "parent_ids": [
+        "/m/0jbk"
+      ],
+      "child_ids": [
+        "/m/01xq0k1",
+        "/m/025rv6n",
+        "/m/03fwl",
+        "/m/03k3r",
+        "/m/068zj",
+        "/m/07bgp",
+        "/m/0ffhf"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": []
+    },
+    {
+      "audioset_id": "/m/0dbvp",
+      "name": "Goose",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/025rv6n"
+      ],
+      "child_ids": [
+        "/m/07qwf61"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "goose"
+      ]
+    },
+    {
+      "audioset_id": "/m/0f25s6",
+      "name": "Cat communication",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/01yrx"
+      ],
+      "child_ids": [],
+      "restrictions": [
+        "blacklist"
+      ],
+      "dataset_eligible": false,
+      "mapped_source_ids": [
+        "cat"
+      ]
+    },
+    {
+      "audioset_id": "/m/0ffhf",
+      "name": "Donkey, ass",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/0ch8v"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "donkey"
+      ]
+    },
+    {
+      "audioset_id": "/m/0ghcn6",
+      "name": "Growling",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/01yrx",
+        "/m/01z5f",
+        "/m/0bt9lr",
+        "/m/0cdnk"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "cat",
+        "dog",
+        "roaring_big_cat",
+        "wild_canid"
+      ]
+    },
+    {
+      "audioset_id": "/m/0h0rv",
+      "name": "Pigeon, dove",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/015p6"
+      ],
+      "child_ids": [
+        "/m/07r_25d"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "pigeon_dove"
+      ]
+    },
+    {
+      "audioset_id": "/m/0h2mp",
+      "name": "Fly, housefly",
+      "role": "visible_source",
+      "parent_ids": [
+        "/m/03vt0"
+      ],
+      "child_ids": [
+        "/m/07pjwq1"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "housefly"
+      ]
+    },
+    {
+      "audioset_id": "/m/0jbk",
+      "name": "Animal",
+      "role": "ontology_container",
+      "parent_ids": [],
+      "child_ids": [
+        "/m/01280g",
+        "/m/068hy",
+        "/m/0ch8v"
+      ],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": []
+    },
+    {
+      "audioset_id": "/t/dd00018",
+      "name": "Oink",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/068zj"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "pig"
+      ]
+    },
+    {
+      "audioset_id": "/t/dd00136",
+      "name": "Whimper (dog)",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/0bt9lr"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "dog"
+      ]
+    },
+    {
+      "audioset_id": "/t/dd00139",
+      "name": "Snort (horse)",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/03k3r"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "horse"
+      ]
+    },
+    {
+      "audioset_id": "/t/dd00140",
+      "name": "Nicker",
+      "role": "acoustic_event",
+      "parent_ids": [
+        "/m/03k3r"
+      ],
+      "child_ids": [],
+      "restrictions": [],
+      "dataset_eligible": true,
+      "mapped_source_ids": [
+        "horse"
+      ]
+    }
+  ],
+  "formal_dataset_registration_authorized": false
+}

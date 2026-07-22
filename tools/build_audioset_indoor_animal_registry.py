@@ -17,6 +17,7 @@ from pathlib import Path
 
 
 SCHEMA = "avengine_audioset_indoor_animal_source_registry_v1"
+SPEAR_ROOT = Path(__file__).resolve().parents[1]
 ONTOLOGY_SHA256 = "9c685f4403eecc3ca9be37fd7285cf212feaaea6ff7229d3e7ca89e0d1f2d15d"
 ONTOLOGY_REVISION = "d417d32bf59c711abb5910fd2f76a0eb44697991"
 ANIMAL_ID = "/m/0jbk"
@@ -253,16 +254,27 @@ def build_registry(ontology_path, commit_path):
     accounted = {node["audioset_id"] for node in nodes}
     if accounted != animal_ids:
         raise ValueError("AudioSet Animal coverage is incomplete")
+    try:
+        ontology_artifact_path = ontology_path.resolve().relative_to(SPEAR_ROOT).as_posix()
+        license_snapshot_path = (
+            Path(commit_path)
+            .with_name("audioset_ontology_README_v1.md")
+            .resolve()
+            .relative_to(SPEAR_ROOT)
+            .as_posix()
+        )
+    except ValueError as error:
+        raise ValueError("AudioSet ontology inputs must stay inside the SPEAR checkout") from error
     return {
         "schema": SCHEMA,
         "state_classification": "research_candidate",
         "ontology_snapshot": {
             "source_url": "https://github.com/audioset/ontology",
             "revision": ONTOLOGY_REVISION,
-            "artifact_path": str(ontology_path),
+            "artifact_path": ontology_artifact_path,
             "sha256": ONTOLOGY_SHA256,
             "license": "CC-BY-SA-4.0",
-            "license_snapshot_path": str(Path(commit_path).with_name("audioset_ontology_README_v1.md").resolve()),
+            "license_snapshot_path": license_snapshot_path,
         },
         "scope_contract": {
             "meaning": "all visible source entities below the official AudioSet Animal node, classified by physically plausible indoor venue",

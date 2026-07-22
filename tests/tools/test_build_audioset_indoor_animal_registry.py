@@ -32,6 +32,12 @@ def test_registry_accounts_for_every_official_animal_node():
         ANIMAL_ID, by_id
     )
     assert result["summary"]["visible_source_count"] == 32
+    assert result["ontology_snapshot"]["artifact_path"] == (
+        "data/controlled_source_attributes_v1/audioset_ontology_v1.json"
+    )
+    assert result["ontology_snapshot"]["license_snapshot_path"] == (
+        "data/controlled_source_attributes_v1/audioset_ontology_README_v1.md"
+    )
 
 
 def test_sound_events_map_to_sources_instead_of_duplicate_meshes():
