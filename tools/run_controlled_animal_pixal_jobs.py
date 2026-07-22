@@ -99,7 +99,7 @@ def load_pixal_inputs(path: Path) -> tuple[Path, dict[str, Any]]:
         if job.get("parameters") != {
             "resolution": 1024,
             "manual_fov": 0.2,
-            "low_vram": True,
+            "low_vram": False,
         }:
             raise contracts.ContractError("Pixal parameters changed")
         image_record = job.get("reference", {}).get("pixal_input", {})
@@ -331,7 +331,7 @@ def _validate_outputs(
             or model_manifest.get("dino", {}).get("revision")
             != pixal_inputs.DINO_REVISION
             or model_manifest.get("parameters") != {
-                "low_vram": True,
+                "low_vram": False,
                 "manual_fov": 0.2,
                 "resolution": 1024,
                 "seed": int(job["seed"]),
@@ -453,7 +453,7 @@ def run_batch(
             "parameters": {
                 "resolution": 1024,
                 "manual_fov": 0.2,
-                "low_vram": True,
+                "low_vram": False,
             },
             "gpus": list(gpus),
             "job_count": len(attempts),

@@ -83,6 +83,20 @@ def parse_args(argv=None):
     parser.add_argument("--gpu", type=int, required=True)
     parser.add_argument("--status", type=Path, required=True)
     parser.add_argument("--claim-dir", type=Path)
+    memory = parser.add_mutually_exclusive_group()
+    memory.add_argument(
+        "--standard-vram",
+        action="store_true",
+        help=(
+            "Keep the complete Pixal3D pipeline on the selected GPU "
+            "(the default; retained as an explicit compatibility spelling)."
+        ),
+    )
+    memory.add_argument(
+        "--low-vram",
+        action="store_true",
+        help="Explicitly request legacy staged CPU/GPU execution.",
+    )
     return parser.parse_args(argv)
 
 
@@ -103,7 +117,10 @@ def main(argv=None):
             "TRANSFORMERS_OFFLINE": "1",
         }
     )
-    sys.path.insert(0, str(TOOLS_ROOT))
+    # Import the ``tools`` namespace from the repository root.  Adding the
+    # tools directory itself only makes its modules top-level and breaks
+    # ``from tools import ...`` when this file is executed as a script.
+    sys.path.insert(0, str(SPEAR_ROOT))
     from tools import controlled_animal_one_shot_policy as one_shot
     import i23d_human_bakeoff as wrapper
 
@@ -120,6 +137,7 @@ def main(argv=None):
     status = {
         "schema": "pixal_animal_persistent_worker_v1",
         "gpu": args.gpu,
+        "low_vram": args.low_vram,
         "started_at": _utc_now(),
         "model_load_seconds": None,
         "scheduling_mode": (
@@ -160,8 +178,9 @@ def main(argv=None):
         assets["dino"],
     )
     load_started = time.perf_counter()
+    low_vram = args.low_vram
     pipeline = runtime.inference.init_pipeline(
-        str(assets["model"]), low_vram=True
+        str(assets["model"]), low_vram=low_vram
     )
     status["model_load_seconds"] = time.perf_counter() - load_started
     _atomic_json(args.status, status)
@@ -197,7 +216,7 @@ def main(argv=None):
                 seed=int(job["seed"]),
                 manual_fov=0.2,
                 model_path=str(assets["model"]),
-                low_vram=True,
+                low_vram=low_vram,
                 resolution=1024,
                 pipeline=pipeline,
             )
@@ -220,7 +239,7 @@ def main(argv=None):
                     "revision": wrapper.DINO_SPEC["revision"],
                 },
                 "parameters": {
-                    "low_vram": True,
+                    "low_vram": low_vram,
                     "manual_fov": 0.2,
                     "resolution": 1024,
                     "seed": int(job["seed"]),

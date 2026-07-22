@@ -8,6 +8,15 @@ from tools import pixal_animal_persistent_worker as persistent_worker
 from tools import run_controlled_animal_pixal_jobs as runner
 
 
+def test_persistent_worker_defaults_to_full_gpu_residency():
+    args = persistent_worker.parse_args(
+        ["--jobs", "jobs.json", "--gpu", "3", "--status", "status.json"]
+    )
+
+    assert args.low_vram is False
+    assert args.standard_vram is False
+
+
 def test_partition_jobs_balances_without_duplicates():
     jobs = [{"legacy_tag": f"animal_{index}"} for index in range(10)]
 

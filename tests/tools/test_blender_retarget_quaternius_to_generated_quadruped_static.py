@@ -24,6 +24,17 @@ def test_generated_quadruped_retarget_uses_semantics_and_world_space_transfer():
     assert '"--motion-basis-yaw-deg"' in text
     assert '"--side-chain-mode"' in text
     assert '"--motion-basis-decision"' in text
+    assert '"--technical-spike-only"' in text
+    assert '"technical_spike_only_unreviewed"' in text
+    assert '"human_approved": False' in text
+    assert '"target_animation_generation_authorized": False' in text
+    assert (
+        '"technical_spike_only_pending_deformation_and_visual_qa"' in text
+    )
+    assert (
+        '"--motion-basis-decision is required unless --technical-spike-only "'
+        in text
+    )
     assert "target_animation_generation_authorized" in text
     assert "human_approved" in text
     assert "decision_sha256" in text

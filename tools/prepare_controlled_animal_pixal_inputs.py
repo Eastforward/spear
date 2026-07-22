@@ -311,7 +311,7 @@ def prepare_pixal_inputs(
                     "parameters": {
                         "resolution": 1024,
                         "manual_fov": 0.2,
-                        "low_vram": True,
+                        "low_vram": False,
                     },
                 }
             )

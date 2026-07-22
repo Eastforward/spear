@@ -24,6 +24,8 @@ def test_deformation_gate_measures_visible_fan_and_membrane_stretch():
 
     assert "edge_stretch_ratio" in text
     assert "edge_extension_ratio_of_rest_diagonal" in text
+    assert "edge_extension_ratio_of_rest_rotation_invariant_scale" in text
+    assert "centroid_bounding_sphere_diameter" in text
     assert "triangle_area_stretch_ratio" in text
     assert "surface_area_ratio_to_rest" in text
     assert "reject_visible_skinning_fan_or_membrane" in text
@@ -45,3 +47,12 @@ def test_default_review_extension_threshold_is_calibrated_above_authored_walk():
     assert "sampled_frames" in text
     assert "input_sha256" in text
     assert "formal_dataset_registration_authorized" in text
+
+
+def test_decision_uses_rigid_transform_invariant_scale_but_keeps_legacy_metric():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert "axis_aligned_bbox_diagonal_legacy" in text
+    assert '"decision_scale": "centroid_bounding_sphere_diameter"' in text
+    assert "maximum_edge_extension_ratio_of_rest_rotation_invariant_scale" in text
+    assert 'worst[\n        "maximum_edge_extension_ratio_of_rest_rotation_invariant_scale"' in text

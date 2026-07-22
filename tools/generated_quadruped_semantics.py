@@ -154,6 +154,18 @@ def _point(record: Mapping, key: str) -> tuple[float, float, float]:
     return tuple(float(component) for component in value)
 
 
+def _leaf_floor_probe(record: Mapping) -> float:
+    """Return the lower authored endpoint of a leaf-bone segment.
+
+    A generated rest pose may lift a paw enough that the leaf head is above
+    the global low-band while its tail still ends inside the paw.  Using the
+    lower of head and tail admits that valid limb.  Extra hoof/controller
+    leaves are still resolved by the existing four-quadrant clustering and
+    articulated-path score, so this does not weaken the four-paw gate.
+    """
+    return min(_point(record, "head_world")[2], _point(record, "tail_world")[2])
+
+
 def _path_to_root(name: str, by_name: Mapping[str, Mapping]) -> list[str]:
     path = []
     seen = set()
@@ -334,8 +346,10 @@ def infer_quadruped_semantics(
 ) -> QuadrupedSemantics:
     """Decompose a one-root quadruped hierarchy using geometry and topology.
 
-    Leaf *heads* are used for foot detection because generated rig exporters
-    often extrapolate the visual tail of a leaf bone below the actual paw.
+    Both endpoints of a leaf segment are considered for the low-band because
+    image-to-3D rest poses often contain a lifted far-side paw.  Potential
+    extrapolated hoof/controller tails remain safe: four-quadrant clustering
+    and articulated-path scoring select one deforming chain per paw.
     """
     axis_components = {
         "positive-x": (0, 1.0, 1),
@@ -362,7 +376,7 @@ def infer_quadruped_semantics(
         name for name, record in by_name.items() if not record.get("children", [])
     ]
     low_leaves = [
-        name for name in leaves if _point(by_name[name], "head_world")[2] <= low_limit
+        name for name in leaves if _leaf_floor_probe(by_name[name]) <= low_limit
     ]
     forward_index, sign, lateral_index = axis_components[front_axis]
     foot_leaves = _select_anatomical_foot_leaves(

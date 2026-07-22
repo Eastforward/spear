@@ -113,8 +113,11 @@ def test_proxy_bakes_a_new_pbr_atlas_instead_of_reusing_ambiguous_uv_seams():
     text = SCRIPT.read_text(encoding="utf-8")
 
     assert "bpy.ops.uv.smart_project(" in text
-    assert 'type="DIFFUSE"' in text
-    assert 'pass_filter={"COLOR"}' in text
+    assert "redirect_principled_base_color_to_emission" in text
+    assert 'type="EMIT"' in text
+    assert 'emission.name = "AVEngine Temporary Base Color Bake"' in text
+    assert "restore_source_surface_shaders(emission_records)" in text
+    assert '"base_color_bake_type": "EMIT_FROM_PRINCIPLED_BASE_COLOR"' in text
     assert 'type="ROUGHNESS"' in text
     assert "base_image.pack()" in text
     assert "roughness_image.pack()" in text

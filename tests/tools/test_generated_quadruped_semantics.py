@@ -58,6 +58,7 @@ def test_infers_quadruped_chains_without_bone_names():
 def test_rejects_non_quadruped_low_endpoint_count():
     records = synthetic_quadruped()
     records[-1]["head_world"][2] = 0.4
+    records[-1]["tail_world"][2] = 0.38
 
     with pytest.raises(SemanticRigError, match="exactly four"):
         infer_quadruped_semantics(
@@ -66,6 +67,28 @@ def test_rejects_non_quadruped_low_endpoint_count():
             bbox_extent=(1.2, 0.6, 0.8),
             front_axis="negative-x",
         )
+
+
+def test_accepts_lifted_paws_when_leaf_tail_still_reaches_the_paw():
+    records = synthetic_quadruped()
+    for name in ("hl_foot", "hr_foot"):
+        record = next(item for item in records if item["name"] == name)
+        record["head_world"][2] = 0.28
+        record["tail_world"][2] = 0.02
+
+    result = infer_quadruped_semantics(
+        records,
+        bbox_min=(-0.5, -0.3, 0.0),
+        bbox_extent=(1.2, 0.6, 0.8),
+        front_axis="negative-x",
+    )
+
+    assert set(result.foot_leaves) == {
+        "fl_foot",
+        "fr_foot",
+        "hl_foot",
+        "hr_foot",
+    }
 
 
 def test_infers_same_chains_for_cardinal_negative_y_front_axis():

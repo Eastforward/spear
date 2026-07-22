@@ -98,6 +98,21 @@ def symmetric_ratio(current: np.ndarray, rest: np.ndarray) -> np.ndarray:
     return np.maximum(current / rest, rest / current)
 
 
+def centroid_bounding_sphere_diameter(vertices: np.ndarray) -> float:
+    """Return a translation- and rotation-invariant mesh scale.
+
+    A world-axis AABB diagonal changes when an unchanged animal is pitched or
+    rolled.  Twice the maximum vertex distance from the rest-mesh centroid is
+    rigid-transform invariant and remains close to the previous whole-body
+    diagonal scale without relying on animal taxonomy or heading.
+    """
+
+    if len(vertices) == 0:
+        return 0.0
+    centered = vertices - vertices.mean(axis=0)
+    return 2.0 * float(np.linalg.norm(centered, axis=1).max(initial=0.0))
+
+
 def frame_metrics(
     vertices,
     edges,
@@ -105,7 +120,8 @@ def frame_metrics(
     *,
     rest_edge_lengths,
     rest_areas,
-    rest_diagonal,
+    legacy_aabb_diagonal,
+    rotation_invariant_scale,
     edge_mask,
     area_mask,
 ):
@@ -114,9 +130,15 @@ def frame_metrics(
     edge_stretch_ratio = symmetric_ratio(
         current_edges[edge_mask], rest_edge_lengths[edge_mask]
     )
-    edge_extension_ratio_of_rest_diagonal = np.maximum(
+    absolute_edge_extension = np.maximum(
         current_edges[edge_mask] - rest_edge_lengths[edge_mask], 0.0
-    ) / rest_diagonal
+    )
+    edge_extension_ratio_of_rest_diagonal = (
+        absolute_edge_extension / legacy_aabb_diagonal
+    )
+    edge_extension_ratio_of_rotation_invariant_scale = (
+        absolute_edge_extension / rotation_invariant_scale
+    )
     triangle_area_stretch_ratio = symmetric_ratio(
         current_areas[area_mask], rest_areas[area_mask]
     )
@@ -137,6 +159,24 @@ def frame_metrics(
             ),
             "count_over_0_08": int(
                 np.count_nonzero(edge_extension_ratio_of_rest_diagonal > 0.08)
+            ),
+        },
+        "edge_extension_ratio_of_rest_rotation_invariant_scale": {
+            "maximum": float(
+                edge_extension_ratio_of_rotation_invariant_scale.max(initial=0.0)
+            ),
+            "percentiles": percentile(
+                edge_extension_ratio_of_rotation_invariant_scale
+            ),
+            "count_over_0_04": int(
+                np.count_nonzero(
+                    edge_extension_ratio_of_rotation_invariant_scale > 0.04
+                )
+            ),
+            "count_over_0_08": int(
+                np.count_nonzero(
+                    edge_extension_ratio_of_rotation_invariant_scale > 0.08
+                )
             ),
         },
         "triangle_area_stretch_ratio": {
@@ -160,6 +200,12 @@ def worst_over_frames(frames):
             frame["metrics"]["edge_extension_ratio_of_rest_diagonal"]["maximum"]
             for frame in frames
         ),
+        "maximum_edge_extension_ratio_of_rest_rotation_invariant_scale": max(
+            frame["metrics"][
+                "edge_extension_ratio_of_rest_rotation_invariant_scale"
+            ]["maximum"]
+            for frame in frames
+        ),
         "maximum_triangle_area_stretch_ratio": max(
             frame["metrics"]["triangle_area_stretch_ratio"]["maximum"]
             for frame in frames
@@ -171,7 +217,9 @@ def worst_over_frames(frames):
 
 
 def action_decision(worst, thresholds):
-    extension = worst["maximum_edge_extension_ratio_of_rest_diagonal"]
+    extension = worst[
+        "maximum_edge_extension_ratio_of_rest_rotation_invariant_scale"
+    ]
     edge = worst["maximum_edge_stretch_ratio"]
     area = worst["maximum_triangle_area_stretch_ratio"]
     reject = (
@@ -231,11 +279,17 @@ def main():
     bpy.context.view_layer.update()
     rest_vertices, edges, faces = evaluated_geometry(body, depsgraph)
     rest_extent = np.ptp(rest_vertices, axis=0)
-    rest_diagonal = float(np.linalg.norm(rest_extent))
+    legacy_aabb_diagonal = float(np.linalg.norm(rest_extent))
+    rotation_invariant_scale = centroid_bounding_sphere_diameter(rest_vertices)
+    if legacy_aabb_diagonal <= 0.0 or rotation_invariant_scale <= 0.0:
+        raise SystemExit("rest mesh has zero geometric scale")
     rest_edge_lengths = edge_lengths(rest_vertices, edges)
     rest_areas = triangle_areas(rest_vertices, faces)
-    edge_mask = rest_edge_lengths > rest_diagonal * 1.0e-5
-    area_mask = rest_areas > rest_diagonal * rest_diagonal * 1.0e-10
+    edge_mask = rest_edge_lengths > rotation_invariant_scale * 1.0e-5
+    area_mask = (
+        rest_areas
+        > rotation_invariant_scale * rotation_invariant_scale * 1.0e-10
+    )
 
     requested = args.action or ["Walking", "Idle"]
     available = list(bpy.data.actions)
@@ -279,7 +333,8 @@ def main():
                         faces,
                         rest_edge_lengths=rest_edge_lengths,
                         rest_areas=rest_areas,
-                        rest_diagonal=rest_diagonal,
+                        legacy_aabb_diagonal=legacy_aabb_diagonal,
+                        rotation_invariant_scale=rotation_invariant_scale,
                         edge_mask=edge_mask,
                         area_mask=area_mask,
                     ),
@@ -309,7 +364,10 @@ def main():
             "vertices": int(len(rest_vertices)),
             "edges": int(len(edges)),
             "triangles": int(len(faces)),
-            "diagonal": rest_diagonal,
+            "diagonal": legacy_aabb_diagonal,
+            "axis_aligned_bbox_diagonal_legacy": legacy_aabb_diagonal,
+            "centroid_bounding_sphere_diameter": rotation_invariant_scale,
+            "decision_scale": "centroid_bounding_sphere_diameter",
             "measured_edges": int(np.count_nonzero(edge_mask)),
             "measured_triangles": int(np.count_nonzero(area_mask)),
         },

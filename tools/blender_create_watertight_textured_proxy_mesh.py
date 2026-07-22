@@ -534,6 +534,79 @@ def apply_base_color_gain(image, gain):
     image.update()
 
 
+def redirect_principled_base_color_to_emission(source):
+    """Expose imported glTF base color without Blender diffuse-bake drift.
+
+    Pixel3D and other glTF producers connect an sRGB image to a Principled
+    Base Color input.  Blender's selected-to-active DIFFUSE/COLOR bake can
+    return almost-black values for these imported materials even though they
+    render correctly.  Temporarily routing that exact Base Color socket to an
+    Emission shader makes the transfer independent of lighting and BSDF
+    interpretation.  The original graph is restored immediately after bake.
+    """
+    records = []
+    configured_materials = set()
+    for material in source.data.materials:
+        if material is None or material in configured_materials:
+            continue
+        configured_materials.add(material)
+        if not material.use_nodes or material.node_tree is None:
+            raise RuntimeError(
+                f"source material lacks a node graph: {material.name}"
+            )
+        tree = material.node_tree
+        outputs = [
+            node
+            for node in tree.nodes
+            if node.bl_idname == "ShaderNodeOutputMaterial"
+            and node.is_active_output
+        ]
+        if len(outputs) != 1:
+            raise RuntimeError(
+                f"expected one active material output in {material.name}"
+            )
+        output = outputs[0]
+        surface = output.inputs.get("Surface")
+        original_links = list(surface.links) if surface is not None else []
+        if len(original_links) != 1:
+            raise RuntimeError(
+                f"expected one surface link in source material {material.name}"
+            )
+        surface_shader = original_links[0].from_node
+        if surface_shader.bl_idname != "ShaderNodeBsdfPrincipled":
+            raise RuntimeError(
+                "base-color emission bake requires a directly connected "
+                f"Principled shader in {material.name}"
+            )
+        base_color = surface_shader.inputs.get("Base Color")
+        if base_color is None:
+            raise RuntimeError(
+                f"Principled shader lacks Base Color in {material.name}"
+            )
+        emission = tree.nodes.new("ShaderNodeEmission")
+        emission.name = "AVEngine Temporary Base Color Bake"
+        if base_color.is_linked:
+            tree.links.new(base_color.links[0].from_socket, emission.inputs["Color"])
+        else:
+            emission.inputs["Color"].default_value = base_color.default_value
+        original_socket = original_links[0].from_socket
+        tree.links.remove(original_links[0])
+        tree.links.new(emission.outputs["Emission"], surface)
+        records.append((tree, output, original_socket, emission))
+    if not records:
+        raise RuntimeError("source mesh has no usable Principled PBR material")
+    return records
+
+
+def restore_source_surface_shaders(records):
+    for tree, output, original_socket, emission in records:
+        surface = output.inputs["Surface"]
+        for link in list(surface.links):
+            tree.links.remove(link)
+        tree.links.new(original_socket, surface)
+        tree.nodes.remove(emission)
+
+
 def select_bake_pair(source, proxy):
     bpy.ops.object.select_all(action="DESELECT")
     source.select_set(True)
@@ -584,15 +657,18 @@ def transfer_surface_attributes_bake(
         f"resolution={resolution}",
         flush=True,
     )
-    bpy.ops.object.bake(
-        type="DIFFUSE",
-        pass_filter={"COLOR"},
-        use_selected_to_active=True,
-        use_clear=True,
-        margin=16,
-        cage_extrusion=cage_extrusion,
-        max_ray_distance=ray_distance,
-    )
+    emission_records = redirect_principled_base_color_to_emission(source)
+    try:
+        bpy.ops.object.bake(
+            type="EMIT",
+            use_selected_to_active=True,
+            use_clear=True,
+            margin=16,
+            cage_extrusion=cage_extrusion,
+            max_ray_distance=ray_distance,
+        )
+    finally:
+        restore_source_surface_shaders(emission_records)
     if encoding_policy == "srgb-to-linear":
         reinterpret_baked_srgb_values_as_scene_linear(base_image)
     apply_base_color_gain(base_image, base_color_gain)
@@ -643,6 +719,7 @@ def transfer_surface_attributes_bake(
         "cage_extrusion": cage_extrusion,
         "uv_layers": [layer.name for layer in proxy.data.uv_layers],
         "baked_images": [base_image.name, roughness_image.name],
+        "base_color_bake_type": "EMIT_FROM_PRINCIPLED_BASE_COLOR",
         "color_attributes": [],
         "material_slots": [material.name],
         "metallic_policy": "constant_zero_for_nonmetallic_animal_surface",

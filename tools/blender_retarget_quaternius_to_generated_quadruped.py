@@ -79,10 +79,20 @@ def parse_argv(argv=None):
     parser.add_argument(
         "--motion-basis-decision",
         type=Path,
-        required=True,
         help=(
             "Immutable human-approved pre-animation basis decision.  Target "
-            "animation generation is forbidden without this exact sidecar."
+            "animation generation for registrable outputs is forbidden without "
+            "this exact sidecar."
+        ),
+    )
+    parser.add_argument(
+        "--technical-spike-only",
+        action="store_true",
+        help=(
+            "Render a non-registrable research candidate without claiming a "
+            "human motion-basis approval.  This mode requires explicit cardinal "
+            "--motion-basis-yaw-deg and --side-chain-mode values, forbids target "
+            "derivations, and records target_animation_generation_authorized=false."
         ),
     )
     parser.add_argument(
@@ -1697,34 +1707,63 @@ def main():
         raise SystemExit("--motion-amplitude must be in (0, 1]")
     target_path = require_file(args.target_glb, "generated target GLB")
     source_path = require_file(args.source_rig_glb, "source rig GLB")
-    (
-        motion_basis_decision_path,
-        motion_basis_decision,
-        approved_motion_basis_yaw,
-        approved_side_chain_mode,
-        approved_rotation_transfer_mode,
-    ) = load_motion_basis_decision(
-        args.motion_basis_decision,
-        target_path,
-        source_path,
-        args.target_front_axis,
-        target_derivation_manifest=args.target_derivation_manifest,
-    )
-    if (
-        args.motion_basis_yaw_deg is not None
-        and args.motion_basis_yaw_deg != approved_motion_basis_yaw
-    ):
-        raise SystemExit("CLI motion-basis yaw differs from the human decision")
-    if (
-        args.side_chain_mode is not None
-        and args.side_chain_mode != approved_side_chain_mode
-    ):
-        raise SystemExit("CLI side-chain mode differs from the human decision")
-    if (
-        args.rotation_transfer_mode is not None
-        and args.rotation_transfer_mode != approved_rotation_transfer_mode
-    ):
-        raise SystemExit("CLI rotation solver differs from the human decision")
+    if args.technical_spike_only:
+        if args.motion_basis_decision is not None:
+            raise SystemExit(
+                "--motion-basis-decision is incompatible with --technical-spike-only"
+            )
+        if args.target_derivation_manifest is not None:
+            raise SystemExit(
+                "--target-derivation-manifest is forbidden for a technical spike"
+            )
+        if args.motion_basis_yaw_deg is None or args.side_chain_mode is None:
+            raise SystemExit(
+                "--technical-spike-only requires --motion-basis-yaw-deg and "
+                "--side-chain-mode"
+            )
+        if args.rotation_transfer_mode not in {None, "world-left-delta-v2"}:
+            raise SystemExit(
+                "technical spikes support only world-left-delta-v2 rotation transfer"
+            )
+        motion_basis_decision_path = None
+        motion_basis_decision = None
+        approved_motion_basis_yaw = args.motion_basis_yaw_deg
+        approved_side_chain_mode = args.side_chain_mode
+        approved_rotation_transfer_mode = "world-left-delta-v2"
+    else:
+        if args.motion_basis_decision is None:
+            raise SystemExit(
+                "--motion-basis-decision is required unless --technical-spike-only "
+                "is selected"
+            )
+        (
+            motion_basis_decision_path,
+            motion_basis_decision,
+            approved_motion_basis_yaw,
+            approved_side_chain_mode,
+            approved_rotation_transfer_mode,
+        ) = load_motion_basis_decision(
+            args.motion_basis_decision,
+            target_path,
+            source_path,
+            args.target_front_axis,
+            target_derivation_manifest=args.target_derivation_manifest,
+        )
+        if (
+            args.motion_basis_yaw_deg is not None
+            and args.motion_basis_yaw_deg != approved_motion_basis_yaw
+        ):
+            raise SystemExit("CLI motion-basis yaw differs from the human decision")
+        if (
+            args.side_chain_mode is not None
+            and args.side_chain_mode != approved_side_chain_mode
+        ):
+            raise SystemExit("CLI side-chain mode differs from the human decision")
+        if (
+            args.rotation_transfer_mode is not None
+            and args.rotation_transfer_mode != approved_rotation_transfer_mode
+        ):
+            raise SystemExit("CLI rotation solver differs from the human decision")
     output = require_output(args.output_glb, "animated output GLB")
     manifest_path = require_output(args.manifest, "retarget manifest")
 
@@ -1845,24 +1884,42 @@ def main():
             "weights_used": False,
             "animation_channels_used": ["translation", "rotation", "scale"],
         },
-        "motion_basis_gate": {
-            "decision_path": str(motion_basis_decision_path),
-            "decision_sha256": motion_basis_decision["decision_sha256"],
-            "decision_file_sha256": sha256_file(motion_basis_decision_path),
-            "preview_sha256": motion_basis_decision["preview_sha256"],
-            "human_approved": True,
-            "human_approved_by": motion_basis_decision["human_approved_by"],
-            "target_animation_generation_authorized": True,
-            "candidate_id": motion_basis_decision["candidate_id"],
-            "approved_motion_basis_yaw_deg": int(approved_motion_basis_yaw),
-            "approved_side_chain_mode": approved_side_chain_mode,
-            "approved_preview_rotation_solver": approved_rotation_transfer_mode,
-            "authenticated_target_derivation": motion_basis_decision.get(
-                "_authenticated_target_derivation"
-            ),
-        },
+        "motion_basis_gate": (
+            {
+                "mode": "technical_spike_only_unreviewed",
+                "decision_path": None,
+                "human_approved": False,
+                "target_animation_generation_authorized": False,
+                "candidate_id": (
+                    f"yaw_{approved_motion_basis_yaw:+d}_side_"
+                    f"{approved_side_chain_mode}"
+                ),
+                "selected_motion_basis_yaw_deg": int(approved_motion_basis_yaw),
+                "selected_side_chain_mode": approved_side_chain_mode,
+                "selected_rotation_solver": approved_rotation_transfer_mode,
+                "formal_dataset_registration_authorized": False,
+            }
+            if args.technical_spike_only
+            else {
+                "mode": "authenticated_human_approval",
+                "decision_path": str(motion_basis_decision_path),
+                "decision_sha256": motion_basis_decision["decision_sha256"],
+                "decision_file_sha256": sha256_file(motion_basis_decision_path),
+                "preview_sha256": motion_basis_decision["preview_sha256"],
+                "human_approved": True,
+                "human_approved_by": motion_basis_decision["human_approved_by"],
+                "target_animation_generation_authorized": True,
+                "candidate_id": motion_basis_decision["candidate_id"],
+                "approved_motion_basis_yaw_deg": int(approved_motion_basis_yaw),
+                "approved_side_chain_mode": approved_side_chain_mode,
+                "approved_preview_rotation_solver": approved_rotation_transfer_mode,
+                "authenticated_target_derivation": motion_basis_decision.get(
+                    "_authenticated_target_derivation"
+                ),
+            }
+        ),
         "semantic_inference": {
-            "method": "one_root_four_low_leaf_geometry_hierarchy_v2",
+            "method": "one_root_four_low_leaf_segment_geometry_hierarchy_v3",
             "bone_name_independent_target": True,
             "root": semantics.root,
             "chains": {name: list(value) for name, value in chains.items()},
@@ -1929,7 +1986,11 @@ def main():
             "removed_export_extras": removed,
             "action_names": ["Walking", "Idle"],
         },
-        "status": "research_candidate_pending_deformation_and_visual_qa",
+        "status": (
+            "technical_spike_only_pending_deformation_and_visual_qa"
+            if args.technical_spike_only
+            else "research_candidate_pending_deformation_and_visual_qa"
+        ),
         "formal_dataset_registration_authorized": False,
     }
     with manifest_path.open("x", encoding="utf-8") as stream:
