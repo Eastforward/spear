@@ -1,0 +1,102 @@
+{
+  "schema": "avengine_target_native_generated_animal_final_review_v1",
+  "asset_id": "dog_border_collie_target_native_v2_seed702238",
+  "reviewer": "human_approved_in_chat_20260723_v1",
+  "decision": "accepted_for_research_dataset_canary",
+  "formal_dataset_registration_authorized": false,
+  "review_statement": "The project owner reviewed the leveled Border Collie Walking result and stated that the dog is acceptable.",
+  "pipeline": [
+    "FLUX.2",
+    "Pixel3D",
+    "topology_and_pbr_repair",
+    "TokenRig",
+    "heading_normalization",
+    "four_foot_support_plane_leveling",
+    "animation_retarget"
+  ],
+  "support_plane_leveling": {
+    "policy": "four_semantic_feet_least_squares_plane_rigid_leveling",
+    "tilt_before_deg": 13.775992098332662,
+    "minimum_foot_z_after_m": 5.587935447692871e-09,
+    "preservation": {
+      "mesh_topology_changed": false,
+      "material_changed": false,
+      "skeleton_hierarchy_changed": false,
+      "skin_weights_changed": false,
+      "animation_present_or_changed": false
+    },
+    "manifest": {
+      "path": "/data/jzy/code/AVEngine/external/SPEAR/tmp/new_animal_assets/border_collie_target_native_v2_20260722_01/pixal_pipeline_seed702238/tokenrig_seed42_v2_prestarted/heading_positive_x_v1/support_plane_level_v1/manifest.json",
+      "sha256": "7620fa1b2212b5965e3a483e6cce31f8ed2895afb28acd817999f9af9e78935d"
+    }
+  },
+  "deformation_scale_comparison": {
+    "decision_scale": "centroid_bounding_sphere_diameter",
+    "legacy_axis_aligned_bbox_diagonal": {
+      "before_leveling_m": 1.4040269959744098,
+      "after_leveling_m": 1.3010538100181355,
+      "relative_change_percent": -7.334131484
+    },
+    "rotation_invariant_scale": {
+      "before_leveling_m": 1.2296689844684543,
+      "after_leveling_m": 1.2297442914287673,
+      "relative_change_percent": 0.006124165
+    },
+    "before_leveling_audit": {
+      "path": "/data/jzy/code/AVEngine/external/SPEAR/tmp/new_animal_assets/border_collie_target_native_v2_20260722_01/pixal_pipeline_seed702238/tokenrig_seed42_v2_prestarted/heading_positive_x_v1/retarget_v5_spike_yaw0_matched_amp0p40/skinned_deformation_audit_rotation_invariant_v2.json",
+      "sha256": "79475cb9cd0c6e631c50045378370a80c8b153c808397571ab2f87ce8c487be6"
+    },
+    "after_leveling_audit": {
+      "path": "/data/jzy/code/AVEngine/external/SPEAR/tmp/new_animal_assets/border_collie_target_native_v2_20260722_01/pixal_pipeline_seed702238/tokenrig_seed42_v2_prestarted/heading_positive_x_v1/support_plane_level_v1/retarget_v5_spike_yaw0_matched_amp0p40/skinned_deformation_audit_rotation_invariant_walk_idle_v2.json",
+      "sha256": "a3063172de307ccb0d232addfc6aab67cd9b835efb7bed90066c995db9d1e1ab"
+    }
+  },
+  "automatic_deformation_results": {
+    "idle": {
+      "decision": "passed_automatic_deformation_measurements",
+      "maximum_edge_extension_ratio": 0.011294170930711092
+    },
+    "walking": {
+      "decision": "strict_automatic_threshold_not_passed_human_visual_acceptance_recorded_separately",
+      "maximum_edge_extension_ratio": 0.08837305244480524,
+      "reject_threshold": 0.08
+    }
+  },
+  "review_media": {
+    "walking_side": {
+      "path": "/data/jzy/code/AVEngine/external/SPEAR/tmp/new_animal_assets/border_collie_target_native_v2_20260722_01/pixal_pipeline_seed702238/tokenrig_seed42_v2_prestarted/heading_positive_x_v1/support_plane_level_v1/final_review_v1/walking_side.mp4",
+      "sha256": "93edd28bd7b0849fd5ff4c7eb7e0e7e4f878df420d330a5842f8757f063fc04a"
+    },
+    "walking_front": {
+      "path": "/data/jzy/code/AVEngine/external/SPEAR/tmp/new_animal_assets/border_collie_target_native_v2_20260722_01/pixal_pipeline_seed702238/tokenrig_seed42_v2_prestarted/heading_positive_x_v1/support_plane_level_v1/final_review_v1/walking_front.mp4",
+      "sha256": "67e588fd27972dad47aa455afbce544f87dc8f410cdfe3d26146ba4dcbfb2af1"
+    },
+    "walking_rear": {
+      "path": "/data/jzy/code/AVEngine/external/SPEAR/tmp/new_animal_assets/border_collie_target_native_v2_20260722_01/pixal_pipeline_seed702238/tokenrig_seed42_v2_prestarted/heading_positive_x_v1/support_plane_level_v1/final_review_v1/walking_rear.mp4",
+      "sha256": "d0fee6f7bd24e4024ec6aa60ec392b4a98bafcbf73fc698bac34f076503b0996"
+    },
+    "idle_side": {
+      "path": "/data/jzy/code/AVEngine/external/SPEAR/tmp/new_animal_assets/border_collie_target_native_v2_20260722_01/pixal_pipeline_seed702238/tokenrig_seed42_v2_prestarted/heading_positive_x_v1/support_plane_level_v1/final_review_v1/idle_side.mp4",
+      "sha256": "44421d228f277a7e47d6a9882f80bf036af036c076da0f32eb25b836f387308f"
+    },
+    "idle_front": {
+      "path": "/data/jzy/code/AVEngine/external/SPEAR/tmp/new_animal_assets/border_collie_target_native_v2_20260722_01/pixal_pipeline_seed702238/tokenrig_seed42_v2_prestarted/heading_positive_x_v1/support_plane_level_v1/final_review_v1/idle_front.mp4",
+      "sha256": "5f8d5c4bbc8feab702ae6c4cefc7c7ae9b49ca45ed0be6b45196975cf3557565"
+    },
+    "idle_rear": {
+      "path": "/data/jzy/code/AVEngine/external/SPEAR/tmp/new_animal_assets/border_collie_target_native_v2_20260722_01/pixal_pipeline_seed702238/tokenrig_seed42_v2_prestarted/heading_positive_x_v1/support_plane_level_v1/final_review_v1/idle_rear.mp4",
+      "sha256": "69fed2f19f83a24b40329981603129736b24fcc6d7db5c6cb968fe1e0538d4f7"
+    }
+  },
+  "scope": {
+    "allowed": [
+      "instance_attribute_validation",
+      "apartment_research_canary",
+      "research_training_data_efficiency_probe"
+    ],
+    "not_claimed": [
+      "strict_automatic_walking_deformation_pass",
+      "formal_public_dataset_registration"
+    ]
+  }
+}

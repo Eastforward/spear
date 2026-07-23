@@ -17,3 +17,5 @@
 必须依次通过 2D、静态 PBR 3D、动画前方向、骨架/权重、动作接触与循环、41 帧形变回读、GLB 导出回读和媒体/场景 QA。声学事件必须与物种匹配；短叫声根据阈值做带最小间隔的事件重复，并把每次事件时间写入 JSON。
 
 当前证据边界：2026-07-23 的 Border Collie target-native 交叉验证获得项目所有者对外观、校平和 Walking 视频的研究用途视觉接受；Idle 自动形变通过，但 Walking 的旋转不变最大局部延伸比例 `0.0884` 仍高于 `0.08`。它可继续做实例属性和 Apartment research canary，但不得写成自动形变通过或正式公开数据注册完成。马仅完成了当前严格版 clay 参考图，尚未进入默认 FLUX/Pixel3D 路线。
+
+边牧的最终研究用途验收记录为 `data/controlled_source_attributes_v1/reviews/animal_border_collie_target_native_final_20260723_v1.json`。记录同时绑定校平前后形变审计和 Idle/Walking 的侧面、正面、背面六个视频。校平使旧 AABB 尺度变化 `-7.334%`，而旋转不变尺度只变化 `+0.0061%`，因此自动判定只使用后者；人工视觉接受与严格 Walking 数值继续分开保存。

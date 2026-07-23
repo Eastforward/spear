@@ -263,3 +263,18 @@ semantic head region and recorded in AVEngine local coordinates (`X` forward,
 `Y` up, `Z` left). This deliberately simple anchor is recomputed after size,
 body-build and life-stage realization, so Apartment RIR binding uses the actual
 instance height rather than a dog- or cat-wide template height.
+
+`tools/verify_generated_animal_instance_ofat.py` is the Blender-independent
+post-publication verifier. It authenticates all nine GLBs against the batch and
+per-instance manifests, reads their GLB containers back, proves the OFAT matrix
+and measured size/build/age orders, checks grounding and asset-specific emitter
+anchors, and follows each nonbaseline coat to its two-reference undistilled
+FLUX edit and spatial UV-projection evidence. A successful verification does
+not change `research_candidate` into a formal dataset asset.
+
+```bash
+/data/jzy/miniconda3/envs/spear-env/bin/python \
+  tools/verify_generated_animal_instance_ofat.py \
+  --batch-manifest /path/to/ofat_batch/batch_manifest.json \
+  --output /path/to/review/verification.json
+```
