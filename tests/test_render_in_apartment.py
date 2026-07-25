@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 def load_module():
@@ -34,6 +35,43 @@ class RenderInApartmentTests(unittest.TestCase):
             mod.parallel_instance_settings(80)
         with self.assertRaises(ValueError):
             mod.parallel_instance_settings(39102, graphics_adapter=-1)
+
+    def test_positive_finite_env_float_accepts_positive_value(self):
+        mod = load_module()
+        with mock.patch.dict(
+            os.environ,
+            {"SPEAR_CLIENT_INTERNAL_TIMEOUT_SECONDS": "120.5"},
+        ):
+            self.assertEqual(
+                mod.positive_finite_env_float(
+                    "SPEAR_CLIENT_INTERNAL_TIMEOUT_SECONDS"
+                ),
+                120.5,
+            )
+
+    def test_positive_finite_env_float_rejects_invalid_values(self):
+        mod = load_module()
+        for value in ("0", "-1", "nan", "inf", "not-a-number"):
+            with self.subTest(value=value), mock.patch.dict(
+                os.environ,
+                {"SPEAR_CLIENT_INTERNAL_TIMEOUT_SECONDS": value},
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "must be a positive finite number"
+                ):
+                    mod.positive_finite_env_float(
+                        "SPEAR_CLIENT_INTERNAL_TIMEOUT_SECONDS"
+                    )
+
+    def test_default_tmp_root_stays_inside_externalized_spear_tmp(self):
+        mod = load_module()
+
+        expected = Path(mod.__file__).resolve().parents[1] / "tmp"
+        self.assertEqual(Path(mod.DEFAULT_TMP_ROOT), expected)
+        self.assertEqual(
+            Path(mod.DEFAULT_META_DIR),
+            expected / "asset_meta",
+        )
 
     def test_compute_asset_fit_places_mesh_bottom_on_floor(self):
         mod = load_module()

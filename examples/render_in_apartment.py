@@ -28,9 +28,11 @@ APARTMENT_MAP = "/Game/SPEAR/Scenes/apartment_0000/Maps/apartment_0000"
 CAMERA_BP = "/SpContent/Blueprints/BP_CameraSensor.BP_CameraSensor_C"
 DEFAULT_ASSET_BP = "/Game/MyAssets/Blueprints/BP_Clock.BP_Clock_C"
 DEFAULT_NAME = "Clock"
-DEFAULT_TMP_ROOT = "/data/jzy/code/SPEAR/tmp"
-DEFAULT_META_DIR = "/data/jzy/code/SPEAR/tmp/asset_meta"
-DEFAULT_REFERENCE_OUTPUT = "/data/jzy/code/SPEAR/tmp/apartment_reference/frame_0000.png"
+DEFAULT_TMP_ROOT = os.path.join(_SPEAR_ROOT_FOR_EXEC, "tmp")
+DEFAULT_META_DIR = os.path.join(DEFAULT_TMP_ROOT, "asset_meta")
+DEFAULT_REFERENCE_OUTPUT = os.path.join(
+    DEFAULT_TMP_ROOT, "apartment_reference", "frame_0000.png"
+)
 
 SUPPORTED_ANIMALS = ("cat", "dog", "goose", "yak")
 ANIMAL_BP_TEMPLATE = "/Game/MyAssets/Audioset/Blueprints/{name}/BP_{name}.BP_{name}_C"
@@ -241,6 +243,24 @@ def parallel_instance_settings(rpc_port, graphics_adapter=None):
     }
 
 
+def positive_finite_env_float(name):
+    """Return an optional positive finite float from an environment variable."""
+    raw_value = os.environ.get(str(name))
+    if raw_value in (None, ""):
+        return None
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{name} must be a positive finite number, got {raw_value!r}"
+        ) from exc
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError(
+            f"{name} must be a positive finite number, got {raw_value!r}"
+        )
+    return value
+
+
 def configure_instance(rpc_port, fixed_delta_time=None):
     import spear
 
@@ -269,6 +289,13 @@ def configure_instance(rpc_port, fixed_delta_time=None):
         ]
     if os.environ.get("SPEAR_RENDER_OFFSCREEN", "0") == "1":
         config.SPEAR.INSTANCE.COMMAND_LINE_ARGS.renderoffscreen = None
+    client_timeout_seconds = positive_finite_env_float(
+        "SPEAR_CLIENT_INTERNAL_TIMEOUT_SECONDS"
+    )
+    if client_timeout_seconds is not None:
+        config.SPEAR.INSTANCE.CLIENT_INTERNAL_TIMEOUT_SECONDS = (
+            client_timeout_seconds
+        )
     if fixed_delta_time is not None:
         config.SP_SERVICES.INITIALIZE_ENGINE_SERVICE.FIXED_DELTA_TIME = float(fixed_delta_time)
     config.SPEAR.ENVIRONMENT_VARS.VK_ICD_FILENAMES = "/etc/vulkan/icd.d/nvidia_icd.json"

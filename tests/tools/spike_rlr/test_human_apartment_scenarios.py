@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import soundfile as sf
 
 
@@ -204,7 +205,8 @@ def test_example_runner_orders_ue_rlr_and_non_registry_finalization(tmp_path, mo
 
     def fake_subprocess(command, check, cwd, env):
         calls.append(("rlr", command, check, cwd, env))
-        Path(command[command.index("--out") + 1]).write_bytes(b"audio")
+        output = Path(command[command.index("--out") + 1])
+        sf.write(output, np.full((1600, 2), 0.1, dtype=np.float32), 16000)
         return SimpleNamespace(returncode=0)
 
     def fake_finalize(**kwargs):
@@ -236,6 +238,15 @@ def test_example_runner_orders_ue_rlr_and_non_registry_finalization(tmp_path, mo
     )
     assert calls[2][1]["publish_registry"] is False
     assert result["audio"] == out_dir / "binaural.wav"
+    rlr_passed = [
+        json.loads(line)
+        for line in (out_dir / "command.log").read_text().splitlines()
+        if json.loads(line).get("event") == "rlr_passed"
+    ]
+    assert len(rlr_passed) == 1
+    assert rlr_passed[0]["audio_sha256"] == hashlib.sha256(
+        result["audio"].read_bytes()
+    ).hexdigest()
 
 
 def test_bundle_runner_honors_selected_scenario_order(tmp_path, monkeypatch):

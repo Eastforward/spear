@@ -114,6 +114,10 @@ def test_lookup_to_category_includes_direct_music_piano_key():
     assert _LOOKUP_TO_CATEGORY["music_piano"] == "music_piano"
     assert _LOOKUP_TO_CATEGORY["cat_purring"] == "cat_purring"
     assert _LOOKUP_TO_CATEGORY["speech"] == "speech"
+    assert (
+        _LOOKUP_TO_CATEGORY["synthetic_review_probe"]
+        == "synthetic_review_probe"
+    )
 
 
 def test_effective_audio_frames_from_gains_uses_threshold():
@@ -146,6 +150,9 @@ def test_source_synthetic_flag_comes_from_spec():
     assert _source_is_synthetic({"tag": "synth_x", "is_synthetic": True}) is True
     assert _source_is_synthetic({"tag": "dog_beagle_v2"}) is False
     assert _source_is_synthetic({"audio_lookup": "music_piano"}) is True
+    assert _source_is_synthetic({
+        "audio_lookup": "synthetic_review_probe"
+    }) is True
 
 
 def test_azi_ele_dist_local_offset_pure_x():

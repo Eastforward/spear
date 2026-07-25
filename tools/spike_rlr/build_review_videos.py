@@ -254,8 +254,16 @@ def build_overlay_lines(clip_dir: Path) -> list[str]:
 
     true_flags = [name for name, enabled in flags.items() if enabled]
     flag_text = _format_flag_names(true_flags) if true_flags else "none"
+    audio_evidence_path = clip_dir / "audio_evidence.json"
+    audio_suffix = ""
+    if audio_evidence_path.is_file():
+        audio_status = json.loads(
+            audio_evidence_path.read_text(encoding="utf-8")
+        ).get("status", "unknown_audio_status")
+        audio_suffix = f" | audio={audio_status}"
     lines = [
-        f"{clip_dir.name} | n_src={len(metadata.get('sources', []))} | flags={flag_text}"
+        f"{clip_dir.name} | n_src={len(metadata.get('sources', []))} | "
+        f"flags={flag_text}{audio_suffix}"
     ]
 
     spec_by_tag = {s.get("tag"): s for s in spec.get("sources", [])}

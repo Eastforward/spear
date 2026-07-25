@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sys
 import wave
@@ -70,6 +71,76 @@ def test_write_silent_wav_has_exact_duration_channels_and_zero_samples(tmp_path)
         assert wav.getframerate() == 8000
         assert wav.getnframes() == 16000
         assert set(wav.readframes(wav.getnframes())) == {0}
+
+
+def test_audio_evidence_marks_visual_placeholder_as_not_training_eligible(
+    tmp_path,
+):
+    from human_apartment_evidence import (
+        write_audio_artifact_evidence,
+        write_silent_wav,
+    )
+
+    audio = write_silent_wav(
+        tmp_path / "clip" / "binaural.wav",
+        duration_s=2.0,
+        sample_rate_hz=8000,
+        channels=2,
+    )
+    evidence_path = write_audio_artifact_evidence(
+        spec={
+            "sources": [{
+                "tag": "human_walk",
+                "audio_lookup": "speech",
+            }],
+        },
+        out_dir=audio.parent,
+        audio_path=audio,
+    )
+
+    payload = json.loads(evidence_path.read_text())
+    assert payload["status"] == "visual_placeholder_silence"
+    assert payload["eligible_for_visual_review"] is True
+    assert payload["eligible_for_acoustic_training"] is False
+    assert payload["signal"]["is_effectively_silent"] is True
+
+
+def test_audio_evidence_marks_logged_nonzero_rlr_as_verified(tmp_path):
+    import soundfile as sf
+
+    from human_apartment_evidence import write_audio_artifact_evidence
+
+    clip = tmp_path / "clip"
+    clip.mkdir()
+    audio = clip / "binaural.wav"
+    signal = np.zeros((1600, 2), dtype=np.float32)
+    signal[100:200, :] = 0.25
+    sf.write(audio, signal, 16000)
+    (clip / "command.log").write_text(
+        json.dumps({"event": "rlr_start"}) + "\n"
+        + json.dumps({
+            "event": "rlr_passed",
+            "audio_sha256": hashlib.sha256(audio.read_bytes()).hexdigest(),
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    evidence_path = write_audio_artifact_evidence(
+        spec={
+            "sources": [{
+                "tag": "human_walk",
+                "audio_lookup": "speech",
+            }],
+        },
+        out_dir=clip,
+        audio_path=audio,
+    )
+
+    payload = json.loads(evidence_path.read_text())
+    assert payload["status"] == "rlr_verified"
+    assert payload["eligible_for_acoustic_training"] is True
+    assert payload["latest_rlr_event"] == "rlr_passed"
+    assert payload["rlr_file_matches_logged_output"] is True
 
 
 def _write(path, data=b"artifact"):
@@ -186,6 +257,11 @@ def test_finalize_clip_publishes_review_inputs_metadata_and_registry(tmp_path, m
     assert (clip_dir / "flag_details.json").is_file()
     assert (clip_dir / "apartment_v1_metadata.json").is_file()
     assert (clip_dir / "binaural.wav").is_file()
+    audio_evidence = json.loads(
+        (clip_dir / "audio_evidence.json").read_text()
+    )
+    assert audio_evidence["status"] == "intentional_silence"
+    assert audio_evidence["eligible_for_acoustic_training"] is False
     assert result["annotated"].is_file()
     registry = clip_dir.parent / "registry" / f"{tag}.json"
     assert registry.is_file()

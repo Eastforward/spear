@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -56,6 +57,14 @@ from scene_two_dogs_apartment import (  # noqa: E402
     _static_obstacle_bboxes,
 )
 from profiling import StageTimer  # noqa: E402
+
+
+CAPTURE_WARMUP_REQUIRED_STABLE_TRANSITIONS = 4
+# A fixed SceneCapture view still changes by roughly 1.0--1.5 8-bit levels
+# frame-to-frame because UE temporal AA and the skeletal components keep
+# ticking.  Texture-page arrivals are materially larger; allow that normal
+# temporal variation while still refusing visible streaming changes.
+CAPTURE_WARMUP_MEAN_ABS_CHANGE_THRESHOLD = 2.0
 
 
 def _rig_assert_enabled() -> bool:
@@ -765,6 +774,123 @@ def _absolute_apartment_render_scene(scene):
     return replace(scene, mic_pos_m=(0.0, 0.0, scene.mic_pos_m[2]))
 
 
+def _capture_warmup_until_stable(
+    *,
+    instance,
+    cam,
+    comp,
+    actors,
+    scene,
+    render_scene,
+    camera_location_cm,
+    camera_yaw_ue_deg: float,
+    minimum_frames: int,
+    maximum_frames: int | None = None,
+    stable_transitions: int = CAPTURE_WARMUP_REQUIRED_STABLE_TRANSITIONS,
+    mean_abs_change_threshold: float = CAPTURE_WARMUP_MEAN_ABS_CHANGE_THRESHOLD,
+):
+    """Discard real SceneCapture readbacks before formal frame zero.
+
+    ``instance.step`` alone does not force this headless capture target to
+    request all visible virtual-texture pages.  Repeatedly reading the same
+    frame-zero view makes the floor/wall material stream before any retained
+    dataset frame, while restoring roots and camera pose prevents warmup from
+    consuming the authored trajectory.
+    """
+
+    if maximum_frames is None:
+        maximum_frames = max(120, int(minimum_frames) * 3)
+    if (
+        isinstance(minimum_frames, bool)
+        or not isinstance(minimum_frames, int)
+        or minimum_frames < 1
+        or isinstance(maximum_frames, bool)
+        or not isinstance(maximum_frames, int)
+        or maximum_frames < minimum_frames + stable_transitions
+        or isinstance(stable_transitions, bool)
+        or not isinstance(stable_transitions, int)
+        or stable_transitions < 1
+        or not math.isfinite(mean_abs_change_threshold)
+        or mean_abs_change_threshold < 0.0
+    ):
+        raise ValueError("SceneCapture warmup configuration is invalid")
+
+    previous = None
+    first = None
+    changes = []
+    stable_count = 0
+    for warmup_index in range(maximum_frames):
+        with instance.begin_frame():
+            for actor, placement in zip(actors, scene.animals):
+                if placement.is_animated:
+                    _step_animated(
+                        actor,
+                        placement,
+                        0,
+                        "apartment",
+                        render_scene,
+                    )
+            cam.K2_SetActorLocationAndRotation(
+                NewLocation={
+                    "X": float(camera_location_cm[0]),
+                    "Y": float(camera_location_cm[1]),
+                    "Z": float(camera_location_cm[2]),
+                },
+                NewRotation={
+                    "Roll": 0.0,
+                    "Pitch": 0.0,
+                    "Yaw": float(camera_yaw_ue_deg),
+                },
+                bSweep=False,
+                bTeleport=True,
+            )
+        with instance.end_frame():
+            current = np.asarray(read_frame(comp), dtype=np.uint8).copy()
+        if current.ndim != 3 or current.shape[2] != 3:
+            raise RuntimeError(
+                f"unexpected SceneCapture warmup frame shape: {current.shape}"
+            )
+        if first is None:
+            first = current.copy()
+        if previous is not None:
+            change = float(np.mean(np.abs(
+                current.astype(np.int16) - previous.astype(np.int16)
+            )))
+            if not math.isfinite(change):
+                raise RuntimeError("SceneCapture warmup change is non-finite")
+            changes.append(change)
+            stable_count = (
+                stable_count + 1
+                if change <= mean_abs_change_threshold
+                else 0
+            )
+        previous = current
+        discarded_frames = warmup_index + 1
+        if (
+            discarded_frames >= minimum_frames
+            and stable_count >= stable_transitions
+        ):
+            first_to_last = float(np.mean(np.abs(
+                current.astype(np.int16) - first.astype(np.int16)
+            )))
+            return {
+                "status": "passed",
+                "mode": "discarded_scene_capture_readbacks",
+                "discarded_frame_count": discarded_frames,
+                "minimum_frame_count": minimum_frames,
+                "maximum_frame_count": maximum_frames,
+                "required_stable_transitions": stable_transitions,
+                "mean_abs_change_threshold": mean_abs_change_threshold,
+                "final_mean_abs_change": changes[-1],
+                "maximum_mean_abs_change": max(changes),
+                "first_to_last_mean_abs_change": first_to_last,
+            }
+    raise RuntimeError(
+        "SceneCapture textures did not stabilize before formal frame zero: "
+        f"last changes={changes[-stable_transitions:]}"
+    )
+
+
 def _compute_keep_set(spec, cats):
     """Given the loaded spec and categories JSON, return the set of actor names
     (from apartment_furniture_map.json) that should be KEPT this clip."""
@@ -926,7 +1052,17 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
                 )
             with instance.end_frame():
                 pass
-            instance.step(num_frames=camera_warmup_frames)
+            capture_warmup = _capture_warmup_until_stable(
+                instance=instance,
+                cam=cam,
+                comp=comp,
+                actors=actors,
+                scene=scene,
+                render_scene=render_scene,
+                camera_location_cm=(mic_x_cm, mic_y_cm, mic_z_cm),
+                camera_yaw_ue_deg=yaw_ue_deg,
+                minimum_frames=camera_warmup_frames,
+            )
 
             # ---- Plan 1.5.B: per-clip rig direction sanity check ----
             # Opt-in via env var (SPEAR_RIG_ASSERT=1) or --rig-assert flag.
@@ -1074,6 +1210,7 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
                 n_frames=n_frames,
                 rig_direction_evidence=rig_direction_evidence,
             )
+            visual_metadata["capture_warmup"] = capture_warmup
             visual_meta_path.write_text(json.dumps(visual_metadata, indent=2))
             print(f"[apt_render] wrote {visual_meta_path}")
 

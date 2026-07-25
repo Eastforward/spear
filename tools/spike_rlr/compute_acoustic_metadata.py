@@ -53,13 +53,18 @@ _LOOKUP_TO_CATEGORY = {
     "talking": "speech",
     "conversation": "conversation",
     "music_piano": "music_piano",
+    "synthetic_review_probe": "synthetic_review_probe",
     "wolf_howl": "music_piano",   # legacy debug lookup; current animal specs
                                     # should use species-correct audio lookups.
 }
 
 
 EFFECTIVE_AUDIO_GAIN_THRESHOLD = 0.05
-_SYNTHETIC_AUDIO_LOOKUPS = {"music_piano", "wolf_howl"}
+_SYNTHETIC_AUDIO_LOOKUPS = {
+    "music_piano",
+    "synthetic_review_probe",
+    "wolf_howl",
+}
 
 
 def _source_is_synthetic(src_spec: dict) -> bool:

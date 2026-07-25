@@ -91,6 +91,28 @@ def test_overlay_lines_allows_missing_flags_for_deterministic_demo(tmp_path):
     assert lines[0] == "clip_demo | n_src=1 | flags=none"
 
 
+def test_overlay_lines_exposes_audio_artifact_status(tmp_path):
+    from build_review_videos import build_overlay_lines
+
+    clip = tmp_path / "clip_visual_only"
+    clip.mkdir()
+    (clip / "spec.json").write_text(json.dumps({"sources": []}))
+    (clip / "apartment_v1_metadata.json").write_text(json.dumps({
+        "n_frames": 2,
+        "sources": [],
+    }))
+    (clip / "audio_evidence.json").write_text(json.dumps({
+        "status": "visual_placeholder_silence",
+    }))
+
+    lines = build_overlay_lines(clip)
+
+    assert lines[0] == (
+        "clip_visual_only | n_src=0 | flags=none | "
+        "audio=visual_placeholder_silence"
+    )
+
+
 def test_overlay_lines_includes_per_source_flags_when_available(tmp_path):
     from build_review_videos import build_overlay_lines
 

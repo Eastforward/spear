@@ -10,10 +10,15 @@ import re
 import wave
 from pathlib import Path
 
+import numpy as np
+import soundfile as sf
+
 from flag_verifier import verify_flag_details
 from source_trajectory import acoustic_trajectory
 
 
+_AUDIO_EVIDENCE_SCHEMA = "avengine_audio_artifact_evidence_v1"
+_AUDIO_SILENCE_PEAK_THRESHOLD = 1e-7
 REGISTRY_SCHEMA = "human_apartment_technical_registry_v1"
 USAGE_SCOPE = "technical_spike_only"
 RESEARCH_CANDIDATE_REGISTRY_SCHEMA = (
@@ -124,6 +129,95 @@ def write_silent_wav(
             remaining -= count
         wav.writeframes(b"")
     return path
+
+
+def _latest_rlr_event(command_log_path: Path) -> dict | None:
+    command_log_path = Path(command_log_path)
+    if not command_log_path.is_file():
+        return None
+    latest = None
+    for line in command_log_path.read_text(
+        encoding="utf-8", errors="replace"
+    ).splitlines():
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        event = payload.get("event")
+        if event in {"rlr_start", "rlr_passed", "rlr_failed"}:
+            latest = payload
+    return latest
+
+
+def inspect_audio_artifact(audio_path: Path) -> dict:
+    """Return lightweight signal evidence without treating existence as validity."""
+    audio_path = Path(audio_path).resolve()
+    samples, sample_rate_hz = sf.read(str(audio_path), always_2d=True)
+    peak_abs = float(np.max(np.abs(samples))) if samples.size else 0.0
+    frame_count = int(samples.shape[0])
+    channel_count = int(samples.shape[1])
+    return {
+        "path": str(audio_path),
+        "sha256": sha256_file(audio_path),
+        "size_bytes": int(audio_path.stat().st_size),
+        "sample_rate_hz": int(sample_rate_hz),
+        "frame_count": frame_count,
+        "channel_count": channel_count,
+        "duration_s": (
+            float(frame_count / sample_rate_hz) if sample_rate_hz else 0.0
+        ),
+        "peak_abs": peak_abs,
+        "is_effectively_silent": bool(
+            peak_abs <= _AUDIO_SILENCE_PEAK_THRESHOLD
+        ),
+    }
+
+
+def write_audio_artifact_evidence(
+    *,
+    spec: dict,
+    out_dir: Path,
+    audio_path: Path,
+) -> Path:
+    """Classify rendered, intentional-silent, and visual-placeholder audio."""
+    sources = list(spec.get("sources", []))
+    expects_audible_audio = any(
+        not bool(source.get("mute_audio"))
+        and source.get("audio_lookup") != "silent"
+        for source in sources
+    )
+    signal = inspect_audio_artifact(audio_path)
+    latest_rlr_record = _latest_rlr_event(Path(out_dir) / "command.log")
+    latest_rlr_event = (
+        latest_rlr_record.get("event") if latest_rlr_record else None
+    )
+    rlr_file_matches = bool(
+        latest_rlr_event == "rlr_passed"
+        and latest_rlr_record.get("audio_sha256") == signal["sha256"]
+    )
+
+    if not expects_audible_audio and signal["is_effectively_silent"]:
+        status = "intentional_silence"
+    elif rlr_file_matches and not signal["is_effectively_silent"]:
+        status = "rlr_verified"
+    elif signal["is_effectively_silent"]:
+        status = "visual_placeholder_silence"
+    else:
+        status = "unverified_external_audio"
+
+    payload = {
+        "schema_version": _AUDIO_EVIDENCE_SCHEMA,
+        "status": status,
+        "latest_rlr_event": latest_rlr_event,
+        "rlr_file_matches_logged_output": rlr_file_matches,
+        "expects_audible_audio": expects_audible_audio,
+        "eligible_for_visual_review": True,
+        "eligible_for_acoustic_training": status == "rlr_verified",
+        "signal": signal,
+    }
+    return atomic_write_json(Path(out_dir) / "audio_evidence.json", payload)
 
 
 def _compose_scene(spec_path: Path):
@@ -668,6 +762,11 @@ def finalize_human_apartment_clip(
             channels=2,
         )
 
+    audio_evidence_path = write_audio_artifact_evidence(
+        spec=spec,
+        out_dir=out_dir,
+        audio_path=audio_path,
+    )
     _compute_metadata(copied_spec, out_dir, str(clip_id))
     review_outputs = _build_reviews(out_dir)
     annotated = Path(review_outputs["annotated"])
@@ -749,5 +848,6 @@ def finalize_human_apartment_clip(
         "flag_details": out_dir / "flag_details.json",
         "metadata": out_dir / "apartment_v1_metadata.json",
         "audio": audio_path,
+        "audio_evidence": audio_evidence_path,
         "registries": registry_paths,
     }

@@ -15,7 +15,10 @@ os.environ.setdefault("DISPLAY", ":99")
 os.environ.setdefault("VK_ICD_FILENAMES", "/etc/vulkan/icd.d/nvidia_icd.json")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/avengine-matplotlib")
 
-from human_apartment_evidence import finalize_human_apartment_clip  # noqa: E402
+from human_apartment_evidence import (  # noqa: E402
+    finalize_human_apartment_clip,
+    inspect_audio_artifact,
+)
 from run_render_pass_apartment import render_apartment  # noqa: E402
 
 
@@ -149,7 +152,13 @@ def run_human_apartment_example(
             cwd=str(REPO_ROOT),
             env=rlr_env,
         )
-        _append_log(command_log, {"event": "rlr_passed", "timestamp": _timestamp()})
+        audio_signal = inspect_audio_artifact(audio_path)
+        _append_log(command_log, {
+            "event": "rlr_passed",
+            "timestamp": _timestamp(),
+            "audio_sha256": audio_signal["sha256"],
+            "audio_peak_abs": audio_signal["peak_abs"],
+        })
     _require_file(audio_path, "binaural audio")
 
     review_outputs = {}

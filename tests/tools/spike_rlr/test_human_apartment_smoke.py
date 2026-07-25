@@ -3,8 +3,11 @@
 import hashlib
 import json
 import sys
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 
@@ -391,7 +394,65 @@ def test_apartment_runner_allows_short_canary_warmup_without_changing_defaults()
     assert 'render_config.get("streaming_warmup_frames", 120)' in runner
     assert 'render_config.get("camera_warmup_frames", 40)' in runner
     assert "instance.step(num_frames=streaming_warmup_frames)" in runner
-    assert "instance.step(num_frames=camera_warmup_frames)" in runner
+    assert "capture_warmup = _capture_warmup_until_stable(" in runner
+    assert "minimum_frames=camera_warmup_frames" in runner
+
+
+def test_apartment_capture_warmup_discards_streaming_changes_until_stable(
+    monkeypatch,
+):
+    import run_render_pass_apartment as runner
+
+    values = [24] * 35 + [32, 48, 72, 96, 120] + [120] * 12
+    frames = [
+        np.full((3, 4, 3), value, dtype=np.uint8)
+        for value in values
+    ]
+    read_count = 0
+
+    def fake_read_frame(_component):
+        nonlocal read_count
+        frame = frames[read_count]
+        read_count += 1
+        return frame
+
+    class FakeInstance:
+        def begin_frame(self):
+            return nullcontext()
+
+        def end_frame(self):
+            return nullcontext()
+
+    class FakeCamera:
+        def __init__(self):
+            self.poses = []
+
+        def K2_SetActorLocationAndRotation(self, **kwargs):
+            self.poses.append(kwargs)
+
+    camera = FakeCamera()
+    monkeypatch.setattr(runner, "read_frame", fake_read_frame)
+
+    evidence = runner._capture_warmup_until_stable(
+        instance=FakeInstance(),
+        cam=camera,
+        comp=object(),
+        actors=[],
+        scene=SimpleNamespace(animals=()),
+        render_scene=None,
+        camera_location_cm=(1.0, 2.0, 3.0),
+        camera_yaw_ue_deg=-145.0,
+        minimum_frames=40,
+        maximum_frames=60,
+    )
+
+    assert evidence["status"] == "passed"
+    assert evidence["discarded_frame_count"] == 44
+    assert evidence["maximum_mean_abs_change"] == pytest.approx(24.0)
+    assert evidence["first_to_last_mean_abs_change"] == pytest.approx(96.0)
+    assert read_count == 44
+    assert len(camera.poses) == 44
+    assert camera.poses[-1]["NewRotation"]["Yaw"] == pytest.approx(-145.0)
 
 
 def test_apartment_capture_fps_controls_spear_fixed_delta_time():
