@@ -1,0 +1,180 @@
+{
+  "schema": "avengine_attribute_profile_v1",
+  "profile_schema_id": "dog_labrador_retriever_four_limb_rest_side_clay_v1",
+  "profile_revision": "2026_07_21_v1_one_shot_yellow_adult_base",
+  "asset_class": "animal",
+  "lineage_group_id": "quaternius_dog_four_limb_rest_side_cc92fe7a",
+  "state_classification": "research_candidate",
+  "taxonomy": {
+    "species": "dog",
+    "breed": "labrador_retriever"
+  },
+  "base_template": {
+    "template_id": "quaternius_dog_authored_rest_pose_side_four_limb_clay_v4",
+    "kind": "reference_image",
+    "artifact": {
+      "root_id": "spear_repo",
+      "path": "data/controlled_source_attributes_v1/references/animal/quaternius_dog_authored_rest_pose_side_four_limb_clay_v4/frame_0000.png",
+      "sha256": "cc92fe7adbee7b75b4d5b1ec3c6f79002e8ebd3194d68c2dbec0ec5ea5f4a0be",
+      "size_bytes": 1036153
+    },
+    "provenance_status": "verified",
+    "usage_scope": "research_candidate"
+  },
+  "fixed_attributes": {
+    "life_stage": "adult",
+    "coat_length": "short",
+    "coat_pattern": "solid",
+    "ear_shape": "drop",
+    "tail_shape": "otter"
+  },
+  "sampled_attribute_domains": {
+    "size": [
+      "medium"
+    ],
+    "coat_color": [
+      "yellow"
+    ],
+    "body_build": [
+      "standard"
+    ]
+  },
+  "forbidden_combinations": [],
+  "generation_contract": {
+    "route": "flux2_pixal3d_animal_v1",
+    "prompt_template_id": "quadruped_four_limb_rest_side_i2i_v1_labrador",
+    "base_acquisition_policy": {
+      "policy_id": "animal_one_shot_no_seed_lottery_v1",
+      "acquisition_unit": "one_frozen_base_asset",
+      "sampled_domains_must_be_singleton": true,
+      "downstream_instance_route": "stable_animal_template_v1",
+      "profile_validation": "all_predeclared_requests_count_zero_hidden_failures"
+    },
+    "positive_template": "Transform the uniform clay pose guide into one {size} {life_stage} {breed} {species} with a {body_build} anatomically normal body, a coherent {coat_color} {coat_length} coat with a {coat_pattern} pattern, {ear_shape} ears, and an {tail_shape} tail.",
+    "pose_guard_prompt": "The input is an untextured uniform-clay pose guide, not an appearance reference. Replace every visible clay surface, including the neck, torso, near-side limbs, far-side limbs, paws, head, ears, and tail, with one coherent photorealistic breed-appropriate coat. Preserve the exact authored neutral rigging stance, silhouette, and joint locations from the input. This is a strict orthographic lateral silhouette: the camera optical axis is perpendicular to the animal's sagittal plane, the animal faces exactly image-right, and the full torso centerline is parallel to the image plane. Show the side of the rib cage, never the front of the chest or a rear-quarter view. The nose, neck, spine, pelvis, and tail base form one image-horizontal longitudinal direction without depth recession. Show exactly one eye. The head and neck must align with the torso; the animal must not look toward or away from the camera and must not tilt its head. Preserve all four individually visible legs and the authored opposite fore-aft offsets of the far-side front and hind limb chains. Those offsets exist only along the image horizontal axis, never by turning the torso toward the camera. Keep a clearly visible background gap between each near-side and far-side paw and lower leg from paw tip through the hock or wrist; never collapse, overlap, cross, merge, or hide those four silhouettes. Do not convert the compact offsets into a walking stride or show-dog stack. Keep all four paws planted on the same level ground plane. Keep the tail separated from the body, preserve full-body framing, and use a plain background. This is a static rigging reference, not an action pose. Keep the tail attached only at its anatomical base. From just beyond the base through the tip, keep the free tail visibly separated from both hind legs and every paw, with a clear plain-background gap. The tail may hang naturally or extend gently backward and does not need to point upward. No part of the free tail may touch, cross, overlap, wrap around, or merge with a leg or paw.",
+    "negative_prompt": "three-quarter view, front-quarter view, rear-quarter view, perspective view, visible front of chest, foreshortened torso, camera yaw, torso yaw, twisted torso, twisted spine, depth-receding spine, curved body axis, two visible eyes, head turned toward camera, head turned away from camera, tilted head, walking, running, gait stride, lifted paw, crouching, sitting, lying down, uneven ground, mismatched paw height, crossed legs, overlapping legs, overlapping paws, collapsed limb offsets, merged legs, merged paws, hidden legs, hidden paws, splayed legs, cropped body, fused tail, extra limbs, gray clay patch, untextured patch, plastic patch, collar, scarf, accessory, background geometry, text, tail touching hind leg, tail overlapping leg, fused tail and leg, tail wrapped around leg, tail obscuring paw, tail merged with foot",
+    "value_labels": {
+      "species": {
+        "dog": "dog"
+      },
+      "breed": {
+        "labrador_retriever": "Labrador Retriever"
+      },
+      "life_stage": {
+        "adult": "adult"
+      },
+      "coat_length": {
+        "short": "short"
+      },
+      "coat_pattern": {
+        "solid": "solid"
+      },
+      "ear_shape": {
+        "drop": "drop"
+      },
+      "tail_shape": {
+        "otter": "otter"
+      },
+      "size": {
+        "medium": "medium-sized"
+      },
+      "coat_color": {
+        "yellow": "yellow"
+      },
+      "body_build": {
+        "standard": "standard"
+      }
+    },
+    "model_revisions": {
+      "flux2": "e7b7dc27f91deacad38e78976d1f2b499d76a294",
+      "pixal3d": "0b31f9160aa400719af409098bff7936a932f726",
+      "dino": "3c276edd87d6f6e569ff0c4400e086807d0f3881"
+    }
+  },
+  "target_physical_profiles": {
+    "profile_id": "dog_labrador_retriever_physical_candidate_v1",
+    "control_attribute": "size",
+    "measurement": "shoulder_height_cm",
+    "mode": "relative_to_profile_reference",
+    "reference_value_cm": 57,
+    "reference_provenance": {
+      "status": "provisional",
+      "source_id": "labrador_retriever_pipeline_calibration_pending_v1",
+      "artifact": null,
+      "notes": "Provisional pipeline target only; measure the approved runtime asset before formal registration."
+    },
+    "values": {
+      "medium": {
+        "scale_ratio": 1,
+        "tolerance_cm": 4
+      }
+    }
+  },
+  "rig_profile": {
+    "profile_id": "quadruped_dog_v1",
+    "skeleton_family": "quaternius_dog",
+    "actions": [
+      "Walking",
+      "Idle"
+    ],
+    "front_axis": "positive_x"
+  },
+  "acoustic_profile": {
+    "profile_id": "dog_vocalization_v1",
+    "default_event_class": "dog_bark",
+    "allowed_event_classes": [
+      "dog_bark",
+      "dog_growl",
+      "silent"
+    ],
+    "selection_attributes": [
+      "species",
+      "breed",
+      "life_stage"
+    ]
+  },
+  "locked_attributes": [
+    "species",
+    "breed",
+    "life_stage",
+    "coat_length",
+    "coat_pattern",
+    "ear_shape",
+    "tail_shape"
+  ],
+  "qa_contract": {
+    "subject_label": "Labrador Retriever",
+    "attributes": {
+      "size": {
+        "kind": "ordered",
+        "label": "size",
+        "value_order": [
+          "medium"
+        ],
+        "value_labels": {
+          "medium": "medium-sized"
+        },
+        "comparison_question": "Which Labrador Retriever is larger?"
+      },
+      "coat_color": {
+        "kind": "categorical",
+        "label": "coat color",
+        "value_labels": {
+          "yellow": "yellow"
+        },
+        "identification_question": "What is the coat color of {instance_label}?"
+      },
+      "body_build": {
+        "kind": "ordered",
+        "label": "body build",
+        "value_order": [
+          "standard"
+        ],
+        "value_labels": {
+          "standard": "standard"
+        },
+        "comparison_question": "Which Labrador Retriever has the stockier build?"
+      }
+    }
+  }
+}

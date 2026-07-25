@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import runpy
+import struct
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,6 +29,57 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _read_glb_document(path: Path) -> dict:
+    raw = path.read_bytes()
+    if len(raw) < 20 or raw[:4] != b"glTF":
+        raise RuntimeError(f"source is not a GLB 2.0 file: {path}")
+    version, declared_size = struct.unpack_from("<II", raw, 4)
+    json_size, json_type = struct.unpack_from("<I4s", raw, 12)
+    if (
+        version != 2
+        or declared_size != len(raw)
+        or json_type != b"JSON"
+        or 20 + json_size > len(raw)
+    ):
+        raise RuntimeError(f"invalid GLB header or JSON chunk: {path}")
+    return json.loads(
+        raw[20 : 20 + json_size].decode("utf-8").rstrip(" \x00")
+    )
+
+
+def _validate_ue_compatible_glb(job: dict, source: Path) -> None:
+    document = _read_glb_document(source)
+    required = set(document.get("extensionsRequired", []))
+    webp_images = [
+        index
+        for index, image in enumerate(document.get("images", []))
+        if image.get("mimeType") == "image/webp"
+    ]
+    if "EXT_texture_webp" in required or webp_images:
+        raise RuntimeError(
+            "UE 5.5 import source still requires embedded WebP; run "
+            f"transcode_glb_webp_to_png.py first: {source}"
+        )
+    manifest_value = job.get("texture_transcode_manifest")
+    if manifest_value is None:
+        return
+    manifest_path = Path(manifest_value).resolve()
+    if not manifest_path.is_file():
+        raise RuntimeError(
+            f"texture transcode manifest is missing: {manifest_path}"
+        )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (
+        manifest.get("schema") != "glb_embedded_webp_to_png_transcode_v1"
+        or manifest.get("geometry_skin_animation_byte_graph_changed") is not False
+        or Path(manifest.get("output", {}).get("path", "")).resolve() != source
+        or manifest.get("output", {}).get("sha256") != _sha256(source)
+    ):
+        raise RuntimeError(
+            f"texture transcode evidence does not authenticate {source}"
+        )
+
+
 def main() -> None:
     manifest_path = Path(os.environ["PIXAL_ANIMAL_IMPORT_MANIFEST"]).resolve()
     result_path = Path(os.environ["PIXAL_ANIMAL_IMPORT_RESULT"]).resolve()
@@ -44,6 +96,7 @@ def main() -> None:
         source = Path(job["rigged_glb"]).resolve()
         if not source.is_file() or _sha256(source) != job["rigged_glb_sha256"]:
             raise RuntimeError(f"source hash mismatch for {job['tag']}: {source}")
+        _validate_ue_compatible_glb(job, source)
         os.environ["GATE_TAG"] = job["tag"]
         os.environ["GATE_RIGGED_GLB"] = str(source)
         runpy.run_path(str(IMPORT_ONE), run_name="__main__")

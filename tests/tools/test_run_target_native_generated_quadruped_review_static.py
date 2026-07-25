@@ -22,6 +22,9 @@ def test_runner_preserves_the_required_stage_order_and_review_views():
     ]
     positions = [command_builder.index(item) for item in expected]
     assert positions == sorted(positions)
+    assert '"--python-exit-code"' in text
+    assert '"--target-glb", str(paths["leveled_glb"])' in command_builder
+    assert '"support_plane_manifest": file_record(paths["level_manifest"])' in text
     for label in (
         "walking_side",
         "walking_front",

@@ -111,7 +111,19 @@ def output_paths(root: Path) -> dict[str, Path]:
 
 
 def blender_command(blender: str, script: str, arguments: list[str]) -> list[str]:
-    return [blender, "-b", "--python", str(TOOLS / script), "--", *arguments]
+    # Blender otherwise reports some uncaught Python-script exceptions with a
+    # successful process return code and lets the outer pipeline continue with
+    # missing artifacts.  New-asset stages must fail closed at the first error.
+    return [
+        blender,
+        "-b",
+        "--python-exit-code",
+        "2",
+        "--python",
+        str(TOOLS / script),
+        "--",
+        *arguments,
+    ]
 
 
 def build_commands(args, paths: dict[str, Path], blender: str) -> list[tuple[str, list[str]]]:

@@ -91,6 +91,28 @@ def test_accepts_lifted_paws_when_leaf_tail_still_reaches_the_paw():
     }
 
 
+def test_accepts_a_tail_tip_inside_the_low_foot_band():
+    records = synthetic_quadruped()
+    tail_tip = next(item for item in records if item["name"] == "tail_tip")
+    tail_tip["head_world"][2] = 0.10
+    tail_tip["tail_world"][2] = 0.08
+
+    result = infer_quadruped_semantics(
+        records,
+        bbox_min=(-0.5, -0.3, 0.0),
+        bbox_extent=(1.2, 0.6, 0.8),
+        front_axis="negative-x",
+    )
+
+    assert result.tail_chain == ("tail", "tail_tip")
+    assert set(result.foot_leaves) == {
+        "fl_foot",
+        "fr_foot",
+        "hl_foot",
+        "hr_foot",
+    }
+
+
 def test_infers_same_chains_for_cardinal_negative_y_front_axis():
     records = []
     for record in synthetic_quadruped():

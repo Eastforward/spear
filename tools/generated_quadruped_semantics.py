@@ -387,10 +387,13 @@ def infer_quadruped_semantics(
         lateral_index=lateral_index,
         low_limit=low_limit,
     )
-    # All other near-floor endpoints are excluded from head/tail inference.
-    # They are retained below as auxiliary branches, so skeleton coverage is
-    # still exact even when a glTF exporter disconnects hoof/end controls.
-    non_foot_leaves = [name for name in leaves if name not in low_leaves]
+    # Exclude only the four selected anatomical feet from head/tail inference.
+    # A breed-correct tail can legitimately curve into the same low band as a
+    # paw (the generated Labrador is one such case).  Extra low hoof controls
+    # remain safe here: the anatomical head and tail are selected by the
+    # reviewed forward extremes, while residual control branches are retained
+    # as auxiliary coverage below.
+    non_foot_leaves = [name for name in leaves if name not in foot_leaves]
     if len(non_foot_leaves) < 2:
         raise SemanticRigError("quadruped rig needs distinct head and tail leaves")
 

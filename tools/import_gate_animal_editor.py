@@ -46,14 +46,31 @@ def main():
     _make_or_clear_dir(BP_CONTENT_DIR)
 
     task = unreal.AssetImportTask()
-    task.set_editor_property(name="async_", value=False)
+    # UE 5.5's Interchange-backed GLB import may return from
+    # import_asset_tasks() before the import graph has published its assets,
+    # even when ``async_`` is false.  AssetImportTask.get_objects() is the
+    # engine-supported blocking join: it waits for AsyncResults to finish
+    # before exposing the imported objects.  Without this join, a cold editor
+    # can observe an empty destination and falsely report that a valid GLB has
+    # no SkeletalMesh.
+    task.set_editor_property(name="async_", value=True)
     task.set_editor_property(name="automated", value=True)
     task.set_editor_property(name="destination_path", value=MESH_CONTENT_DIR)
     task.set_editor_property(name="filename", value=RIGGED_GLB)
     task.set_editor_property(name="replace_existing", value=True)
     task.set_editor_property(name="replace_existing_settings", value=True)
-    task.set_editor_property(name="save", value=True)
+    task.set_editor_property(name="save", value=False)
     asset_tools.import_asset_tasks(import_tasks=[task])
+    imported_objects = task.get_objects()
+    assert imported_objects, (
+        f"Interchange completed without imported objects for {RIGGED_GLB}"
+    )
+    unreal.AssetRegistryHelpers.get_asset_registry().wait_for_completion()
+    editor_asset_subsystem.save_directory(
+        directory_path=MESH_CONTENT_DIR,
+        only_if_is_dirty=False,
+        recursive=True,
+    )
     assert unreal.EditorAssetLibrary.does_directory_exist(directory_path=MESH_CONTENT_DIR)
 
     imported_paths = unreal.EditorAssetLibrary.list_assets(directory_path=MESH_CONTENT_DIR)
