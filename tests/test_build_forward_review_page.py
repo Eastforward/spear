@@ -80,7 +80,7 @@ def test_page_embeds_data_and_relative_media(workspace):
     assert main(
         [
             "--asset-workspace", "collie_test_v1",
-            "--turntable-dir", str(turntable),
+            "--normalized-turntable-dir", str(turntable),
             "--estimate-json", str(estimate),
             "--gait-audit", str(gait),
             "--preview-video", str(video),
@@ -96,7 +96,8 @@ def test_page_embeds_data_and_relative_media(workspace):
             "</script>"
         )[0]
     )
-    assert len(payload["frames"]) == 8
+    assert len(payload["normalized_frames"]) == 8
+    assert payload["raw_frames"] == []
     assert payload["gait"]["result"]["classification"] == "forward"
     assert payload["check_fields"][0] == "walking_direction"
 
@@ -106,7 +107,7 @@ def test_page_refuses_replacement(workspace):
     output = tmp_path / "review.html"
     argv = [
         "--asset-workspace", "collie_test_v1",
-        "--turntable-dir", str(turntable),
+        "--normalized-turntable-dir", str(turntable),
         "--estimate-json", str(estimate),
         "--output-html", str(output),
     ]

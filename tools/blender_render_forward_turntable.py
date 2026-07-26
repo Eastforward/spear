@@ -36,6 +36,16 @@ def parse_argv():
     )
     parser.add_argument("--width", type=int, default=512)
     parser.add_argument("--height", type=int, default=384)
+    parser.add_argument(
+        "--forward-axis-arrow",
+        action="store_true",
+        help=(
+            "Draw a green ground arrow along world +X marking the claimed "
+            "anatomical forward; use on heading-normalized meshes so the "
+            "reviewer confirms an adjusted result instead of judging a raw "
+            "oblique mesh."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -45,15 +55,6 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024*1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def scene_bounds():
-    points = []
-    for obj in bpy.context.scene.objects:
-        if obj.type == "MESH":
-            for corner in obj.bound_box:
-                points.append(obj.matrix_world @ obj.matrix_world.to_3x3().__class__().col[0].__class__(corner))
-    return points
 
 
 def mesh_world_bounds():
@@ -70,6 +71,34 @@ def mesh_world_bounds():
     if not np.all(np.isfinite(minimum)):
         raise SystemExit("scene has no mesh bounds")
     return minimum, maximum
+
+
+def add_forward_axis_arrow(minimum, maximum):
+    center = (minimum + maximum)/2.0
+    size = float(np.linalg.norm(maximum - minimum))
+    shaft_length = size*0.5
+    radius = size*0.012
+    ground_z = float(minimum[2]) + size*0.01
+    material = bpy.data.materials.new("forward_axis_arrow")
+    material.use_nodes = True
+    shader = material.node_tree.nodes["Principled BSDF"]
+    shader.inputs["Base Color"].default_value = (0.05, 0.9, 0.35, 1.0)
+    shader.inputs["Emission Color"].default_value = (0.05, 0.9, 0.35, 1.0)
+    shader.inputs["Emission Strength"].default_value = 2.0
+    bpy.ops.mesh.primitive_cylinder_add(
+        radius=radius,
+        depth=shaft_length,
+        location=(center[0] + shaft_length/2.0, center[1], ground_z),
+        rotation=(0.0, math.pi/2.0, 0.0),
+    )
+    bpy.context.active_object.data.materials.append(material)
+    bpy.ops.mesh.primitive_cone_add(
+        radius1=radius*3.5,
+        depth=radius*10.0,
+        location=(center[0] + shaft_length + radius*5.0, center[1], ground_z),
+        rotation=(0.0, math.pi/2.0, 0.0),
+    )
+    bpy.context.active_object.data.materials.append(material)
 
 
 def place_camera(camera, center, radius, azimuth_deg, elevation_deg=18.0):
@@ -108,6 +137,8 @@ def main():
     minimum, maximum = mesh_world_bounds()
     center = (minimum + maximum)/2.0
     radius = float(np.linalg.norm(maximum - minimum))*1.1
+    if args.forward_axis_arrow:
+        add_forward_axis_arrow(minimum, maximum)
 
     scene = bpy.context.scene
     camera_data = bpy.data.cameras.new("turntable_camera")
@@ -160,6 +191,7 @@ def main():
             "elevation_deg": 18.0,
             "candidate_elevation_deg": 8.0,
         },
+        "forward_axis_arrow": bool(args.forward_axis_arrow),
         "frames": frames,
         "candidates": candidates,
         "resolution": [args.width, args.height],
