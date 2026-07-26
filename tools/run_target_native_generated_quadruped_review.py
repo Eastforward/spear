@@ -26,12 +26,30 @@ SPEAR_ROOT = Path(__file__).resolve().parents[1]
 TOOLS = SPEAR_ROOT / "tools"
 SCHEMA = "avengine_target_native_generated_quadruped_review_run_v1"
 
+if str(SPEAR_ROOT) not in sys.path:
+    sys.path.insert(0, str(SPEAR_ROOT))
+
+from tools.generated_animal_forward_contract import (  # noqa: E402
+    assert_declared_motion_basis,
+    load_forward_declaration,
+)
+
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-rig-glb", type=Path, required=True)
-    parser.add_argument("--heading-review-evidence", type=Path, required=True)
-    parser.add_argument("--reviewed-source-front-yaw-deg", type=float, required=True)
+    parser.add_argument(
+        "--forward-declaration",
+        type=Path,
+        help=(
+            "Authenticated single-point forward declaration.  Supplies the "
+            "reviewed source front yaw, the canonical target axis and the "
+            "constant motion basis of the declared donor; the legacy "
+            "per-asset heading/motion-basis flags are then forbidden."
+        ),
+    )
+    parser.add_argument("--heading-review-evidence", type=Path)
+    parser.add_argument("--reviewed-source-front-yaw-deg", type=float)
     parser.add_argument(
         "--target-front-axis",
         choices=("positive-x", "negative-x", "positive-y", "negative-y"),
@@ -42,13 +60,20 @@ def parse_args(argv=None):
     parser.add_argument("--blender", default=os.environ.get("AVENGINE_BLENDER", "blender"))
     parser.add_argument("--motion-amplitude", type=float, default=1.0)
     parser.add_argument(
-        "--motion-basis-yaw-deg", type=int, choices=(-90, 0, 90, 180), required=True
+        "--motion-basis-yaw-deg", type=int, choices=(-90, 0, 90, 180)
     )
-    parser.add_argument(
-        "--side-chain-mode", choices=("matched", "swapped"), required=True
-    )
+    parser.add_argument("--side-chain-mode", choices=("matched", "swapped"))
     parser.add_argument("--deformation-samples", type=int, default=24)
     parser.add_argument("--review-frames", type=int, default=8)
+    parser.add_argument(
+        "--preview-only",
+        action="store_true",
+        help=(
+            "Stop after retarget, gait-direction audit and two cheap Walking "
+            "renders so direction mistakes surface in minutes instead of "
+            "after the full deformation audit and six-view render."
+        ),
+    )
     parser.add_argument("--validate-only", action="store_true")
     return parser.parse_args(argv)
 
@@ -104,9 +129,11 @@ def output_paths(root: Path) -> dict[str, Path]:
         "level_manifest": level / "manifest.json",
         "animated_glb": motion / "target_animated.glb",
         "retarget_manifest": motion / "retarget_manifest.json",
+        "gait_audit": motion / "gait_direction_audit.json",
         "deformation_audit": motion / "skinned_deformation_walk_idle.json",
         "review_root": review,
         "result": root / "review_run.json",
+        "preview_result": root / "preview_run.json",
     }
 
 
@@ -196,6 +223,20 @@ def build_commands(args, paths: dict[str, Path], blender: str) -> list[tuple[str
                     "--pose-transfer-mode", "world-rotation-retarget-v2",
                     "--motion-basis-yaw-deg", str(args.motion_basis_yaw_deg),
                     "--side-chain-mode", args.side_chain_mode,
+                ],
+            ),
+        )
+    )
+    commands.append(
+        (
+            "gait_direction",
+            blender_command(
+                blender,
+                "blender_audit_gait_direction.py",
+                [
+                    "--input", str(paths["animated_glb"]),
+                    "--output", str(paths["gait_audit"]),
+                    "--action", "Walking",
                 ],
             ),
         )
@@ -300,9 +341,64 @@ def verify_video(path: Path, expected_frames: int) -> dict:
 def main(argv=None):
     args = parse_args(argv)
     args.target_rig_glb = regular_file(args.target_rig_glb, "target rig GLB")
-    args.heading_review_evidence = regular_file(
-        args.heading_review_evidence, "heading review evidence"
-    )
+    if args.forward_declaration is not None:
+        if (
+            args.heading_review_evidence is not None
+            or args.reviewed_source_front_yaw_deg is not None
+            or args.motion_basis_yaw_deg is not None
+            or args.side_chain_mode is not None
+        ):
+            raise ValueError(
+                "--forward-declaration replaces --heading-review-evidence, "
+                "--reviewed-source-front-yaw-deg, --motion-basis-yaw-deg and "
+                "--side-chain-mode; the anatomical front is declared exactly "
+                "once and the motion basis is the donor constant"
+            )
+        declaration_path = regular_file(
+            args.forward_declaration, "forward declaration"
+        )
+        declaration = load_forward_declaration(declaration_path)
+        basis = declaration["expected_motion_basis"]
+        assert_declared_motion_basis(
+            declaration["motion_donor_tag"],
+            basis["motion_basis_yaw_deg"],
+            basis["side_chain_mode"],
+        )
+        args.heading_review_evidence = declaration_path
+        args.reviewed_source_front_yaw_deg = declaration[
+            "reviewed_source_front_yaw_deg"
+        ]
+        args.target_front_axis = declaration["target_front_axis"]
+        args.motion_basis_yaw_deg = basis["motion_basis_yaw_deg"]
+        args.side_chain_mode = basis["side_chain_mode"]
+        forward_contract = {
+            "mode": "forward_declaration_v1",
+            "declaration": file_record(declaration_path),
+            "motion_donor_tag": declaration["motion_donor_tag"],
+            "derived_motion_basis": dict(basis),
+        }
+    else:
+        if (
+            args.heading_review_evidence is None
+            or args.reviewed_source_front_yaw_deg is None
+            or args.motion_basis_yaw_deg is None
+            or args.side_chain_mode is None
+        ):
+            raise ValueError(
+                "legacy mode requires --heading-review-evidence, "
+                "--reviewed-source-front-yaw-deg, --motion-basis-yaw-deg and "
+                "--side-chain-mode together; prefer --forward-declaration"
+            )
+        args.heading_review_evidence = regular_file(
+            args.heading_review_evidence, "heading review evidence"
+        )
+        forward_contract = {
+            "mode": "legacy_free_parameters_deprecated",
+            "deprecation": (
+                "per-asset motion-basis and heading parameters are a known "
+                "orientation-bug source; migrate to --forward-declaration"
+            ),
+        }
     args.source_motion_glb = regular_file(args.source_motion_glb, "source motion GLB")
     if not 0.0 <= args.motion_amplitude <= 1.0:
         raise ValueError("--motion-amplitude must be in [0, 1]")
@@ -316,6 +412,13 @@ def main(argv=None):
     blender = executable(args.blender)
     paths = output_paths(root)
     commands = build_commands(args, paths, blender)
+    preview_labels = (
+        "heading", "rig_audit", "support_plane", "retarget", "gait_direction",
+        "render_walking_side", "encode_walking_side",
+        "render_walking_front", "encode_walking_front",
+    )
+    if args.preview_only:
+        commands = [item for item in commands if item[0] in preview_labels]
     if args.validate_only:
         print(json.dumps({"schema": SCHEMA, "commands": commands}, indent=2))
         return 0
@@ -326,6 +429,49 @@ def main(argv=None):
         started = time.monotonic()
         subprocess.run(command, cwd=SPEAR_ROOT, check=True)
         timings[label] = time.monotonic() - started
+
+    gait = json.loads(paths["gait_audit"].read_text(encoding="utf-8"))
+    if args.preview_only:
+        media = {
+            label: verify_video(
+                paths["review_root"] / f"{label}.mp4", args.review_frames
+            )
+            for label in ("walking_side", "walking_front")
+        }
+        result = {
+            "schema": SCHEMA,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "status": "preview_only_pending_full_review",
+            "formal_dataset_registration_authorized": False,
+            "forward_contract": forward_contract,
+            "pipeline_order": [label for label, _command in commands],
+            "inputs": {
+                "target_rig_glb": file_record(args.target_rig_glb),
+                "heading_review_evidence": file_record(args.heading_review_evidence),
+                "source_motion_glb": file_record(args.source_motion_glb),
+            },
+            "outputs": {
+                "heading_manifest": file_record(paths["heading_manifest"]),
+                "rig_audit": file_record(paths["rig_audit"]),
+                "support_plane_manifest": file_record(paths["level_manifest"]),
+                "animated_glb": file_record(paths["animated_glb"]),
+                "retarget_manifest": file_record(paths["retarget_manifest"]),
+                "gait_direction_audit": file_record(paths["gait_audit"]),
+                "gait_direction_status": gait.get("status"),
+                "media": media,
+            },
+            "timings_seconds": timings,
+        }
+        with paths["preview_result"].open("x", encoding="utf-8") as stream:
+            json.dump(result, stream, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        print(
+            "TARGET_NATIVE_QUADRUPED_PREVIEW_OK "
+            f"output={paths['preview_result']}"
+        )
+        return 0
 
     deformation = json.loads(paths["deformation_audit"].read_text(encoding="utf-8"))
     media = {
@@ -340,6 +486,7 @@ def main(argv=None):
         "created_at": datetime.now(timezone.utc).isoformat(),
         "status": "research_candidate_pending_human_review",
         "formal_dataset_registration_authorized": False,
+        "forward_contract": forward_contract,
         "pipeline_order": [label for label, _command in commands],
         "inputs": {
             "target_rig_glb": file_record(args.target_rig_glb),
@@ -352,6 +499,8 @@ def main(argv=None):
             "support_plane_manifest": file_record(paths["level_manifest"]),
             "animated_glb": file_record(paths["animated_glb"]),
             "retarget_manifest": file_record(paths["retarget_manifest"]),
+            "gait_direction_audit": file_record(paths["gait_audit"]),
+            "gait_direction_status": gait.get("status"),
             "deformation_audit": file_record(paths["deformation_audit"]),
             "deformation_overall": deformation.get("overall"),
             "media": media,
