@@ -15,7 +15,8 @@ fail-closed.
 
 | stage | interpreter |
 |---|---|
-| FLUX / ISNet / Pixal runner / UAT cook | `/data/jzy/miniconda3/envs/avengine-imagegen/bin/python` |
+| FLUX / ISNet / Pixal runner | `/data/jzy/miniconda3/envs/avengine-imagegen/bin/python` |
+| UAT cook (`tools/run_uat.py` imports `spear`) | `/data/jzy/miniconda3/envs/spear-env/bin/python` |
 | TokenRig (SkinTokens) | `/data/jzy/code/AVEngine/external/SkinTokens/.venv/bin/python` (pinned; do NOT migrate to conda without a same-seed reproducibility canary) |
 | geometry audit (trimesh) | `/data/jzy/miniconda3/envs/avengine-3dgen/bin/python` |
 | SPEAR RPC / registry tests / review pages | `/data/jzy/miniconda3/envs/spear-env/bin/python` |
