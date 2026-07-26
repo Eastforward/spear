@@ -49,22 +49,36 @@ measured `[0.3727, 0.4866, 0.0] m` (`emitter_measurement.json`).  UE import
 PASSED (8 assets + `BP_gate_pixal_generated_shiba_inu_red_v1`).
 Coat profile `dog_shiba_inu_coat_v1` registered in the appearance contract.
 
-## In flight right now
+## In flight right now (updated 2026-07-27 02:15, goal mode active)
 
-- UAT cook (full flags, spear-env python) running in background.  After it
-  finishes, criterion 5 continues:
-  1. orbit render (`tools/render_gate_animal_orbit.py --tag
-     pixal_generated_shiba_inu_red_v1 --action Walking --rpc-port 39002`)
-     -> read `ground_snap.z_correction_cm` (expected ~0 after mesh-foot
-     leveling; record actual + provenance).
-  2. registry entry in habitat-native
-     `examples/runtime/source_asset_runtime_profiles.json` on OUR branch
-     (fields measured, never copied between breeds; blueprint path above;
-     `ue_anatomical_forward_yaw_deg=0`; run
-     `tests/unit/test_runtime_profiles.py`).
-  3. UE runtime readback gates (forward <=25 deg, floor <=5 cm) via
-     `tools/m6y/run_spear_apartment_canary.py` — needs a UE input bundle;
-     plan: dry-run first, full bundle batched with Corgi.
+Shiba criterion 5 — everything solo-completable is DONE:
+- UAT cook passed; orbit rendered twice (0.15 legacy scale + 1.0 for
+  supervision); `z_correction_cm` = -1.181 cm at scale 1.0 (walking-pose
+  foot lift; rest leveling residual -0.12 cm) -> component frame delta 0.
+- Frames personally inspected (4 orthogonal views, verdict JSON:
+  `shiba_inu_20260726_01/ue_readback_supervision_20260727.json`).
+- Registry entry COMMITTED on habitat-native branch (fbeab98), validator
+  zero errors, 48 unit tests green, canary binding resolution exercised
+  directly (frame delta + basis bones resolve).
+- Basis bones measured from the GLB rest hierarchy: rear/body=bone_0,
+  front=bone_4 (nearest measured muzzle), left_foot=bone_9,
+  right_foot=bone_12 (+Z = anatomical right, triple-checked; the retarget
+  manifest side_positive naming is OPPOSITE to GLB Z sign — see runbook
+  step 10).  OPEN OWNER QUESTION: the emitter measurement frame label
+  `..._z_left_m` contradicts the right-hand rule (inert for Shiba, z=0).
+- Remaining for 5/5: live readback render needs an asset-bound UE bundle —
+  batched with Corgi as planned.
+
+W1 running:
+- Corgi + British Shorthair profiles committed (SPEAR 467a93d3), preflights
+  green, FLUX one-shot batch running on GPU 3 (slow: owner jobs saturate
+  /dev/sdb, worker D-state during model load — starvation, not a hang).
+- Morphotype risk assessments recorded in both workspaces (both medium,
+  2 checks; Corgi = short-leg experiment, BSH = revival test).
+- static_object generic contract extension (ASSET_CLASSES + t2i route +
+  rig-None + absolute physical profile) being implemented for the 5 W1
+  statics (phone, alarm clock, doorbell, microwave, kettle); review before
+  commit.
 
 ## Backlog — detailed (dependency order)
 

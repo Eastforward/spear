@@ -32,6 +32,11 @@ General pitfalls that recur everywhere:
 - zsh does not word-split `$var` — loops with packed specs need bash.
 - Python output is fully buffered when redirected; an empty log does not
   mean a dead process (check the pid and CPU%).
+- When the owner's training jobs saturate `/dev/sdb` (check `iostat -x`:
+  90%+ util, 100+ MB/s), FLUX/Pixal workers sit in D-state for many
+  minutes during model load with near-zero RSS growth.  That is disk
+  starvation, not a hang — do not kill and retry (the retry queues behind
+  the same disk).
 
 ## 1. Attribute profile (one JSON, no new reference photos)
 
@@ -191,6 +196,21 @@ $PY tools/run_uat.py --unreal-engine-dir /data/UE_5.5 --skip-cook-default-maps \
   -build -cook -stage -package -archive -pak
 ```
 
+## 9b. Orbit render + runtime z evidence (after the cook)
+
+`tools/render_gate_animal_orbit.py` needs a live X display or UE SIGSEGVs
+after "Could not detect DISPLAY": keep a resident Xvfb
+(`nohup setsid Xvfb :99 -screen 0 1280x720x24 &`, then `DISPLAY=:99` +
+`VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json`).  NEVER pipe the
+command through `| tail` — the pipeline exit code becomes tail's 0 and the
+failure log is swallowed; redirect the full output to a file instead.
+The legacy default `--scale 0.15` was tuned for ~5 m template meshes and
+renders a real-scale generated asset too small to inspect; run
+`--scale 1.0 --radius-cm 160 --camera-height-cm 60 --look-height-cm 35`
+for both the supervision frames and the component-space z evidence
+(`ground_snap.z_correction_cm` scales linearly with `--scale`; verified
+Shiba -0.177 cm @0.15 = -1.181 cm @1.0 exactly).
+
 ## 10. Registry (measurements only, never copied between breeds)
 
 - Muzzle emitter: `tools/blender_measure_generated_animal_emitter.py`
@@ -198,6 +218,21 @@ $PY tools/run_uat.py --unreal-engine-dir /data/UE_5.5 --skip-cook-default-maps \
 - UE Z correction: with mesh-foot leveling the theoretical value is ~0;
   verify against the orbit render's `ground_snap.z_correction_cm` and
   record how it was measured.
+- `ue_anatomical_basis_bones` (five roles, per-instance, never index-copied):
+  derive from the shipped GLB rest hierarchy (measured world positions).
+  rear/body = root bone; front = the axial-head-chain bone nearest the
+  measured muzzle emitter (Shiba: bone_4, 0.07 deg horizontal yaw — the
+  chain LEAF may be skull-top with several degrees of lateral offset);
+  left/right front paws by +Z = anatomical RIGHT in the GLB frame
+  (forward +X, up +Y; right = forward x up).  CAUTION: the retarget
+  manifest's `front_side_positive/negative` naming is the OPPOSITE of the
+  GLB Z sign (side sign is assigned in the Blender frame where glTF +Z
+  maps to -Y) — measure positions, never trust the side names.  The
+  emitter measurement's `avengine_local_x_forward_y_up_z_left_m` frame
+  label contradicts the right-hand rule; flagged to the owner 2026-07-27,
+  do not propagate that label.
+- `walk_phase_period_frames`: measure the shipped GLB Walking clip
+  duration and multiply by the Timeline 15 fps (Shiba: 1.666667 s -> 25).
 - Coat profile MUST be registered in the appearance contract
   (`avengine/appearance/contracts.py` COAT_PROFILE_DOMAINS +
   REALIZATION_RULES) before the runtime registry entry: the registry
