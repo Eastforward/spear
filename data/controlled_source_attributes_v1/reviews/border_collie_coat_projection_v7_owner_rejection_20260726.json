@@ -1,0 +1,39 @@
+{
+  "schema": "avengine_owner_review_decision_v1",
+  "created_at": "2026-07-26",
+  "reviewed_by": "project_owner",
+  "review_channel": "interactive_session_20260726",
+  "subject": {
+    "workspace": "tmp/new_animal_assets/border_collie_instance_attributes_v1_20260723_01",
+    "reviewed_media": [
+      "ofat_v5_grounded_emitter_20260723_01_review_v1/fixed_camera_contact_sheet.png",
+      "ofat_v5_grounded_emitter_20260723_01_review_v1/walking_midframe_contact_sheet.png",
+      "ofat_v5_grounded_emitter_20260723_01_review_v1/coat_blue_merle/walking_side.mp4",
+      "flux_blue_merle_seed20260724_v1/edited_montage.png"
+    ]
+  },
+  "decision": "rejected",
+  "scope": {
+    "rejected": [
+      "projected_blue_merle_v7_container_preserved coat GLB and every artifact deriving its base color from it (ofat_v5 coat_blue_merle variant)"
+    ],
+    "engineering_flagged_same_defect_pending_owner_confirmation": [
+      "projected_red_white_v13 and the ofat_v5 coat_red_white variant (same projection route, same visual defect class on the contact sheet)"
+    ],
+    "not_rejected": [
+      "ofat_v5 baseline / size_small / size_large / build_slim / build_stocky / age_young / age_senior variants (deterministic transforms of the accepted base texture; no projection involved)"
+    ]
+  },
+  "owner_reason_verbatim": "蓝陨 Collie 这个一看就有问题，贴图都是乱贴的，怕是硬套了某个模型而没有真的是走flux，肯定不行",
+  "engineering_diagnosis": {
+    "flux_edit_montage": "coherent blue-merle four-view edit; FLUX did run and its output is usable",
+    "root_cause": "projection stage: direct UV coverage only 0.45 after honest ISNet foreground masking; the remaining ~55% of texels (head top, chin, underside, inner legs) were filled by seam-graph interpolation, producing the smeared non-anatomical patches the owner saw; dominant_facing_view fusion adds hard seams",
+    "prior_agent_qa_gap": "agent-level OFAT verification checked signatures/geometry/evidence-chain, not texture visual coherence; this rejection is the human gate catching what machine checks did not (same lesson class as the historical 2D double-tail mis-approval)"
+  },
+  "consequences": [
+    "blue_merle must NOT be registered into the appearance contract coat vocabulary",
+    "true recolor coat variants are blocked until the multiview projection route is reworked (higher view coverage or UV-space inpainting from projected seeds); luminance-level coat variation remains the only approved instance coat axis for generated assets",
+    "same-breed-different-coat episode pairs are deferred accordingly"
+  ],
+  "formal_dataset_registration_authorized": false
+}
