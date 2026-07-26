@@ -131,7 +131,8 @@ Coat profile `dog_shiba_inu_coat_v1` registered in the appearance contract.
 ## Restart prompt（压缩后开场可直接粘贴）
 
 ```
-继续 AVEngine 管线加固与资产出货工作。先读三份文档恢复状态：
+继续 AVEngine 全量资产生产（owner 已授权 mass-production charter）。先读四份文档恢复状态：
+0) SPEAR/docs/mass_production_charter_20260727.md（生产章程：范围/波次/监督协议/owner门排队规则——goal模式的任务书）
 1) /data/jzy/code/AVEngine/external/SPEAR/docs/cc_session_state_20260727.md（状态+详细backlog）
 2) SPEAR/docs/generated_animal_hardened_route_runbook.md（操作手册，环境表+踩坑）
 3) /data/jzy/code/AVEngine-habitat-native/docs/planning/INDOOR_SOUND_SOURCE_ASSET_CANDIDATES_20260727.md（声源候选）
