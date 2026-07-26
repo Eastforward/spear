@@ -63,6 +63,11 @@ def parse_args(argv=None):
         "--motion-basis-yaw-deg", type=int, choices=(-90, 0, 90, 180)
     )
     parser.add_argument("--side-chain-mode", choices=("matched", "swapped"))
+    parser.add_argument(
+        "--support-plane-source",
+        choices=("bone-endpoints", "mesh-foot-bottoms"),
+        default="bone-endpoints",
+    )
     parser.add_argument("--deformation-samples", type=int, default=24)
     parser.add_argument("--review-frames", type=int, default=8)
     parser.add_argument(
@@ -199,6 +204,7 @@ def build_commands(args, paths: dict[str, Path], blender: str) -> list[tuple[str
                     "--manifest", str(paths["level_manifest"]),
                     "--front-axis", args.target_front_axis,
                     "--review-evidence", str(paths["rig_audit"]),
+                    "--plane-source", args.support_plane_source,
                     "--maximum-tilt-deg", "30",
                     "--maximum-foot-plane-residual-ratio", "0.02",
                 ],

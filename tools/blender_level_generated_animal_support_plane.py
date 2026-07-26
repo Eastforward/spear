@@ -46,6 +46,20 @@ def parse_argv():
         required=True,
     )
     parser.add_argument("--review-evidence", type=Path, required=True)
+    parser.add_argument(
+        "--plane-source",
+        choices=("bone-endpoints", "mesh-foot-bottoms"),
+        default="bone-endpoints",
+        help=(
+            "bone-endpoints levels on the semantic foot-chain bone tips "
+            "(v1 behavior).  mesh-foot-bottoms levels on the visible mesh "
+            "ground-contact band around each foot instead: generated rigs "
+            "can extend bone tails unevenly below the mesh, leaving the "
+            "asset floating and pitched even though the bone tips are "
+            "perfectly level.  Both modes apply one rigid rotation plus one "
+            "vertical translation and never move feet individually."
+        ),
+    )
     parser.add_argument("--maximum-tilt-deg", type=float, default=30.0)
     parser.add_argument(
         "--maximum-foot-plane-residual-ratio",
@@ -118,6 +132,26 @@ def lower_endpoint(record):
     return head if head[2] <= tail[2] else tail
 
 
+def mesh_foot_bottom_point(world_vertices, anchor, mesh_diagonal):
+    """Ground-contact point of one foot: among mesh vertices within a
+    horizontal capture radius of the foot-bone anchor, take the lowest-z
+    vertex band and return its centroid at the true minimum height.  Falls
+    back to the bone anchor when the capture region is empty."""
+    horizontal = np.linalg.norm(world_vertices[:, :2] - anchor[:2], axis=1)
+    capture = world_vertices[horizontal < mesh_diagonal*0.05]
+    if len(capture) < 10:
+        return np.asarray(anchor, dtype=np.float64), 0
+    z_floor = float(capture[:, 2].min())
+    band = capture[capture[:, 2] <= z_floor + max(0.004, mesh_diagonal*0.003)]
+    return (
+        np.asarray(
+            [float(band[:, 0].mean()), float(band[:, 1].mean()), z_floor],
+            dtype=np.float64,
+        ),
+        int(len(band)),
+    )
+
+
 def scene_summary():
     meshes = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
     armatures = [obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE"]
@@ -166,10 +200,25 @@ def main():
         front_axis=args.front_axis,
     )
     by_name = {record["name"]: record for record in records}
-    foot_points = np.asarray(
+    bone_anchor_points = np.asarray(
         [lower_endpoint(by_name[name]) for name in semantics.foot_leaves],
         dtype=np.float64,
     )
+    foot_point_band_sizes = None
+    if args.plane_source == "mesh-foot-bottoms":
+        world_matrix = np.asarray(mesh.matrix_world, dtype=np.float64)
+        local = np.empty((len(mesh.data.vertices), 3), dtype=np.float64)
+        mesh.data.vertices.foreach_get("co", local.ravel())
+        world_vertices = local @ world_matrix[:3, :3].T + world_matrix[:3, 3]
+        mesh_diagonal_early = float(np.linalg.norm(extent))
+        resolved = [
+            mesh_foot_bottom_point(world_vertices, anchor, mesh_diagonal_early)
+            for anchor in bone_anchor_points
+        ]
+        foot_points = np.asarray([point for point, _band in resolved])
+        foot_point_band_sizes = [band for _point, band in resolved]
+    else:
+        foot_points = bone_anchor_points
     design = np.column_stack((foot_points[:, 0], foot_points[:, 1], np.ones(4)))
     coefficients, _residuals, _rank, _singular = np.linalg.lstsq(
         design,
@@ -258,6 +307,8 @@ def main():
         "support_plane": {
             "front_axis": args.front_axis,
             "foot_leaves": list(semantics.foot_leaves),
+            "plane_source": args.plane_source,
+            "mesh_foot_contact_band_sizes": foot_point_band_sizes,
             "foot_points_before": foot_points.tolist(),
             "z_equals_ax_plus_by_plus_c": coefficients.tolist(),
             "residual_z": residuals.tolist(),
