@@ -66,39 +66,78 @@ Coat profile `dog_shiba_inu_coat_v1` registered in the appearance contract.
      `tools/m6y/run_spear_apartment_canary.py` — needs a UE input bundle;
      plan: dry-run first, full bundle batched with Corgi.
 
-## Backlog (dependency order)
+## Backlog — detailed (dependency order)
 
-1. Finish criterion 5 (above).
-2. Corgi stress test (checklist-prediction experiment; medium risk:
-   short legs).  Batch its Pixal/FLUX with British Shorthair.
-3. British Shorthair revival test (cat replacement; historically failed
-   breed).
-4. After new dog+cat ship: retire the three legacy assets
-   (Collie/Abyssinian/Labrador) per
-   `data/controlled_source_attributes_v1/reviews/legacy_route_asset_deprecation_direction_20260726.json`,
-   switch pair templates.
-5. Promote the weight-repair stage into the review runner (currently run
-   manually post-runner; gentle recipe: threshold 0.02,
-   component-parent-lock, rings 4).
-6. VLM review triage: calibration collector exists
-   (`tools/build_vlm_review_calibration_set.py`), scoring run not done.
-7. Estimator leg-spacing signal under-fires on real meshes (fired on Shiba,
-   not on Collie/Labrador backtests) — improvement candidate.
-8. Generation route v2 discussion: multiview generation to root-fix coat
-   projection coverage (0.45 on blue-merle, owner-rejected) and residual
-   leg-membrane risk.  Blue-merle red_white variant still needs formal
-   owner confirmation of the engineering same-defect flag.
-9. Labrador OFAT non-coat seven variants (optional; coat variants blocked
-   on projection rework + reference photo rights).
-10. CVPR side: QA generation layer design; scene diversity
-    (MP3D/ReplicaCAD batch qualification, BVH ray accelerator); baseline
-    experiment matrix; early arXiv.
-11. Deferred by owner: SkinTokens venv -> conda unification (needs
-    same-seed reproducibility canary); NAF triple-load investigation.
-12. NEW ACTIVE TASK (2026-07-27): AudioSet indoor sound-source asset
-    candidate list — animals (hard, generation route) and static objects
-    (static 3D OK) — see
-    `AVEngine-habitat-native docs/planning/` candidates doc.
+### 近期：标准 5 收尾 + 验证序列
+
+1a. cook 完成后：orbit 渲染实测 z 修正 —
+    `tools/render_gate_animal_orbit.py --tag pixal_generated_shiba_inu_red_v1
+    --action Walking --rpc-port 39002 --output-dir <WS>/orbit_walking`
+    （需 DISPLAY/VK_ICD env，见 UE recon 报告第 5 步）；读
+    `runtime_manifest.json` 的 `ground_snap.z_correction_cm`，mesh-foot 校平
+    后理论 ≈0，按实测填、`reason` 写明来源。
+1b. runtime 注册表条目 — 编辑
+    habitat-native（cc-instance-attr-generalization 分支）
+    `examples/runtime/source_asset_runtime_profiles.json`：照 Labrador 条目
+    结构，emitter=[0.3727,0.4866,0]、`ue_anatomical_forward_yaw_deg=0`、
+    blueprint=/Game/MyAssets/Audioset/Blueprints/gate_pixal_generated_shiba_inu_red_v1/...、
+    骨骼语义按柴犬 TokenRig 实际骨架填（禁止照抄他种）；跑
+    `tests/unit/test_runtime_profiles.py`（coat 验证器会核验
+    dog_shiba_inu_coat_v1，已注册）。
+1c. UE 回读门 — `tools/m6y/run_spear_apartment_canary.py
+    --input-layout asset-bound-batch ... --dry-run` 先验注册表解析；完整
+    bundle（pair template→select_asset_bound_trajectories→RIR→
+    build_asset_bound_apartment_ue_bundle）与 Corgi 合成一批做。
+2. Corgi 压测 — 整链重放（runbook 逐步），关键在验证 morphotype
+   checklist 的中风险预测（短腿→形变门附近挣扎）是否兑现；FLUX/Pixal
+   与英短排同一批省 20 分钟模型加载。
+3. 英短复活测试 — 历史失败品种（前腿折叠/离散网格岛）重做；通过即为
+   "链路修好了旧路线做不到的事"的最硬证据，且成为猫替代者。
+4. 新狗+新猫就位后 — 按 legacy_route_asset_deprecation_direction 记录
+   退役 Collie/Abyssinian/Labrador：pair template 换绑
+   current_generated_dog/cat 别名，冻结 bank 不动。
+
+### 管线待办（发现了但未做）
+
+5. 权重修复内置进 runner — 现为链外手动；给
+   run_target_native_generated_quadruped_review.py 加 weight_repair 阶段
+   （温和参数：threshold 0.02, component-parent-lock, rings 4），置于
+   deformation 审计前、失败才触发或恒跑后复审。
+6. VLM 审片 triage 实跑校准 — 收集器
+   `tools/build_vlm_review_calibration_set.py` 已就绪；扩大扫描根到动画
+   决策批次目录，跑 VLM 盲判 vs 人工决定一致率，达标才可上岗（治理：
+   只 triage 不终审）。
+7. 估计器腿距信号增强 — 象限聚类在真实网格常返 0 票（柴犬触发了、
+   Collie/Labrador 没触发）；改进候选：按语义腿链权重选点替代几何象限。
+8. 生成路线 v2 议题 — 多视图生成根治两病：蓝陨投影直接覆盖率仅
+   0.45（owner 已拒）+ 单视图腿部蹼风险；讨论级，等 Corgi/英短两个
+   数据点后决策投入。
+9. 蓝陨 red_white 变体 — 工程按同类缺陷标记，尚缺 owner 亲判确认。
+
+### 远期（最初的大目标）
+
+10. CVPR 基准 — QA 生成层设计、场景多样性（MP3D/ReplicaCAD 批量准入、
+    BVH 射线加速）、omni-model 实验矩阵。注意：另一会话已在
+    acoustic-fix worktree 写了 `QA_BENCHMARK_DESIGN.md`（机制级设计稿）
+    且 v4.3 语义 v2 重训在 GPU2 后台——先读再做，勿重复。
+11. 杂项 — SkinTokens venv→conda 统一（owner 暂缓；需同 seed 复现性
+    金丝雀）；NAF 三次加载调查；两分支合并决策（owner）。
+12. 声源扩展（2026-07-27 新任务）— 候选清单已立
+    （habitat-native docs/planning/INDOOR_SOUND_SOURCE_ASSET_CANDIDATES_20260727.md，
+    T1 含犬 14 品种+猫 7 品种名册与 15 项静物）；待 owner 圈定首波后：
+    AudioSet 干声可得性审计（本地 22k 子集 + 全量抓取）→ 静物 3D 路线
+    选型（Pixal 免绑定支线 vs 网格库+rights）→ 声音/外观注册表扩表。
+
+## Restart prompt（压缩后开场可直接粘贴）
+
+```
+继续 AVEngine 管线加固与资产出货工作。先读三份文档恢复状态：
+1) /data/jzy/code/AVEngine/external/SPEAR/docs/cc_session_state_20260727.md（状态+详细backlog）
+2) SPEAR/docs/generated_animal_hardened_route_runbook.md（操作手册，环境表+踩坑）
+3) /data/jzy/code/AVEngine-habitat-native/docs/planning/INDOOR_SOUND_SOURCE_ASSET_CANDIDATES_20260727.md（声源候选）
+硬约束：一切方案必须泛化（注册表/契约驱动，禁 per-asset 特例）；人工触点只有三个设计门；fail-closed；冻结产物不动；每条 git 命令显式 cd；SPEAR git status 用 -uno。
+当前接力点：柴犬标准5（查 UAT cook 是否完成→orbit 实测 z→注册表条目→回读门 dry-run），然后 Corgi+英短批量开跑。常驻服务：dev_warm_services.sh status（TokenRig 47652）、审核服务器 8765。
+```
 
 ## Key environment facts
 
