@@ -26,7 +26,7 @@ renders -> owner final approval.
 | deformation under 0.07/0.08 gates without acceptance exception | PASS at full amplitude 1.0 (Walking 0.0222 / Idle 0.0108) via the deterministic repair stage; as-generated was 0.1089 |
 | at most three designed human touchpoints | PASS (2D accept, head-end confirm, final review) |
 | no cross-limb membrane class defect | PASS (largest low-slice component 3,347 faces vs legacy Collie's 17,784 welded blob; verified visually front/rear) |
-| UE import/readback | PENDING (next gate) |
+| UE import/readback | PASS-except-live-bundle (2026-07-27): headless import 8 assets + BP, full-flag UAT cook, orbit z readback -1.181 cm at scale 1.0 (mesh-foot leveling holds; frame delta 0), frames personally inspected 4 views, runtime registry entry committed (habitat-native fbeab98) with instance-measured basis bones, canary binding resolution exercised. The live in-episode readback render (forward <=25 deg / floor <=5 cm) rides the asset-bound UE bundle batched with Corgi. Evidence: `shiba_inu_20260726_01/ue_readback_supervision_20260727.json` |
 
 ## Defects found by the run and fixed as reusable pipeline improvements
 
