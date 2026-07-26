@@ -76,7 +76,11 @@ def _sha256_file(path: Path) -> str:
 
 
 def _profile_artifacts(profile: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    artifacts = [("base_template", profile["base_template"]["artifact"])]
+    artifacts = []
+    # text_prompt_only static templates deliberately carry a null artifact;
+    # every other base_template kind is contract-required to name one.
+    if profile["base_template"]["artifact"] is not None:
+        artifacts.append(("base_template", profile["base_template"]["artifact"]))
     physical = profile["target_physical_profiles"]["reference_provenance"]["artifact"]
     if physical is not None:
         artifacts.append(("target_physical_reference", physical))

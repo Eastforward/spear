@@ -324,6 +324,114 @@ def human_profile() -> dict:
     }
 
 
+def static_object_profile(
+    *,
+    profile_id: str = "appliance_alarm_clock_v1",
+    lineage_group_id: str = "alarm_clock_reference_01",
+) -> dict:
+    return {
+        "schema": schema.PROFILE_SCHEMA,
+        "profile_schema_id": profile_id,
+        "profile_revision": "2026_07_27_v1",
+        "asset_class": "static_object",
+        "lineage_group_id": lineage_group_id,
+        "state_classification": "research_candidate",
+        "taxonomy": {
+            "category": "appliance",
+            "object_type": "alarm_clock",
+        },
+        "base_template": {
+            "template_id": lineage_group_id,
+            "kind": "text_prompt_only",
+            "artifact": None,
+            "provenance_status": "verified",
+            "usage_scope": "research_candidate",
+        },
+        "fixed_attributes": {
+            "style": "twin_bell_analog",
+            "material": "metal",
+        },
+        "sampled_attribute_domains": {
+            "body_color": ["black", "white"],
+        },
+        "forbidden_combinations": [],
+        "generation_contract": {
+            "route": "flux2_pixal3d_static_v1",
+            "prompt_template_id": "static_object_t2i_v1",
+            "positive_template": (
+                "A {body_color} {style} {material} {object_type}, a single "
+                "household {category} in a clean product photo."
+            ),
+            "pose_guard_prompt": (
+                "Single centered object, three-quarter product view, level "
+                "camera, every part fully visible, plain background."
+            ),
+            "negative_prompt": (
+                "cropped object, multiple objects, human hands, text, "
+                "background clutter"
+            ),
+            "value_labels": {
+                "category": {"appliance": "appliance"},
+                "object_type": {"alarm_clock": "alarm clock"},
+                "style": {"twin_bell_analog": "twin-bell analog"},
+                "material": {"metal": "metal"},
+                "body_color": {"black": "matte black", "white": "white"},
+            },
+            "model_revisions": {
+                "flux2": "flux_revision",
+                "pixal3d": "pixal_revision",
+                "dino": "dino_revision",
+            },
+            "base_acquisition_policy": {
+                "policy_id": "static_object_per_request_one_shot_v1",
+                "acquisition_unit": "one_frozen_asset_per_request",
+                "sampled_domains_must_be_singleton": False,
+                "downstream_instance_route": "flux2_pixal3d_static_v1",
+                "profile_validation": (
+                    "all_predeclared_requests_count_zero_hidden_failures"
+                ),
+            },
+        },
+        "target_physical_profiles": {
+            "profile_id": "alarm_clock_physical_v1",
+            "control_attribute": None,
+            "measurement": "height_cm",
+            "mode": "absolute_measurement",
+            "reference_value_cm": 13.0,
+            "reference_provenance": {
+                "status": "verified",
+                "source_id": "fixture_product_measurement_v1",
+                "artifact": artifact("references/alarm_clock_measurement.json", HEX_B),
+                "notes": "Test fixture only.",
+            },
+            "values": {
+                "fixed": {"target_value_cm": 13.0, "tolerance_cm": 1.5}
+            },
+        },
+        "rig_profile": None,
+        "acoustic_profile": {
+            "profile_id": "alarm_clock_ring_v1",
+            "default_event_class": "alarm_clock_ring",
+            "allowed_event_classes": ["alarm_clock_ring", "silent"],
+            "selection_attributes": ["object_type", "style"],
+        },
+        "locked_attributes": ["category", "object_type", "style", "material"],
+        "qa_contract": {
+            "subject_label": "alarm clock",
+            "attributes": {
+                "body_color": {
+                    "kind": "categorical",
+                    "label": "body color",
+                    "value_labels": {"black": "matte black", "white": "white"},
+                    "identification_question": (
+                        "What is the body color of {instance_label}?"
+                    ),
+                }
+            },
+        },
+    }
+
+
 def test_profile_validation_is_strict_and_hash_stable():
     profile = animal_profile()
 
@@ -540,6 +648,80 @@ def test_human_request_selects_fixed_rocketbox_and_compiles_material_plan():
     assert "accessories" in request["locked_attributes"]
     assert request["target_physical_profile"]["actor_scale"] == 1.0
     schema.validate_instance_request(request, profile)
+
+
+def test_static_object_profile_accepts_multi_value_domains_without_rig():
+    profile = static_object_profile()
+
+    validated = schema.validate_attribute_profile(profile)
+
+    assert validated == profile
+    assert validated["rig_profile"] is None
+    assert validated["base_template"]["artifact"] is None
+    assert validated["sampled_attribute_domains"]["body_color"] == ["black", "white"]
+    assert schema.profile_sha256(profile) == schema.profile_sha256(
+        copy.deepcopy(profile)
+    )
+
+
+def test_static_object_profile_rejects_a_declared_rig_profile():
+    profile = static_object_profile()
+    profile["rig_profile"] = {
+        "profile_id": "static_never_rigged_v1",
+        "skeleton_family": "none",
+        "actions": ["Walking", "Idle"],
+        "front_axis": "positive_x",
+    }
+
+    with pytest.raises(schema.ContractError, match="must not declare a rig_profile"):
+        schema.validate_attribute_profile(profile)
+
+
+def test_static_object_profile_rejects_acquisition_policy_tampering():
+    singleton = static_object_profile()
+    singleton["generation_contract"]["base_acquisition_policy"][
+        "sampled_domains_must_be_singleton"
+    ] = True
+    with pytest.raises(schema.ContractError, match="acquisition policy changed"):
+        schema.validate_attribute_profile(singleton)
+
+    renamed = static_object_profile()
+    renamed["generation_contract"]["base_acquisition_policy"]["policy_id"] = (
+        "animal_one_shot_no_seed_lottery_v1"
+    )
+    with pytest.raises(schema.ContractError, match="acquisition policy changed"):
+        schema.validate_attribute_profile(renamed)
+
+
+def test_static_object_sampling_emits_one_independent_request_per_variant():
+    profile = static_object_profile()
+
+    requests = schema.sample_instance_requests(profile, count=2, batch_seed=27)
+
+    assert len(requests) == 2
+    assert len({request["instance_id"] for request in requests}) == 2
+    assert {
+        request["sampled_attributes"]["body_color"] for request in requests
+    } == {"black", "white"}
+    for request in requests:
+        plan = request["generation_plan"]
+        assert plan["schema"] == "flux2_pixal3d_static_generation_plan_v1"
+        assert plan["route"] == "flux2_pixal3d_static_v1"
+        assert plan["flux_invocations"] == 1
+        assert plan["base_template"]["kind"] == "text_prompt_only"
+        assert plan["base_template"]["artifact"] is None
+        assert plan["base_acquisition_policy"]["policy_id"] == (
+            "static_object_per_request_one_shot_v1"
+        )
+        color_label = profile["generation_contract"]["value_labels"]["body_color"][
+            request["sampled_attributes"]["body_color"]
+        ]
+        assert color_label in plan["prompt"]
+        assert "plain background" in plan["prompt"]
+        assert request["rig_profile"] is None
+        assert request["target_physical_profile"]["target_value_cm"] == 13.0
+        schema.validate_instance_request(request, profile)
+        schema.validate_request_integrity(request)
 
 
 def test_request_tampering_is_detected():

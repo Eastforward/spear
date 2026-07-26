@@ -62,10 +62,11 @@ STATE_CLASSIFICATIONS = frozenset(
         "rejected",
     }
 )
-ASSET_CLASSES = frozenset({"animal", "human"})
+ASSET_CLASSES = frozenset({"animal", "human", "static_object"})
 ROUTES = frozenset(
     {
         "flux2_pixal3d_animal_v1",
+        "flux2_pixal3d_static_v1",
         "stable_animal_template_v1",
         "rocketbox_material_v1",
     }
@@ -567,6 +568,85 @@ def _validate_generation_contract(
             _require_text(revision, f"model_revisions.{name}")
         return _deepcopy(dict(contract))
 
+    if asset_class == "static_object":
+        if route != "flux2_pixal3d_static_v1":
+            raise ContractError("static_object profiles must use flux2_pixal3d_static_v1")
+        _require_exact_fields(
+            contract,
+            frozenset(
+                {
+                    "route",
+                    "prompt_template_id",
+                    "positive_template",
+                    "pose_guard_prompt",
+                    "negative_prompt",
+                    "value_labels",
+                    "model_revisions",
+                    "base_acquisition_policy",
+                }
+            ),
+            "static_object generation_contract",
+        )
+        if base_template.get("kind") != "text_prompt_only":
+            raise ContractError(
+                "static_object base_template.kind must be text_prompt_only"
+            )
+        policy = _require_exact_fields(
+            contract["base_acquisition_policy"],
+            frozenset(
+                {
+                    "policy_id",
+                    "acquisition_unit",
+                    "sampled_domains_must_be_singleton",
+                    "downstream_instance_route",
+                    "profile_validation",
+                }
+            ),
+            "static_object base_acquisition_policy",
+        )
+        expected_policy = {
+            "policy_id": "static_object_per_request_one_shot_v1",
+            "acquisition_unit": "one_frozen_asset_per_request",
+            "sampled_domains_must_be_singleton": False,
+            "downstream_instance_route": "flux2_pixal3d_static_v1",
+            "profile_validation": (
+                "all_predeclared_requests_count_zero_hidden_failures"
+            ),
+        }
+        if dict(policy) != expected_policy:
+            raise ContractError("static_object base acquisition policy changed")
+        # No singleton-domain restriction: statics skip rigging, so every
+        # sampled attribute combination is deliberately its own independent
+        # one-shot request instead of a frozen base plus stable variants.
+
+        _require_id(contract["prompt_template_id"], "prompt_template_id")
+        template = _require_text(contract["positive_template"], "positive_template")
+        _require_text(contract["pose_guard_prompt"], "pose_guard_prompt")
+        _require_text(contract["negative_prompt"], "negative_prompt")
+
+        expected_values = {key: [item] for key, item in taxonomy.items()}
+        expected_values.update({key: [item] for key, item in fixed.items()})
+        expected_values.update({key: list(items) for key, items in domains.items()})
+        placeholders = _format_placeholders(template, "positive_template")
+        if set(placeholders) != set(expected_values):
+            raise ContractError(
+                "positive_template must mention every taxonomy, fixed, and sampled "
+                "attribute exactly once"
+            )
+        _validate_value_label_map(
+            contract["value_labels"],
+            expected_values=expected_values,
+            label="generation_contract.value_labels",
+        )
+        revisions = _require_exact_fields(
+            contract["model_revisions"],
+            frozenset({"flux2", "pixal3d", "dino"}),
+            "model_revisions",
+        )
+        for name, revision in revisions.items():
+            _require_text(revision, f"model_revisions.{name}")
+        return _deepcopy(dict(contract))
+
     fields = frozenset(
         {
             "route",
@@ -695,6 +775,30 @@ def _validate_target_physical_profiles(
             _require_finite_number(item["tolerance_cm"], f"{name}.tolerance_cm", positive=True)
         return _deepcopy(dict(profile))
 
+    if asset_class == "static_object":
+        if profile["control_attribute"] is not None:
+            raise ContractError(
+                "static_object physical profiles cannot have a sampled control attribute"
+            )
+        if profile["mode"] != "absolute_measurement" or set(values) != {"fixed"}:
+            raise ContractError(
+                "static_object physical profile must be one absolute fixed measurement"
+            )
+        item = _require_exact_fields(
+            values["fixed"],
+            frozenset({"target_value_cm", "tolerance_cm"}),
+            "target physical fixed value",
+        )
+        target = _require_finite_number(item["target_value_cm"], "target_value_cm", positive=True)
+        _require_finite_number(item["tolerance_cm"], "tolerance_cm", positive=True)
+        if reference is None or not math.isclose(
+            float(reference), target, rel_tol=0.0, abs_tol=1e-9
+        ):
+            raise ContractError(
+                "static_object reference and target measurement must match"
+            )
+        return _deepcopy(dict(profile))
+
     if profile["control_attribute"] is not None:
         raise ContractError("Rocketbox authored height cannot have a sampled control attribute")
     if profile["mode"] != "authored" or set(values) != {"fixed"}:
@@ -714,7 +818,11 @@ def _validate_target_physical_profiles(
     return _deepcopy(dict(profile))
 
 
-def _validate_rig_profile(value: Any, *, asset_class: str) -> dict[str, Any]:
+def _validate_rig_profile(value: Any, *, asset_class: str) -> dict[str, Any] | None:
+    if asset_class == "static_object":
+        if value is not None:
+            raise ContractError("static_object profiles must not declare a rig_profile")
+        return None
     rig = _require_exact_fields(
         value,
         frozenset({"profile_id", "skeleton_family", "actions", "front_axis"}),
@@ -912,9 +1020,20 @@ def validate_attribute_profile(value: Any) -> dict[str, Any]:
         "reference_image",
         "stable_animal_template",
         "rocketbox_avatar",
+        "text_prompt_only",
     }:
         raise ContractError("unsupported base_template.kind")
-    _validate_artifact(base["artifact"], "base_template.artifact")
+    if base["kind"] == "text_prompt_only":
+        if asset_class != "static_object":
+            raise ContractError(
+                "text_prompt_only base templates are restricted to static_object"
+            )
+        if base["artifact"] is not None:
+            raise ContractError(
+                "text_prompt_only base_template.artifact must be null"
+            )
+    else:
+        _validate_artifact(base["artifact"], "base_template.artifact")
     if base["provenance_status"] not in {"verified", "review_required", "legacy_unknown"}:
         raise ContractError("unsupported base_template.provenance_status")
     if base["usage_scope"] not in STATE_CLASSIFICATIONS - {"rejected"}:
@@ -1288,6 +1407,33 @@ def _compile_animal_generation_plan(
     return plan
 
 
+def _compile_static_generation_plan(
+    profile: Mapping[str, Any], sampled: Mapping[str, str], generation_seed: int
+) -> dict[str, Any]:
+    contract = profile["generation_contract"]
+    combined = _combined_attribute_values(profile, sampled)
+    labels: dict[str, str] = {}
+    for attribute, value in combined.items():
+        labels[attribute] = contract["value_labels"][attribute][str(value)]
+    subject = contract["positive_template"].format(**labels).strip()
+    prompt = f"{subject} {contract['pose_guard_prompt'].strip()}"
+    negative_prompt = contract["negative_prompt"].strip()
+    # base_template.kind is text_prompt_only, so the passthrough carries a
+    # null artifact: statics are pure text-to-image with no pose guide.
+    return {
+        "schema": "flux2_pixal3d_static_generation_plan_v1",
+        "route": contract["route"],
+        "prompt_template_id": contract["prompt_template_id"],
+        "base_template": _deepcopy(profile["base_template"]),
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "generation_seed": generation_seed,
+        "flux_invocations": 1,
+        "model_revisions": _deepcopy(contract["model_revisions"]),
+        "base_acquisition_policy": _deepcopy(contract["base_acquisition_policy"]),
+    }
+
+
 def _srgb_hex(values: Sequence[int]) -> str:
     return "#{:02X}{:02X}{:02X}".format(*values)
 
@@ -1393,6 +1539,8 @@ def build_instance_request(
     )
     if validated["asset_class"] == "animal":
         plan = _compile_animal_generation_plan(validated, sampled, generation_seed)
+    elif validated["asset_class"] == "static_object":
+        plan = _compile_static_generation_plan(validated, sampled, generation_seed)
     else:
         plan = _compile_human_material_plan(validated, sampled, generation_seed)
 

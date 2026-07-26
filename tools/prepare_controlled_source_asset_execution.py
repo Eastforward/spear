@@ -172,6 +172,38 @@ def _animal_execution_job(
     }
 
 
+def _static_execution_job(request: Mapping[str, Any]) -> dict[str, Any]:
+    # Statics are text-to-image: the plan's base_template carries a null
+    # artifact, so the job deliberately has no resolved reference field.
+    plan = request["generation_plan"]
+    if plan["base_template"]["kind"] != "text_prompt_only" or (
+        plan["base_template"]["artifact"] is not None
+    ):
+        raise contracts.ContractError(
+            "static_object execution jobs require a text_prompt_only base template"
+        )
+    return {
+        "execution_job_id": f"static_{request['request_sha256'][:16]}",
+        "profile_schema_id": request["profile_schema_id"],
+        "profile_sha256": request["profile_sha256"],
+        "lineage_group_id": request["lineage_group_id"],
+        "state_classification": request["state_classification"],
+        "taxonomy": copy.deepcopy(request["taxonomy"]),
+        "fixed_attributes": copy.deepcopy(request["fixed_attributes"]),
+        "sampled_attributes": copy.deepcopy(request["sampled_attributes"]),
+        "consumer_requests": [_consumer(request)],
+        "generation_plan": copy.deepcopy(plan),
+        "target_physical_profile": copy.deepcopy(request["target_physical_profile"]),
+        "rig_profile": copy.deepcopy(request["rig_profile"]),
+        "acoustic_profile": copy.deepcopy(request["acoustic_profile"]),
+        "execution_gate": {
+            "before_flux2": "authenticated_preflight_passed",
+            "before_pixal3d": "approved_2d_review_for_exact_candidate_sha256",
+            "before_source_asset_v2": "all_required_static_ue_audio_qa_passed",
+        },
+    }
+
+
 def _stable_animal_execution_job(
     request: Mapping[str, Any],
     profile: Mapping[str, Any],
@@ -370,6 +402,7 @@ def build_execution_preflight(
 
     profiles_by_id = {profile["profile_schema_id"]: profile for profile in profiles}
     animal_requests: list[dict[str, Any]] = []
+    static_requests: list[dict[str, Any]] = []
     stable_animal_requests: list[dict[str, Any]] = []
     material_requests: list[dict[str, Any]] = []
     for request in request_batch["requests"]:
@@ -378,6 +411,8 @@ def build_execution_preflight(
         route = validated["generation_plan"]["route"]
         if route == "flux2_pixal3d_animal_v1":
             animal_requests.append(validated)
+        elif route == "flux2_pixal3d_static_v1":
+            static_requests.append(validated)
         elif route == "stable_animal_template_v1":
             stable_animal_requests.append(validated)
         elif route == "rocketbox_material_v1":
@@ -390,6 +425,8 @@ def build_execution_preflight(
         for request in animal_requests
     ]
     animal_jobs.sort(key=lambda item: item["execution_job_id"])
+    static_jobs = [_static_execution_job(request) for request in static_requests]
+    static_jobs.sort(key=lambda item: item["execution_job_id"])
     stable_animal_jobs = [
         _stable_animal_execution_job(
             request,
@@ -404,12 +441,16 @@ def build_execution_preflight(
     )
     summary = {
         "animal_job_count": len(animal_jobs),
+        "static_object_job_count": len(static_jobs),
         "stable_animal_job_count": len(stable_animal_jobs),
         "deterministic_material_job_count": len(material_jobs),
         "material_request_count": len(material_requests),
         "material_requests_deduplicated": len(material_requests) - len(material_jobs),
         "unique_execution_job_count": (
-            len(animal_jobs) + len(stable_animal_jobs) + len(material_jobs)
+            len(animal_jobs)
+            + len(static_jobs)
+            + len(stable_animal_jobs)
+            + len(material_jobs)
         ),
     }
     preflight: dict[str, Any] = {
@@ -436,6 +477,7 @@ def build_execution_preflight(
         "profile_artifact_authentication": fresh_authentication,
         "routes": {
             "flux2_pixal3d_animal_v1": animal_jobs,
+            "flux2_pixal3d_static_v1": static_jobs,
             "stable_animal_template_v1": stable_animal_jobs,
             "rocketbox_material_v1": material_jobs,
         },
@@ -465,7 +507,16 @@ def validate_execution_preflight(value: Any) -> dict[str, Any]:
     if not isinstance(checks, dict) or checks.get("overall") != "passed":
         raise contracts.ContractError("execution preflight automatic checks did not pass")
     routes = value.get("routes")
-    if not isinstance(routes, dict) or set(routes) != set(contracts.ROUTES):
+    # Every route group must be a known route.  Preflights published before a
+    # route existed remain readable evidence; execution still fails closed
+    # because runners select an explicit route group and raise when the
+    # preflight does not declare it (jobs can never run under a route the
+    # authenticated preflight never carried).
+    if (
+        not isinstance(routes, dict)
+        or not routes
+        or not set(routes).issubset(contracts.ROUTES)
+    ):
         raise contracts.ContractError("execution preflight routes are invalid")
     return copy.deepcopy(value)
 
@@ -552,6 +603,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         "CONTROLLED_EXECUTION_PREFLIGHT_OK "
         f"animal={summary['animal_job_count']} "
+        f"static_object={summary['static_object_job_count']} "
         f"stable_animal={summary['stable_animal_job_count']} "
         f"material_unique={summary['deterministic_material_job_count']} "
         f"material_requests={summary['material_request_count']} "

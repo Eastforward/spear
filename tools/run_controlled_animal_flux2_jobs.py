@@ -27,6 +27,7 @@ from tools import prepare_controlled_source_asset_execution as preparation
 
 
 BATCH_SCHEMA = "avengine_controlled_animal_flux2_batch_v1"
+FLUX_ROUTES = ("flux2_pixal3d_animal_v1", "flux2_pixal3d_static_v1")
 PYTHON = Path("/data/jzy/miniconda3/envs/avengine-imagegen/bin/python")
 WORKER = Path(__file__).resolve().parent / "controlled_animal_flux2_worker.py"
 PARAMETERS = {
@@ -74,9 +75,14 @@ def select_qa_canary_jobs(
     preflight: Mapping[str, Any],
     *,
     profile_ids: set[str] | None = None,
+    route: str = "flux2_pixal3d_animal_v1",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if route not in FLUX_ROUTES:
+        raise contracts.ContractError(f"unsupported FLUX.2 route: {route!r}")
     preflight = preparation.validate_execution_preflight(preflight)
-    jobs = preflight["routes"]["flux2_pixal3d_animal_v1"]
+    if route not in preflight["routes"]:
+        raise contracts.ContractError(f"preflight has no route group: {route}")
+    jobs = preflight["routes"][route]
     by_instance = {
         job["consumer_requests"][0]["instance_id"]: job for job in jobs
     }
@@ -121,16 +127,21 @@ def select_jobs(
     profile_ids: set[str] | None,
     execution_job_ids: set[str] | None,
     qa_pair_canary: bool,
+    route: str = "flux2_pixal3d_animal_v1",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    jobs = preflight["routes"]["flux2_pixal3d_animal_v1"]
+    if route not in FLUX_ROUTES:
+        raise contracts.ContractError(f"unsupported FLUX.2 route: {route!r}")
+    if route not in preflight["routes"]:
+        raise contracts.ContractError(f"preflight has no route group: {route}")
+    jobs = preflight["routes"][route]
     known_profiles = {job["profile_schema_id"] for job in jobs}
     if profile_ids and not profile_ids.issubset(known_profiles):
         raise contracts.ContractError(
-            f"unknown animal profile IDs: {sorted(profile_ids - known_profiles)}"
+            f"unknown {route} profile IDs: {sorted(profile_ids - known_profiles)}"
         )
     if qa_pair_canary:
         selected, pairs = select_qa_canary_jobs(
-            preflight, profile_ids=profile_ids
+            preflight, profile_ids=profile_ids, route=route
         )
     else:
         selected = [
@@ -158,7 +169,7 @@ def select_jobs(
             )
         ]
     if not selected:
-        raise contracts.ContractError("animal FLUX.2 selection is empty")
+        raise contracts.ContractError(f"{route} FLUX.2 selection is empty")
     return sorted(selected, key=lambda item: item["execution_job_id"]), pairs
 
 
@@ -177,6 +188,7 @@ def run_jobs(
     profile_ids: set[str] | None,
     execution_job_ids: set[str] | None,
     qa_pair_canary: bool,
+    route: str = "flux2_pixal3d_animal_v1",
 ) -> Path:
     if not gpus or len(gpus) > 4 or len(set(gpus)) != len(gpus) or min(gpus) < 0:
         raise contracts.ContractError("provide one to four unique non-negative GPUs")
@@ -186,6 +198,7 @@ def run_jobs(
         profile_ids=profile_ids,
         execution_job_ids=execution_job_ids,
         qa_pair_canary=qa_pair_canary,
+        route=route,
     )
     try:
         for job in jobs:
@@ -275,7 +288,20 @@ def run_jobs(
             manifest_path = candidate_dir / "candidate_manifest.json"
             candidate_path = candidate_dir / "candidate.png"
             source_path = candidate_dir / "source.png"
-            if not all(path.is_file() and not path.is_symlink() for path in (manifest_path, candidate_path, source_path)):
+            text_prompt_only = (
+                job["generation_plan"]["base_template"]["kind"] == "text_prompt_only"
+            )
+            required_paths = [manifest_path, candidate_path]
+            if text_prompt_only:
+                # Static text-to-image jobs must not fabricate a source image.
+                if source_path.exists() or source_path.is_symlink():
+                    raise contracts.ContractError(
+                        "text_prompt_only candidate cannot carry a source image: "
+                        f"{job['execution_job_id']}"
+                    )
+            else:
+                required_paths.append(source_path)
+            if not all(path.is_file() and not path.is_symlink() for path in required_paths):
                 raise contracts.ContractError(
                     f"FLUX.2 candidate bundle is incomplete: {job['execution_job_id']}"
                 )
@@ -297,18 +323,18 @@ def run_jobs(
                 )
             except one_shot.PolicyError as error:
                 raise contracts.ContractError(str(error)) from error
-            results.append(
-                {
-                    "execution_job_id": job["execution_job_id"],
-                    "instance_id": job["consumer_requests"][0]["instance_id"],
-                    "profile_schema_id": job["profile_schema_id"],
-                    "sampled_attributes": job["sampled_attributes"],
-                    "status": "pending_2d_review",
-                    "candidate": _record(candidate_path, root=staging),
-                    "candidate_manifest": _record(manifest_path, root=staging),
-                    "source": _record(source_path, root=staging),
-                }
-            )
+            result = {
+                "execution_job_id": job["execution_job_id"],
+                "instance_id": job["consumer_requests"][0]["instance_id"],
+                "profile_schema_id": job["profile_schema_id"],
+                "sampled_attributes": job["sampled_attributes"],
+                "status": "pending_2d_review",
+                "candidate": _record(candidate_path, root=staging),
+                "candidate_manifest": _record(manifest_path, root=staging),
+            }
+            if not text_prompt_only:
+                result["source"] = _record(source_path, root=staging)
+            results.append(result)
         postflight = preparation.build_execution_preflight(
             Path(preflight["source_bundle"]["input_dir"]),
             {key: Path(value) for key, value in preflight["artifact_roots"].items()},
@@ -328,7 +354,16 @@ def run_jobs(
             },
             "selection": {
                 "semantics": "predeclared_request_subset_only_not_output_ranking",
-                "profile_ids": sorted(profile_ids) if profile_ids else "all_animal_profiles",
+                "route": route,
+                "profile_ids": (
+                    sorted(profile_ids)
+                    if profile_ids
+                    else (
+                        "all_animal_profiles"
+                        if route == "flux2_pixal3d_animal_v1"
+                        else "all_static_object_profiles"
+                    )
+                ),
                 "execution_job_ids": sorted(execution_job_ids) if execution_job_ids else None,
                 "qa_pair_canary": qa_pair_canary,
                 "planned_qa_pairs": selected_pairs,
@@ -373,6 +408,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", action="append", default=[])
     parser.add_argument("--execution-job-id", action="append", default=[])
     parser.add_argument("--qa-pair-canary", action="store_true")
+    parser.add_argument(
+        "--route",
+        choices=list(FLUX_ROUTES),
+        default="flux2_pixal3d_animal_v1",
+        help="Preflight route to execute; static jobs run text-to-image.",
+    )
     return parser
 
 
@@ -388,6 +429,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 set(args.execution_job_id) if args.execution_job_id else None
             ),
             qa_pair_canary=args.qa_pair_canary,
+            route=args.route,
         )
         manifest = contracts.load_json(manifest_path)
     except (contracts.ContractError, OSError, subprocess.SubprocessError) as error:

@@ -25,6 +25,15 @@ BASE_ACQUISITION_POLICY = {
     "downstream_instance_route": "stable_animal_template_v1",
     "profile_validation": "all_predeclared_requests_count_zero_hidden_failures",
 }
+# Statics skip rigging, so every sampled attribute combination is its own
+# frozen one-shot request; the no-seed-lottery cardinality rules still apply.
+STATIC_BASE_ACQUISITION_POLICY = {
+    "policy_id": "static_object_per_request_one_shot_v1",
+    "acquisition_unit": "one_frozen_asset_per_request",
+    "sampled_domains_must_be_singleton": False,
+    "downstream_instance_route": "flux2_pixal3d_static_v1",
+    "profile_validation": "all_predeclared_requests_count_zero_hidden_failures",
+}
 
 
 class PolicyError(ValueError):
@@ -162,6 +171,20 @@ def validate_base_acquisition_record(value: Any) -> dict[str, Any]:
     return copy.deepcopy(value)
 
 
+def static_base_acquisition_record() -> dict[str, Any]:
+    return copy.deepcopy(STATIC_BASE_ACQUISITION_POLICY)
+
+
+def validate_static_base_acquisition_record(value: Any) -> dict[str, Any]:
+    expected = static_base_acquisition_record()
+    if not isinstance(value, dict) or _canonical_json(value) != _canonical_json(expected):
+        raise PolicyError(
+            "static_object FLUX profile must generate one frozen asset per "
+            "predeclared request on flux2_pixal3d_static_v1"
+        )
+    return copy.deepcopy(value)
+
+
 def validate_stage_record(value: Any, stage: str) -> dict[str, Any]:
     expected = stage_record(stage)
     if not isinstance(value, dict) or _canonical_json(value) != _canonical_json(expected):
@@ -218,8 +241,9 @@ def validate_flux_job(job: Mapping[str, Any]) -> None:
     if not isinstance(generation, Mapping) or not isinstance(consumers, list):
         raise PolicyError("FLUX job is missing generation/consumer evidence")
     seed = generation.get("generation_seed")
+    route = generation.get("route")
     if (
-        generation.get("route") != "flux2_pixal3d_animal_v1"
+        route not in {"flux2_pixal3d_animal_v1", "flux2_pixal3d_static_v1"}
         or generation.get("flux_invocations") != 1
         or isinstance(seed, bool)
         or not isinstance(seed, int)
@@ -227,7 +251,12 @@ def validate_flux_job(job: Mapping[str, Any]) -> None:
         or len(consumers) != 1
     ):
         raise PolicyError("FLUX job violates one-request/one-seed/one-invocation policy")
-    validate_base_acquisition_record(generation.get("base_acquisition_policy"))
+    if route == "flux2_pixal3d_static_v1":
+        validate_static_base_acquisition_record(
+            generation.get("base_acquisition_policy")
+        )
+    else:
+        validate_base_acquisition_record(generation.get("base_acquisition_policy"))
 
 
 def validate_pixal_job(job: Mapping[str, Any]) -> None:

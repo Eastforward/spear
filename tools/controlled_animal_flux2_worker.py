@@ -149,11 +149,24 @@ def validate_partition(value: Any) -> dict[str, Any]:
         if job.get("execution_job_id") in seen:
             raise ValueError("partition contains duplicate execution_job_id")
         seen.add(job.get("execution_job_id"))
-        if (
-            job.get("generation_plan", {}).get("route")
-            != "flux2_pixal3d_animal_v1"
-            or job.get("generation_plan", {}).get("flux_invocations") != 1
-            or job.get("generation_plan", {}).get("model_revisions", {}).get("flux2")
+        generation = job.get("generation_plan", {})
+        if generation.get("route") == "flux2_pixal3d_static_v1":
+            # Static jobs are text-to-image: no reference artifact may exist.
+            base_template = generation.get("base_template", {})
+            if (
+                generation.get("flux_invocations") != 1
+                or generation.get("model_revisions", {}).get("flux2")
+                != MODEL_REVISION
+                or len(job.get("consumer_requests", [])) != 1
+                or base_template.get("kind") != "text_prompt_only"
+                or base_template.get("artifact") is not None
+                or "reference" in job
+            ):
+                raise ValueError("partition static job contract changed")
+        elif (
+            generation.get("route") != "flux2_pixal3d_animal_v1"
+            or generation.get("flux_invocations") != 1
+            or generation.get("model_revisions", {}).get("flux2")
             != MODEL_REVISION
             or len(job.get("consumer_requests", [])) != 1
         ):
@@ -223,22 +236,38 @@ def run_worker(partition: Mapping[str, Any], gpu: int, output_root: Path, status
             if destination.exists() or destination.is_symlink():
                 raise RuntimeError(f"candidate output already exists: {destination}")
             destination.mkdir(parents=True)
-            reference = Path(job["reference"]["resolved_path"]).resolve()
-            if (
-                reference.is_symlink()
-                or not reference.is_file()
-                or reference.stat().st_size != job["reference"]["size_bytes"]
-                or _sha256_file(reference) != job["reference"]["sha256"]
-            ):
-                raise RuntimeError("animal reference changed before FLUX.2")
-            copied_source = destination / "source.png"
-            _copy_no_replace(reference, copied_source)
-            with Image.open(copied_source) as opened:
-                opened.load()
-                if opened.size != (1024, 1024):
-                    raise RuntimeError("controlled animal source canvas must be 1024x1024")
-                source = opened.convert("RGB")
             generation = job["generation_plan"]
+            text_prompt_only = (
+                generation.get("base_template", {}).get("kind") == "text_prompt_only"
+            )
+            if text_prompt_only:
+                # Static text-to-image jobs deliberately have no reference
+                # image; FLUX.2 klein runs pure text-to-image when image=None.
+                if "reference" in job:
+                    raise RuntimeError(
+                        "text_prompt_only job must not carry a reference image"
+                    )
+                reference = None
+                copied_source = None
+                source = None
+            else:
+                reference = Path(job["reference"]["resolved_path"]).resolve()
+                if (
+                    reference.is_symlink()
+                    or not reference.is_file()
+                    or reference.stat().st_size != job["reference"]["size_bytes"]
+                    or _sha256_file(reference) != job["reference"]["sha256"]
+                ):
+                    raise RuntimeError("animal reference changed before FLUX.2")
+                copied_source = destination / "source.png"
+                _copy_no_replace(reference, copied_source)
+                with Image.open(copied_source) as opened:
+                    opened.load()
+                    if opened.size != (1024, 1024):
+                        raise RuntimeError(
+                            "controlled animal source canvas must be 1024x1024"
+                        )
+                    source = opened.convert("RGB")
             effective_prompt = (
                 f"{generation['prompt']} Avoid: {generation['negative_prompt']}."
             )
@@ -264,7 +293,9 @@ def run_worker(partition: Mapping[str, Any], gpu: int, output_root: Path, status
                 raise RuntimeError("FLUX.2 animal output canvas changed")
             candidate_path = destination / "candidate.png"
             _save_png_no_replace(candidate, candidate_path)
-            if _sha256_file(reference) != job["reference"]["sha256"]:
+            if reference is not None and (
+                _sha256_file(reference) != job["reference"]["sha256"]
+            ):
                 raise RuntimeError("animal reference changed during FLUX.2")
             manifest: dict[str, Any] = {
                 "schema": CANDIDATE_SCHEMA,
@@ -281,7 +312,11 @@ def run_worker(partition: Mapping[str, Any], gpu: int, output_root: Path, status
                 "taxonomy": job["taxonomy"],
                 "fixed_attributes": job["fixed_attributes"],
                 "sampled_attributes": job["sampled_attributes"],
-                "input": _file_record(copied_source, root=output_root),
+                "input": (
+                    _file_record(copied_source, root=output_root)
+                    if copied_source is not None
+                    else None
+                ),
                 "output": _file_record(candidate_path, root=output_root),
                 "generation": {
                     "prompt": generation["prompt"],
