@@ -391,7 +391,12 @@ def run_batch(
     gpus: Sequence[int],
 ) -> Path:
     input_manifest_path, payload = load_pixal_inputs(input_manifest_path)
-    output_root = Path(output_root).absolute()
+    # Resolve (not merely absolutize) so a symlinked invocation path (e.g. the
+    # repository tmp compatibility symlink) and the physical workspace path
+    # compare equal in every downstream manifest-path check; the final
+    # per-job validation resolves the manifest side and previously failed
+    # whenever the runner was invoked through the symlink.
+    output_root = Path(output_root).resolve()
     expected_root = Path(payload["pixal_output_root"]).resolve()
     if output_root.resolve() != expected_root:
         raise contracts.ContractError("output root differs from authenticated Pixal plan")
