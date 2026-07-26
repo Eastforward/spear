@@ -69,16 +69,29 @@ Shiba criterion 5 — everything solo-completable is DONE:
 - Remaining for 5/5: live readback render needs an asset-bound UE bundle —
   batched with Corgi as planned.
 
-W1 running:
-- Corgi + British Shorthair profiles committed (SPEAR 467a93d3), preflights
-  green, FLUX one-shot batch running on GPU 3 (slow: owner jobs saturate
-  /dev/sdb, worker D-state during model load — starvation, not a hang).
-- Morphotype risk assessments recorded in both workspaces (both medium,
-  2 checks; Corgi = short-leg experiment, BSH = revival test).
-- static_object generic contract extension (ASSET_CLASSES + t2i route +
-  rig-None + absolute physical profile) being implemented for the 5 W1
-  statics (phone, alarm clock, doorbell, microwave, kettle); review before
-  commit.
+W1 2D wave COMPLETE, all decisions QUEUED at the owner gate (03:30):
+- Combined review page: http://127.0.0.1:8765/w1_owner_review_queue_20260727.html
+  (server root tmp/new_animal_assets/; statics reachable via the
+  `w1_statics` symlink -> tmp/new_static_assets/w1_statics_20260727_01).
+- Corgi one-shot: my pre-check FAIL (long tail + medium-dog legs — clay
+  guide silhouette beats breed text; the predicted route boundary).
+  Owner decision A/B/C on the page; A = generic short-leg clay guide
+  variant (also serves Dachshund).
+- BSH one-shot: my pre-check FAIL (TWO TAILS — historical defect class —
+  plus ghost tabby striping). v2 draft with tail-singularity wording in
+  the workspace rerequest_drafts/; near-miss quality, revival continues.
+- Statics 10 t2i candidates: 6 pass / 4 fail (floating red phone handset,
+  blank black doorbell, both kettles missing whistle cap). Verdicts JSON
+  in the statics workspace; v2 drafts for phone/doorbell/kettle staged in
+  rerequest_drafts/ (NOT run — awaiting owner). Alarm-clock and microwave
+  color PAIRS complete (first two same-class hard-negative pairs).
+- static_object contract extension committed (d0411320) + static review
+  application fix (8826bfe6); statics profiles committed (3bf9de1b).
+- Once owner accepts statics: Pixal3D batch (no rigging) -> watertight ->
+  emitter-anchor measurement (grille/bell/speaker semantics — needs a
+  static variant of the emitter tool, muzzle-quantile does not apply) ->
+  registry rows. Once a 2D animal passes: TokenRig warm server chain as
+  per runbook, Shiba live-readback bundle batched with it.
 
 ## Backlog — detailed (dependency order)
 
