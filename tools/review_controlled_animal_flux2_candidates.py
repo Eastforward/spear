@@ -90,7 +90,13 @@ def load_flux_batch(path: Path) -> tuple[Path, dict[str, Any], dict[str, dict[st
     by_instance = {}
     for candidate in candidates:
         files = {}
-        for role in ("candidate", "candidate_manifest", "source"):
+        # Static text-to-image candidates deliberately have no source pose
+        # guide; the candidate manifest cross-check below enforces that the
+        # source record is present if and only if the worker consumed one.
+        roles = ("candidate", "candidate_manifest", "source")
+        if "source" not in candidate:
+            roles = ("candidate", "candidate_manifest")
+        for role in roles:
             record = candidate.get(role)
             if not isinstance(record, dict) or set(record) != {
                 "path",
@@ -126,6 +132,10 @@ def load_flux_batch(path: Path) -> tuple[Path, dict[str, Any], dict[str, dict[st
             != _hash_without(manifest, "manifest_sha256")
         ):
             raise contracts.ContractError("candidate manifest contract/hash is invalid")
+        if (manifest.get("input") is None) != ("source" not in candidate):
+            raise contracts.ContractError(
+                "candidate source record does not match the manifest input"
+            )
         by_instance[candidate["instance_id"]] = {
             "index": candidate,
             "manifest": manifest,
