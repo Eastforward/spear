@@ -1,0 +1,38 @@
+{
+  "schema": "avengine_owner_review_decision_v1",
+  "created_at": "2026-07-26",
+  "reviewed_by": "project_owner",
+  "review_channel": "interactive_session_20260726",
+  "decision": "deprecate_legacy_route_generated_assets_for_future_work",
+  "owner_reason_verbatim": "这个资产从一开始就不是从零按照我们现在已经修复好的路线来走的，我们现在要确定的是，新的资产走我们的这套流程能不能稳定出货",
+  "scope": {
+    "immediately_stopped": [
+      "all further repair investment in the legacy Border Collie (weight-repair v2 and its UE re-import follow-up are shelved as retained evidence, not adopted)"
+    ],
+    "deprecated_for_future_data_once_replacements_ship": [
+      "generated_border_collie_black_white_medium_standard_adult_research_v1 (pre-contract route; hind-leg membrane and crotch hole are original single-view reconstruction geometry, present in all accepted media)",
+      "generated_abyssinian_ruddy_medium_standard_adult_research_v1 (same pre-contract route)",
+      "generated_labrador_yellow_medium_standard_adult_research_v1 (same pre-contract route)"
+    ],
+    "explicitly_unchanged": [
+      "the frozen Apartment 1,000-episode bank and every retained evidence chain (never regenerated, remains the historical baseline)",
+      "runtime registry entries stay until a hardened-route replacement passes the full chain; pair templates must never lose a resolvable current_generated_dog/cat"
+    ]
+  },
+  "pipeline_shipping_criteria": {
+    "purpose": "what 'the hardened route ships stably' means, measurably, per new asset",
+    "criteria": [
+      "forward chain: gait-direction audit passes on the first retarget attempt (no orientation rework loop)",
+      "deformation: Walking/Idle pass the 0.07/0.08 gates without an acceptance exception",
+      "human load: at most the three designed touchpoints (2D canonical accept, head-end one-click confirm, final animated review); zero unplanned interventions",
+      "topology: no cross-limb membrane class defect visible in front/rear review views (the legacy Collie failure mode)",
+      "UE import/readback passes with declared forward within tolerance and no per-asset ad-hoc corrections beyond the registry contract"
+    ],
+    "evaluation_assets": [
+      "shiba_inu (low-risk chain validation, in progress)",
+      "corgi (deliberate medium-risk probe of the morphotype checklist)",
+      "british_shorthair (revival test of a historically failed breed)"
+    ]
+  },
+  "formal_dataset_registration_authorized": false
+}
