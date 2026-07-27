@@ -28,12 +28,12 @@ def _decision(*, decision="approved_for_pixal3d", rejected_gate=None):
     }
 
 
-def _write(tmp_path, decision):
+def _write(tmp_path, decision, *, schema=review.DECISIONS_SCHEMA_V2):
     path = tmp_path / "decisions.json"
     path.write_text(
         json.dumps(
             {
-                "schema": review.DECISIONS_SCHEMA_V2,
+                "schema": schema,
                 "flux2_batch_sha256": "batch-sha",
                 "reviewer": "test",
                 "decisions": [decision],
@@ -81,3 +81,82 @@ def test_v2_rejects_missing_hard_gate(tmp_path):
         review.load_decisions(
             _write(tmp_path, decision), {"batch_sha256": "batch-sha"}
         )
+
+
+def _static_decision(*, decision="approved_for_pixal3d", rejected_gate=None):
+    hard_gates = {
+        field: "passed" for field in review.STATIC_HARD_GATE_FIELDS
+    }
+    if rejected_gate is not None:
+        hard_gates[rejected_gate] = "rejected"
+    return {
+        "instance_id": "doorbell_canary",
+        "candidate_sha256": "b" * 64,
+        "decision": decision,
+        "category_identity": "passed",
+        "construction": "passed",
+        "stable_product_pose": "passed",
+        "background": "passed",
+        "sampled_attribute_checks": {"body_color": "passed"},
+        "hard_gates": hard_gates,
+        "notes": "test static route",
+    }
+
+
+def _static_batch():
+    return {
+        "batch_sha256": "batch-sha",
+        "selection": {"route": "flux2_pixal3d_static_v1"},
+    }
+
+
+def test_static_route_requires_its_own_decision_schema(tmp_path):
+    with pytest.raises(contracts.ContractError, match="contract is invalid"):
+        review.load_decisions(
+            _write(tmp_path, _decision()),
+            _static_batch(),
+        )
+
+
+def test_static_route_accepts_complete_static_hard_gates(tmp_path):
+    decisions = review.load_decisions(
+        _write(
+            tmp_path,
+            _static_decision(),
+            schema=review.STATIC_DECISIONS_SCHEMA,
+        ),
+        _static_batch(),
+    )
+    assert decisions["doorbell_canary"]["decision"] == "approved_for_pixal3d"
+
+
+def test_static_route_rejects_not_applicable_emitter_gate(tmp_path):
+    decision = _static_decision()
+    decision["hard_gates"]["emitter_feature_visible"] = "not_applicable"
+    with pytest.raises(contracts.ContractError, match="hard gates"):
+        review.load_decisions(
+            _write(
+                tmp_path,
+                decision,
+                schema=review.STATIC_DECISIONS_SCHEMA,
+            ),
+            _static_batch(),
+        )
+
+
+def test_static_route_can_publish_objective_rejection(tmp_path):
+    decisions = review.load_decisions(
+        _write(
+            tmp_path,
+            _static_decision(
+                decision="rejected",
+                rejected_gate="emitter_feature_visible",
+            ),
+            schema=review.STATIC_DECISIONS_SCHEMA,
+        ),
+        _static_batch(),
+    )
+    assert (
+        decisions["doorbell_canary"]["hard_gates"]["emitter_feature_visible"]
+        == "rejected"
+    )

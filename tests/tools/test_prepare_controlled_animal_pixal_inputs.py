@@ -237,7 +237,11 @@ def test_prepare_pixal_inputs_publishes_the_authenticated_route_contract(
     )
 
     review_payload = {
-        "schema": preparation.review.REVIEW_SCHEMA,
+        "schema": (
+            preparation.review.STATIC_REVIEW_SCHEMA
+            if static
+            else preparation.review.REVIEW_SCHEMA
+        ),
         "instance_id": INSTANCE_ID,
         "candidate": {"sha256": candidate_record["sha256"]},
         "decision": "approved_for_pixal3d",
@@ -255,6 +259,12 @@ def test_prepare_pixal_inputs_publishes_the_authenticated_route_contract(
     review_batch_path = tmp_path / "review_batch.json"
     review_batch_path.write_text("{}\n", encoding="utf-8")
     review_batch = {
+        "schema": (
+            preparation.review.STATIC_BATCH_REVIEW_SCHEMA
+            if static
+            else preparation.review.BATCH_REVIEW_SCHEMA
+        ),
+        "review_domain": "static_object" if static else "animal",
         "flux2_batch": {
             "path": str(tmp_path / "flux2_batch.json"),
             "batch_sha256": BATCH_SHA256,

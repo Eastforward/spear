@@ -23,8 +23,11 @@ from tools import run_controlled_animal_flux2_jobs as flux_runner
 
 DECISIONS_SCHEMA = "avengine_controlled_animal_2d_review_decisions_v1"
 DECISIONS_SCHEMA_V2 = "avengine_controlled_animal_2d_review_decisions_v2"
+STATIC_DECISIONS_SCHEMA = "avengine_controlled_static_object_2d_review_decisions_v1"
 REVIEW_SCHEMA = "avengine_controlled_animal_2d_review_v1"
 BATCH_REVIEW_SCHEMA = "avengine_controlled_animal_2d_review_batch_v1"
+STATIC_REVIEW_SCHEMA = "avengine_controlled_static_object_2d_review_v1"
+STATIC_BATCH_REVIEW_SCHEMA = "avengine_controlled_static_object_2d_review_batch_v1"
 ATTRIBUTE_STATUSES = {
     "passed",
     "deferred_to_3d_physical_scale",
@@ -41,6 +44,23 @@ HARD_GATE_FIELDS = {
     "target_attribute_only",
 }
 HARD_GATE_STATUSES = {"passed", "rejected", "not_applicable"}
+STATIC_CHECK_FIELDS = {
+    "category_identity",
+    "construction",
+    "stable_product_pose",
+    "background",
+}
+STATIC_HARD_GATE_FIELDS = {
+    "single_subject",
+    "photorealistic_pbr_style",
+    "category_distinctive_features",
+    "emitter_feature_visible",
+    "physically_connected_construction",
+    "complete_object",
+    "stable_rest_or_mount",
+    "target_attribute_only",
+}
+STATIC_HARD_GATE_STATUSES = {"passed", "rejected"}
 
 
 def _json_sha256(value: Any) -> str:
@@ -149,10 +169,30 @@ def load_decisions(path: Path, batch: Mapping[str, Any]) -> dict[str, dict[str, 
     if path.is_symlink() or not path.is_file():
         raise contracts.ContractError(f"review decisions are missing: {path}")
     payload = contracts.load_json(path)
+    route = batch.get("selection", {}).get(
+        "route", "flux2_pixal3d_animal_v1"
+    )
+    if route == "flux2_pixal3d_static_v1":
+        allowed_schemas = {STATIC_DECISIONS_SCHEMA}
+        check_fields = STATIC_CHECK_FIELDS
+        hard_gate_fields = STATIC_HARD_GATE_FIELDS
+        hard_gate_statuses = STATIC_HARD_GATE_STATUSES
+    elif route == "flux2_pixal3d_animal_v1":
+        allowed_schemas = {DECISIONS_SCHEMA, DECISIONS_SCHEMA_V2}
+        check_fields = {
+            "species_breed",
+            "anatomy",
+            "pose_and_limb_separation",
+            "background",
+        }
+        hard_gate_fields = HARD_GATE_FIELDS
+        hard_gate_statuses = HARD_GATE_STATUSES
+    else:
+        raise contracts.ContractError("review batch route is unsupported")
     if (
         not isinstance(payload, dict)
         or set(payload) != {"schema", "flux2_batch_sha256", "reviewer", "decisions"}
-        or payload.get("schema") not in {DECISIONS_SCHEMA, DECISIONS_SCHEMA_V2}
+        or payload.get("schema") not in allowed_schemas
         or payload.get("flux2_batch_sha256") != batch["batch_sha256"]
         or not isinstance(payload.get("reviewer"), str)
         or not payload["reviewer"].strip()
@@ -166,14 +206,10 @@ def load_decisions(path: Path, batch: Mapping[str, Any]) -> dict[str, dict[str, 
             "instance_id",
             "candidate_sha256",
             "decision",
-            "species_breed",
-            "anatomy",
-            "pose_and_limb_separation",
-            "background",
             "sampled_attribute_checks",
             "notes",
-        }
-        if decisions_schema == DECISIONS_SCHEMA_V2:
+        } | check_fields
+        if decisions_schema in {DECISIONS_SCHEMA_V2, STATIC_DECISIONS_SCHEMA}:
             fields.add("hard_gates")
         if not isinstance(decision, dict) or set(decision) != fields:
             raise contracts.ContractError("review decision fields are invalid")
@@ -182,7 +218,7 @@ def load_decisions(path: Path, batch: Mapping[str, Any]) -> dict[str, dict[str, 
             raise contracts.ContractError(f"duplicate review decision: {instance_id}")
         if decision["decision"] not in {"approved_for_pixal3d", "rejected"}:
             raise contracts.ContractError("review decision value is invalid")
-        for check in ("species_breed", "anatomy", "pose_and_limb_separation", "background"):
+        for check in check_fields:
             if decision[check] not in {"passed", "rejected"}:
                 raise contracts.ContractError(f"review check is invalid: {check}")
         attribute_checks = decision["sampled_attribute_checks"]
@@ -196,15 +232,15 @@ def load_decisions(path: Path, batch: Mapping[str, Any]) -> dict[str, dict[str, 
         ):
             raise contracts.ContractError("only size may defer to physical 3D scaling")
         hard_gates = decision.get("hard_gates", {})
-        if decisions_schema == DECISIONS_SCHEMA_V2 and (
+        if decisions_schema in {DECISIONS_SCHEMA_V2, STATIC_DECISIONS_SCHEMA} and (
             not isinstance(hard_gates, dict)
-            or set(hard_gates) != HARD_GATE_FIELDS
-            or any(value not in HARD_GATE_STATUSES for value in hard_gates.values())
+            or set(hard_gates) != hard_gate_fields
+            or any(value not in hard_gate_statuses for value in hard_gates.values())
         ):
             raise contracts.ContractError("review hard gates are invalid")
         rejected = any(
             decision[key] == "rejected"
-            for key in ("species_breed", "anatomy", "pose_and_limb_separation", "background")
+            for key in check_fields
         ) or "rejected" in attribute_checks.values() or "rejected" in hard_gates.values()
         if (decision["decision"] == "rejected") != rejected:
             raise contracts.ContractError("review decision disagrees with its checks")
@@ -251,11 +287,34 @@ def publish_reviews(
         reviews_dir = staging / "reviews"
         reviews_dir.mkdir()
         review_index = []
+        batch_route = batch.get("selection", {}).get(
+            "route", "flux2_pixal3d_animal_v1"
+        )
         for instance_id in sorted(candidates):
             candidate = candidates[instance_id]
             decision = decisions[instance_id]
+            check_fields = (
+                STATIC_CHECK_FIELDS
+                if batch_route == "flux2_pixal3d_static_v1"
+                else {
+                    "species_breed",
+                    "anatomy",
+                    "pose_and_limb_separation",
+                    "background",
+                }
+            )
+            review_checks = {
+                field: decision[field] for field in sorted(check_fields)
+            }
+            review_checks["sampled_attributes"] = decision[
+                "sampled_attribute_checks"
+            ]
             review: dict[str, Any] = {
-                "schema": REVIEW_SCHEMA,
+                "schema": (
+                    STATIC_REVIEW_SCHEMA
+                    if batch_route == "flux2_pixal3d_static_v1"
+                    else REVIEW_SCHEMA
+                ),
                 "instance_id": instance_id,
                 "request_sha256": candidate["manifest"]["request_sha256"],
                 "profile_schema_id": candidate["manifest"]["profile_schema_id"],
@@ -272,15 +331,7 @@ def publish_reviews(
                 },
                 "reviewer": contracts.load_json(decisions_path)["reviewer"],
                 "decision": decision["decision"],
-                "checks": {
-                    "species_breed": decision["species_breed"],
-                    "anatomy": decision["anatomy"],
-                    "pose_and_limb_separation": decision[
-                        "pose_and_limb_separation"
-                    ],
-                    "background": decision["background"],
-                    "sampled_attributes": decision["sampled_attribute_checks"],
-                },
+                "checks": review_checks,
                 "notes": decision["notes"],
                 "downstream_gate": (
                     "approved_for_segmentation_and_pixal3d"
@@ -332,10 +383,19 @@ def publish_reviews(
             )
         approved = sum(item["decision"] == "approved_for_pixal3d" for item in review_index)
         batch_review: dict[str, Any] = {
-            "schema": BATCH_REVIEW_SCHEMA,
+            "schema": (
+                STATIC_BATCH_REVIEW_SCHEMA
+                if batch_route == "flux2_pixal3d_static_v1"
+                else BATCH_REVIEW_SCHEMA
+            ),
             "status": "passed" if approved == len(review_index) else "completed_with_rejections",
             "state_classification": "research_candidate",
             "formal_dataset_registration_authorized": False,
+            "review_domain": (
+                "static_object"
+                if batch_route == "flux2_pixal3d_static_v1"
+                else "animal"
+            ),
             "flux2_batch": {
                 "path": str(Path(flux_batch_path).resolve()),
                 "sha256": _sha256_file(Path(flux_batch_path)),

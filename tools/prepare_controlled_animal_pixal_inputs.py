@@ -147,7 +147,8 @@ def load_review_batch(path: Path):
     payload = contracts.load_json(path)
     if (
         not isinstance(payload, dict)
-        or payload.get("schema") != review.BATCH_REVIEW_SCHEMA
+        or payload.get("schema")
+        not in {review.BATCH_REVIEW_SCHEMA, review.STATIC_BATCH_REVIEW_SCHEMA}
         or payload.get("review_batch_sha256")
         != _hash_without(payload, "review_batch_sha256")
         or payload.get("automatic_checks", {}).get("overall") != "passed"
@@ -426,11 +427,33 @@ def prepare_pixal_inputs(
     review_batch = load_review_batch(review_batch_path)
     flux_batch_path = Path(review_batch["flux2_batch"]["path"])
     flux_root, flux_batch, candidates = review.load_flux_batch(flux_batch_path)
+    route = flux_batch.get("selection", {}).get(
+        "route", "flux2_pixal3d_animal_v1"
+    )
+    expected_review_batch_schema = (
+        review.STATIC_BATCH_REVIEW_SCHEMA
+        if route == "flux2_pixal3d_static_v1"
+        else review.BATCH_REVIEW_SCHEMA
+    )
+    expected_review_domain = (
+        "static_object" if route == "flux2_pixal3d_static_v1" else "animal"
+    )
+    if (
+        review_batch.get("schema") != expected_review_batch_schema
+        or review_batch.get("review_domain", expected_review_domain)
+        != expected_review_domain
+    ):
+        raise contracts.ContractError("2D review domain differs from FLUX route")
     upstream_one_shot = _flux_one_shot_evidence(flux_batch, candidates)
     if flux_batch["batch_sha256"] != review_batch["flux2_batch"]["batch_sha256"]:
         raise contracts.ContractError("review and FLUX.2 batch hashes differ")
     approved_reviews = {}
     review_root = Path(review_batch_path).resolve().parent
+    expected_review_schema = (
+        review.STATIC_REVIEW_SCHEMA
+        if route == "flux2_pixal3d_static_v1"
+        else review.REVIEW_SCHEMA
+    )
     for item in review_batch["reviews"]:
         record = item["review"]
         path = (review_root / record["path"]).resolve()
@@ -443,7 +466,7 @@ def prepare_pixal_inputs(
             raise contracts.ContractError("2D review artifact changed")
         payload = contracts.load_json(path)
         if (
-            payload.get("schema") != review.REVIEW_SCHEMA
+            payload.get("schema") != expected_review_schema
             or payload.get("instance_id") != item["instance_id"]
             or payload.get("candidate", {}).get("sha256") != item["candidate_sha256"]
             or payload.get("review_sha256") != _hash_without(payload, "review_sha256")
