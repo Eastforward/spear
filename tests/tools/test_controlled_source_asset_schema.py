@@ -755,6 +755,41 @@ def test_request_batch_is_rebuilt_from_exact_profile_revision():
         schema.validate_request_batch(changed_batch, [profile])
 
 
+def test_legacy_v1_batches_accept_both_historical_tail_prompt_variants():
+    profile = animal_profile()
+    historical = schema.build_request_batch(
+        [profile],
+        count_per_profile=3,
+        batch_seed=20260713,
+        sampler_algorithm=schema.LEGACY_SAMPLER_ALGORITHM,
+        tail_separation_guard=False,
+    )
+    guarded = schema.build_request_batch(
+        [profile],
+        count_per_profile=3,
+        batch_seed=20260713,
+        sampler_algorithm=schema.LEGACY_SAMPLER_ALGORITHM,
+        tail_separation_guard=True,
+    )
+    current = schema.build_request_batch(
+        [profile],
+        count_per_profile=3,
+        batch_seed=20260713,
+    )
+
+    assert schema.validate_request_batch(historical, [profile]) == historical
+    assert schema.validate_request_batch(guarded, [profile]) == guarded
+    assert historical["sampler"]["algorithm"] == "balanced_quota_sampler_v1"
+    assert guarded["sampler"]["algorithm"] == "balanced_quota_sampler_v1"
+    assert current["sampler"]["algorithm"] == "balanced_quota_sampler_v2"
+    assert "free tail visibly separated" not in historical["requests"][0][
+        "generation_plan"
+    ]["prompt"]
+    assert "free tail visibly separated" in guarded["requests"][0][
+        "generation_plan"
+    ]["prompt"]
+
+
 def test_qa_pairs_compare_absolute_profiles_without_edit_history():
     profile = animal_profile()
     requests = schema.sample_instance_requests(profile, count=27, batch_seed=12)

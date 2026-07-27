@@ -25,6 +25,80 @@ INPUT_ROOT = (
 SCRIPT = REPO / "tools/prepare_controlled_source_asset_execution.py"
 
 
+def _artifact_record(root_id: str, path: str, payload: bytes) -> dict:
+    return {
+        "root_id": root_id,
+        "path": path,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+    }
+
+
+def test_artifact_authentication_allows_repository_tmp_compatibility_mount(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    workspace = tmp_path / "workspace"
+    repo.mkdir()
+    workspace.mkdir()
+    (repo / "tmp").symlink_to(workspace, target_is_directory=True)
+    payload = b"authenticated workspace artifact\n"
+    artifact = workspace / "evidence.bin"
+    artifact.write_bytes(payload)
+
+    result = input_builder.authenticate_artifact_record(
+        _artifact_record("spear_repo", "tmp/evidence.bin", payload),
+        {"spear_repo": repo},
+        role="fixture",
+        owner="compatibility mount test",
+    )
+
+    assert result["status"] == "passed"
+    assert result["path"] == "tmp/evidence.bin"
+
+
+def test_artifact_authentication_rejects_undeclared_symlink_escape(tmp_path):
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    repo.mkdir()
+    outside.mkdir()
+    (repo / "other").symlink_to(outside, target_is_directory=True)
+    payload = b"outside artifact\n"
+    (outside / "evidence.bin").write_bytes(payload)
+
+    with pytest.raises(contracts.ContractError, match="artifact escapes root"):
+        input_builder.authenticate_artifact_record(
+            _artifact_record("spear_repo", "other/evidence.bin", payload),
+            {"spear_repo": repo},
+            role="fixture",
+            owner="undeclared mount test",
+        )
+
+
+def test_artifact_authentication_rejects_nested_escape_from_tmp_mount(tmp_path):
+    repo = tmp_path / "repo"
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    repo.mkdir()
+    workspace.mkdir()
+    outside.mkdir()
+    (repo / "tmp").symlink_to(workspace, target_is_directory=True)
+    (workspace / "nested").symlink_to(outside, target_is_directory=True)
+    payload = b"nested outside artifact\n"
+    (outside / "evidence.bin").write_bytes(payload)
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="artifact escapes trusted mount spear_repo:tmp",
+    ):
+        input_builder.authenticate_artifact_record(
+            _artifact_record("spear_repo", "tmp/nested/evidence.bin", payload),
+            {"spear_repo": repo},
+            role="fixture",
+            owner="nested escape test",
+        )
+
+
 def static_object_profile(measurement_artifact: dict) -> dict:
     return {
         "schema": contracts.PROFILE_SCHEMA,

@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -25,6 +25,9 @@ from tools import controlled_source_asset_schema as contracts
 
 PROFILE_SNAPSHOT_SCHEMA = "avengine_attribute_profile_snapshot_v1"
 EXECUTION_JOBS_SCHEMA = "avengine_controlled_execution_jobs_v1"
+TRUSTED_COMPATIBILITY_MOUNTS = {
+    "spear_repo": frozenset({"tmp"}),
+}
 
 
 def default_artifact_roots() -> dict[str, Path]:
@@ -75,6 +78,49 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _resolve_artifact_path(
+    root_id: str,
+    root: Path,
+    relative: Path,
+) -> Path:
+    """Resolve one artifact without rejecting the repository tmp mount.
+
+    AVEngine deliberately keeps ``tmp`` as a repository-relative compatibility
+    symlink to the external workspace volume.  Historical manifests therefore
+    authenticate paths such as ``spear_repo:tmp/...``.  Only that declared
+    top-level mount may leave the physical repository; arbitrary or nested
+    symlink escapes remain contract errors.
+    """
+
+    root = root.resolve()
+    path = (root / relative).resolve()
+    try:
+        path.relative_to(root)
+        return path
+    except ValueError:
+        pass
+
+    trusted_mounts = TRUSTED_COMPATIBILITY_MOUNTS.get(root_id, frozenset())
+    if not relative.parts or relative.parts[0] not in trusted_mounts:
+        raise contracts.ContractError(
+            f"artifact escapes root {root_id}: {relative.as_posix()}"
+        )
+    mount = root / relative.parts[0]
+    if not mount.is_symlink():
+        raise contracts.ContractError(
+            f"artifact escapes root {root_id}: {relative.as_posix()}"
+        )
+    mount_root = mount.resolve()
+    try:
+        path.relative_to(mount_root)
+    except ValueError as error:
+        raise contracts.ContractError(
+            f"artifact escapes trusted mount {root_id}:{relative.parts[0]}: "
+            f"{relative.as_posix()}"
+        ) from error
+    return path
+
+
 def _profile_artifacts(profile: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     artifacts = []
     # text_prompt_only static templates deliberately carry a null artifact;
@@ -107,14 +153,7 @@ def authenticate_artifact_record(
         raise contracts.ContractError(
             f"artifact must be a safe root-relative path: {artifact['path']}"
         )
-    root = artifact_roots[root_id].resolve()
-    path = (root / relative).resolve()
-    try:
-        path.relative_to(root)
-    except ValueError as error:
-        raise contracts.ContractError(
-            f"artifact escapes root {root_id}: {artifact['path']}"
-        ) from error
+    path = _resolve_artifact_path(root_id, artifact_roots[root_id], relative)
     if not path.is_file():
         raise contracts.ContractError(f"artifact is missing: {path}")
     observed_size = path.stat().st_size
@@ -249,8 +288,25 @@ def build_profile_snapshot(
     return snapshot
 
 
-def build_execution_jobs(request_batch: dict[str, Any]) -> dict[str, Any]:
-    routes = {route: [] for route in sorted(contracts.ROUTES)}
+def build_execution_jobs(
+    request_batch: dict[str, Any],
+    *,
+    route_names: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    selected_routes = (
+        set(contracts.ROUTES) if route_names is None else set(route_names)
+    )
+    used_routes = {
+        request["generation_plan"]["route"]
+        for request in request_batch["requests"]
+    }
+    if not selected_routes.issubset(contracts.ROUTES):
+        raise contracts.ContractError("execution jobs declare an unsupported route")
+    if not used_routes.issubset(selected_routes):
+        raise contracts.ContractError(
+            "execution jobs omit a route used by the authenticated request batch"
+        )
+    routes = {route: [] for route in sorted(selected_routes)}
     for request in request_batch["requests"]:
         route = request["generation_plan"]["route"]
         routes[route].append(

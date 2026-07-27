@@ -119,15 +119,14 @@ def _resolve_artifact(
     root_id = artifact["root_id"]
     if root_id not in artifact_roots:
         raise contracts.ContractError(f"unknown artifact root in preflight: {root_id}")
-    root = Path(artifact_roots[root_id]).resolve()
     relative = Path(artifact["path"])
     if relative.is_absolute() or ".." in relative.parts:
         raise contracts.ContractError("artifact path must remain root relative")
-    resolved = (root / relative).resolve()
-    try:
-        resolved.relative_to(root)
-    except ValueError as error:
-        raise contracts.ContractError("artifact path escapes its named root") from error
+    resolved = input_builder._resolve_artifact_path(
+        root_id,
+        Path(artifact_roots[root_id]),
+        relative,
+    )
     return {
         **copy.deepcopy(dict(artifact)),
         "resolved_path": str(resolved),
@@ -381,19 +380,22 @@ def build_execution_preflight(
     sampler = request_batch.get("sampler")
     if not isinstance(sampler, dict):
         raise contracts.ContractError("request batch sampler is invalid")
-    rebuilt_batch = contracts.build_request_batch(
-        profiles,
-        count_per_profile=sampler.get("count_per_profile"),
-        batch_seed=sampler.get("batch_seed"),
-    )
-    if contracts.canonical_json(request_batch) != contracts.canonical_json(rebuilt_batch):
+    try:
+        contracts.validate_request_batch(request_batch, profiles)
+    except contracts.ContractError as error:
         raise contracts.ContractError(
             "instance_requests.json does not exactly match deterministic sampling"
-        )
+        ) from error
 
     if execution_jobs.get("schema") != input_builder.EXECUTION_JOBS_SCHEMA:
         raise contracts.ContractError("execution_jobs.json schema is invalid")
-    rebuilt_jobs = input_builder.build_execution_jobs(request_batch)
+    declared_routes = execution_jobs.get("routes")
+    if not isinstance(declared_routes, dict):
+        raise contracts.ContractError("execution_jobs.json routes are invalid")
+    rebuilt_jobs = input_builder.build_execution_jobs(
+        request_batch,
+        route_names=declared_routes,
+    )
     if contracts.canonical_json(execution_jobs) != contracts.canonical_json(rebuilt_jobs):
         raise contracts.ContractError(
             "execution_jobs.json does not exactly match the authenticated request batch"

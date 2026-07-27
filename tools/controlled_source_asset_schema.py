@@ -33,7 +33,15 @@ SOURCE_ASSET_SCHEMA = "source_asset_v2"
 GENERATION_PLAN_SCHEMA = "avengine_controlled_generation_plan_v1"
 DATASET_SCHEMA = "avengine_controlled_source_dataset_v1"
 
-SAMPLER_ALGORITHM = "balanced_quota_sampler_v1"
+# V1 was used both before and after the tail-separation prompt guard was added
+# on 2026-07-15 without a version bump.  Validation must reproduce both exact
+# historical variants; all newly compiled batches use V2, which requires the
+# guard and removes that ambiguity.
+LEGACY_SAMPLER_ALGORITHM = "balanced_quota_sampler_v1"
+SAMPLER_ALGORITHM = "balanced_quota_sampler_v2"
+SUPPORTED_SAMPLER_ALGORITHMS = frozenset(
+    {LEGACY_SAMPLER_ALGORITHM, SAMPLER_ALGORITHM}
+)
 
 # This guard is compiled by code for every tailed animal.  It is deliberately
 # about the free tail (not the anatomical base), and it does not require an
@@ -1336,7 +1344,11 @@ def _balanced_combinations(profile: Mapping[str, Any], count: int, batch_seed: i
 
 
 def _compile_animal_generation_plan(
-    profile: Mapping[str, Any], sampled: Mapping[str, str], generation_seed: int
+    profile: Mapping[str, Any],
+    sampled: Mapping[str, str],
+    generation_seed: int,
+    *,
+    tail_separation_guard: bool,
 ) -> dict[str, Any]:
     contract = profile["generation_contract"]
     combined = _combined_attribute_values(profile, sampled)
@@ -1347,11 +1359,11 @@ def _compile_animal_generation_plan(
     prompt = f"{subject} {contract['pose_guard_prompt'].strip()}"
     negative_prompt = contract["negative_prompt"].strip()
     tail_shape = combined.get("tail_shape")
-    if tail_shape is not None and str(tail_shape).lower() not in {
-        "none",
-        "tailless",
-        "absent",
-    }:
+    if (
+        tail_separation_guard
+        and tail_shape is not None
+        and str(tail_shape).lower() not in {"none", "tailless", "absent"}
+    ):
         if "free tail visibly separated from both hind legs" not in prompt:
             prompt = f"{prompt} {TAILED_ANIMAL_SEPARATION_PROMPT}"
         if "fused tail and leg" not in negative_prompt:
@@ -1516,6 +1528,8 @@ def build_instance_request(
     *,
     batch_seed: int,
     sample_ordinal: int,
+    sampler_algorithm: str = SAMPLER_ALGORITHM,
+    tail_separation_guard: bool = True,
 ) -> dict[str, Any]:
     validated = validate_attribute_profile(profile)
     domains = validated["sampled_attribute_domains"]
@@ -1534,11 +1548,22 @@ def build_instance_request(
         raise ContractError("batch_seed must be a non-negative integer")
     if isinstance(sample_ordinal, bool) or not isinstance(sample_ordinal, int) or sample_ordinal < 0:
         raise ContractError("sample_ordinal must be a non-negative integer")
+    if sampler_algorithm not in SUPPORTED_SAMPLER_ALGORITHMS:
+        raise ContractError("unsupported request sampler algorithm")
+    if sampler_algorithm == SAMPLER_ALGORITHM and not tail_separation_guard:
+        raise ContractError(
+            "balanced_quota_sampler_v2 requires the tail-separation prompt guard"
+        )
     generation_seed = _derive_generation_seed(
         batch_seed, validated["profile_schema_id"], sample_ordinal
     )
     if validated["asset_class"] == "animal":
-        plan = _compile_animal_generation_plan(validated, sampled, generation_seed)
+        plan = _compile_animal_generation_plan(
+            validated,
+            sampled,
+            generation_seed,
+            tail_separation_guard=tail_separation_guard,
+        )
     elif validated["asset_class"] == "static_object":
         plan = _compile_static_generation_plan(validated, sampled, generation_seed)
     else:
@@ -1552,7 +1577,7 @@ def build_instance_request(
         "lineage_group_id": validated["lineage_group_id"],
         "state_classification": validated["state_classification"],
         "sampler": {
-            "algorithm": SAMPLER_ALGORITHM,
+            "algorithm": sampler_algorithm,
             "batch_seed": batch_seed,
             "sample_ordinal": sample_ordinal,
             "generation_seed": generation_seed,
@@ -1585,17 +1610,25 @@ def validate_instance_request(value: Any, profile: Any) -> dict[str, Any]:
         frozenset({"algorithm", "batch_seed", "sample_ordinal", "generation_seed"}),
         "request sampler",
     )
-    if sampler["algorithm"] != SAMPLER_ALGORITHM:
+    if sampler["algorithm"] not in SUPPORTED_SAMPLER_ALGORITHMS:
         raise ContractError("unsupported request sampler algorithm")
-    rebuilt = build_instance_request(
-        validated_profile,
-        _require_mapping(request["sampled_attributes"], "sampled_attributes"),
-        batch_seed=sampler["batch_seed"],
-        sample_ordinal=sampler["sample_ordinal"],
+    tail_guard_modes = (
+        (False, True)
+        if sampler["algorithm"] == LEGACY_SAMPLER_ALGORITHM
+        else (True,)
     )
-    if canonical_json(request) != canonical_json(rebuilt):
-        raise ContractError("instance request differs from the canonical request")
-    return _deepcopy(dict(request))
+    for tail_separation_guard in tail_guard_modes:
+        rebuilt = build_instance_request(
+            validated_profile,
+            _require_mapping(request["sampled_attributes"], "sampled_attributes"),
+            batch_seed=sampler["batch_seed"],
+            sample_ordinal=sampler["sample_ordinal"],
+            sampler_algorithm=sampler["algorithm"],
+            tail_separation_guard=tail_separation_guard,
+        )
+        if canonical_json(request) == canonical_json(rebuilt):
+            return _deepcopy(dict(request))
+    raise ContractError("instance request differs from the canonical request")
 
 
 def validate_request_integrity(value: Any) -> dict[str, Any]:
@@ -1619,6 +1652,8 @@ def sample_instance_requests(
     count: int,
     batch_seed: int,
     start_ordinal: int = 0,
+    sampler_algorithm: str = SAMPLER_ALGORITHM,
+    tail_separation_guard: bool = True,
 ) -> list[dict[str, Any]]:
     validated = validate_attribute_profile(profile)
     if isinstance(start_ordinal, bool) or not isinstance(start_ordinal, int) or start_ordinal < 0:
@@ -1630,13 +1665,20 @@ def sample_instance_requests(
             combination,
             batch_seed=batch_seed,
             sample_ordinal=start_ordinal + index,
+            sampler_algorithm=sampler_algorithm,
+            tail_separation_guard=tail_separation_guard,
         )
         for index, combination in enumerate(combinations)
     ]
 
 
 def build_request_batch(
-    profiles: Sequence[Any], *, count_per_profile: int, batch_seed: int
+    profiles: Sequence[Any],
+    *,
+    count_per_profile: int,
+    batch_seed: int,
+    sampler_algorithm: str = SAMPLER_ALGORITHM,
+    tail_separation_guard: bool = True,
 ) -> dict[str, Any]:
     validated_profiles = [validate_attribute_profile(profile) for profile in profiles]
     ids = [profile["profile_schema_id"] for profile in validated_profiles]
@@ -1650,6 +1692,8 @@ def build_request_batch(
                 profile,
                 count=count_per_profile,
                 batch_seed=profile_seed,
+                sampler_algorithm=sampler_algorithm,
+                tail_separation_guard=tail_separation_guard,
             )
         )
     distribution: dict[str, Any] = {}
@@ -1667,7 +1711,7 @@ def build_request_batch(
     core = {
         "schema": REQUEST_BATCH_SCHEMA,
         "sampler": {
-            "algorithm": SAMPLER_ALGORITHM,
+            "algorithm": sampler_algorithm,
             "batch_seed": batch_seed,
             "count_per_profile": count_per_profile,
         },
@@ -1718,7 +1762,7 @@ def validate_request_batch(value: Any, profiles: Sequence[Any]) -> dict[str, Any
         frozenset({"algorithm", "batch_seed", "count_per_profile"}),
         "instance request batch sampler",
     )
-    if sampler["algorithm"] != SAMPLER_ALGORITHM:
+    if sampler["algorithm"] not in SUPPORTED_SAMPLER_ALGORITHMS:
         raise ContractError("unsupported request batch sampler algorithm")
     if (
         isinstance(sampler["count_per_profile"], bool)
@@ -1732,16 +1776,24 @@ def validate_request_batch(value: Any, profiles: Sequence[Any]) -> dict[str, Any
         or sampler["batch_seed"] < 0
     ):
         raise ContractError("request batch batch_seed must be non-negative")
-    rebuilt = build_request_batch(
-        profiles,
-        count_per_profile=sampler["count_per_profile"],
-        batch_seed=sampler["batch_seed"],
+    tail_guard_modes = (
+        (False, True)
+        if sampler["algorithm"] == LEGACY_SAMPLER_ALGORITHM
+        else (True,)
     )
-    if canonical_json(batch) != canonical_json(rebuilt):
-        raise ContractError(
-            "instance request batch does not match deterministic profiles and sampling"
+    for tail_separation_guard in tail_guard_modes:
+        rebuilt = build_request_batch(
+            profiles,
+            count_per_profile=sampler["count_per_profile"],
+            batch_seed=sampler["batch_seed"],
+            sampler_algorithm=sampler["algorithm"],
+            tail_separation_guard=tail_separation_guard,
         )
-    return _deepcopy(dict(batch))
+        if canonical_json(batch) == canonical_json(rebuilt):
+            return _deepcopy(dict(batch))
+    raise ContractError(
+        "instance request batch does not match deterministic profiles and sampling"
+    )
 
 
 def _validate_physical_measurements(value: Any, *, formal: bool) -> dict[str, Any]:
