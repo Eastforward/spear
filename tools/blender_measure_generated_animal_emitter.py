@@ -2,9 +2,10 @@
 """Measure one generated quadruped's fixed mouth emitter in canonical space.
 
 The accepted generated-animal pipeline normalizes every runtime GLB to +X
-forward, +Y up and +Z left before this step.  This tool measures the concrete
-asset instead of copying an offset from a species template.  It does not
-require or infer mouth animation.
+forward, +Y up and +Z right before this step.  This is a right-handed frame:
+forward cross up equals right.  This tool measures the concrete asset instead
+of copying an offset from a species template.  It does not require or infer
+mouth animation.
 """
 
 from __future__ import annotations
@@ -53,7 +54,7 @@ def main() -> None:
     mesh, armature = generated.import_asset(source)
     emitter = generated.derive_muzzle_emitter(mesh, armature)
     result = {
-        "schema": "avengine_generated_animal_emitter_measurement_v1",
+        "schema": "avengine_generated_animal_emitter_measurement_v2",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "input": {
             "path": str(source),

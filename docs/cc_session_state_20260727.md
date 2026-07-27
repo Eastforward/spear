@@ -71,8 +71,10 @@ Shiba criterion 5 — everything solo-completable is DONE:
   front=bone_4 (nearest measured muzzle), left_foot=bone_9,
   right_foot=bone_12 (+Z = anatomical right, triple-checked; the retarget
   manifest side_positive naming is OPPOSITE to GLB Z sign — see runbook
-  step 10).  OPEN OWNER QUESTION: the emitter measurement frame label
-  `..._z_left_m` contradicts the right-hand rule (inert for Shiba, z=0).
+  step 10).  RESOLVED 2026-07-27: new emitter measurements use the v2
+  `..._z_right_m` label.  The immutable Shiba v1 sidecar remains historical;
+  remeasurement goes to a new path and preserves the same sagittal `z=0`
+  numeric offset.
 - Remaining for 5/5: live readback render needs an asset-bound UE bundle —
   batched with Corgi as planned.
 

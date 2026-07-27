@@ -74,6 +74,11 @@ def test_generated_instance_ofat_grounds_every_variant_and_derives_emitter():
     assert "abs(minimum_after) > GROUND_TOLERANCE_M" in text
     assert "def derive_muzzle_emitter" in text
     assert '"semantic_head_forward_quantile_rest_mesh_v1"' in text
+    assert (
+        'EMITTER_COORDINATE_SYSTEM = '
+        '"avengine_local_x_forward_y_up_z_right_m"' in text
+    )
+    assert "avengine_local_x_forward_y_up_z_left_m" not in text
     assert '"asset_specific_not_species_template": True' in text
     assert '"mouth_animation_required": False' in text
     assert text.index("ground_instance_root(mesh, armature, root)") < text.index(

@@ -43,6 +43,7 @@ SENIOR_MUZZLE_GRAY_FLOOR = 0.68
 IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_]{0,63}")
 GROUND_TOLERANCE_M = 1.0e-6
 MUZZLE_FORWARD_QUANTILE = 0.82
+EMITTER_COORDINATE_SYSTEM = "avengine_local_x_forward_y_up_z_right_m"
 
 
 def parse_key_paths(values, label):
@@ -337,7 +338,7 @@ def derive_muzzle_emitter(mesh, armature):
     point[2] = 0.0
     return {
         "method": "semantic_head_forward_quantile_rest_mesh_v1",
-        "coordinate_system": "avengine_local_x_forward_y_up_z_left_m",
+        "coordinate_system": EMITTER_COORDINATE_SYSTEM,
         "emitter_offset_m": [float(value) for value in point],
         "local_forward_axis": [1.0, 0.0, 0.0],
         "muzzle_forward_quantile": MUZZLE_FORWARD_QUANTILE,

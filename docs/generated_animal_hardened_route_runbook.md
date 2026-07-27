@@ -253,9 +253,11 @@ Shiba -0.177 cm @0.15 = -1.181 cm @1.0 exactly).
   manifest's `front_side_positive/negative` naming is the OPPOSITE of the
   GLB Z sign (side sign is assigned in the Blender frame where glTF +Z
   maps to -Y) — measure positions, never trust the side names.  The
-  emitter measurement's `avengine_local_x_forward_y_up_z_left_m` frame
-  label contradicts the right-hand rule; flagged to the owner 2026-07-27,
-  do not propagate that label.
+  emitter measurement v2 records
+  `avengine_local_x_forward_y_up_z_right_m`.  Historical v1 measurements
+  used an incorrect `...z_left_m` label; do not rewrite those immutable
+  artifacts or propagate that label.  Their sagittal-plane offsets have
+  `z=0`, so the correction changes provenance semantics, not the numbers.
 - `walk_phase_period_frames`: measure the shipped GLB Walking clip
   duration and multiply by the Timeline 15 fps (Shiba: 1.666667 s -> 25).
 - Coat profile MUST be registered in the appearance contract
