@@ -13,6 +13,23 @@
     "life_stage": "adult",
     "size": "medium"
   },
+  "target_physical_profile": {
+    "profile_id": "horse_bay_shoulder_height_physical_candidate_v1",
+    "control_attribute": "size",
+    "selected_value": "medium",
+    "measurement": "shoulder_height_cm",
+    "mode": "relative_to_profile_reference",
+    "reference_value_cm": 160,
+    "reference_provenance": {
+      "status": "provisional",
+      "source_id": "horse_pipeline_calibration_pending_v1",
+      "artifact": null,
+      "notes": "Provisional pipeline target only; replace with a license-snapshotted reference and measured canary before formal registration."
+    },
+    "scale_ratio": 1,
+    "tolerance_cm": 10,
+    "target_value_cm": 160
+  },
   "scale_rationale": "The generated runtime mesh is about 4.51 Blender/glTF units high; actor_scale 0.332 yields an approximately 1.50 m visible horse height and matches the already validated Apartment horse scale.",
   "schema": "user_approved_generated_animal_apartment_config_v1",
   "species": "horse",
