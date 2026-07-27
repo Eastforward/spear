@@ -1,0 +1,81 @@
+{
+  "schema": "avengine_controlled_reference_provenance_v1",
+  "reference_id": "quaternius_dog_short_leg_short_tail_side_clay_v1",
+  "state_classification": "research_candidate",
+  "reference": {
+    "path": "data/controlled_source_attributes_v1/references/animal/quaternius_dog_short_leg_short_tail_side_clay_v1/frame_0000.png",
+    "sha256": "ef883249cdbb484752607e8502071f05da88da53f975b56715d5fd2dd27c98b6",
+    "size_bytes": 1042114,
+    "canvas": [
+      1024,
+      1024
+    ]
+  },
+  "source_rig": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/quaternius_animalpack/Dog.glb",
+    "sha256": "bf9d2fdaf74a36be453edf4516a0b13b042cfce2d2614e0bf3ee24d40d553032",
+    "size_bytes": 143692,
+    "pose": "authored_armature_rest_pose_with_deterministic_render_only_morphotype_guide_and_far_limb_offset"
+  },
+  "license_snapshot": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/README.md",
+    "sha256": "5887c71ec9a300997bee4445def8f4fb9014ea4e09b36522c1efb9b8eb3a5aef",
+    "size_bytes": 1347,
+    "declared_license": "CC0-1.0",
+    "upstream_url": "https://quaternius.com/packs/animatedanimals.html"
+  },
+  "morphotype_guide": {
+    "profile": {
+      "path": "data/controlled_source_attributes_v1/contracts/quadruped_morphotype_guide_short_leg_short_tail_v1.json",
+      "sha256": "d093adb7080170690b8f6f2a118d9d30d7a8ce7ba99faee702f248bf1e4696a3",
+      "size_bytes": 213
+    },
+    "implementation": {
+      "path": "tools/quadruped_morphotype_guide.py",
+      "sha256": "9470f9389830ac354253f3154c34909500ba9a8dd3ea19b02063a4817629b951",
+      "size_bytes": 16626
+    },
+    "leg_length_ratio": 0.65,
+    "tail_length_ratio": 0.45,
+    "body_drop_height_ratio": 0.1539846974465941,
+    "maximum_endpoint_residual_height_ratio": 1.5386593993784044e-7,
+    "maximum_foot_ground_residual_height_ratio": 3.399989047615281e-9,
+    "mesh_ground_residual_height_ratio": 5.0999835714229214e-9,
+    "maximum_cross_section_scale_error": 2.384185791015625e-7,
+    "maximum_torso_segment_scale_error": 3.0530488981383996e-7,
+    "realized_tail_length_ratio": 0.45000001010249563,
+    "render_only": true,
+    "source_asset_unchanged": true
+  },
+  "render": {
+    "spear_base_revision": "bd9f7d9816cf2bd6a7b039e7f44b024f74e285c6",
+    "renderer_path": "tools/blender_render_glb_animation.py",
+    "renderer_sha256": "4583538a0e2f999eee38f98fa27457fc28019d68ed15fa18a45070cc95de449d",
+    "blender_version": "4.2.1 LTS",
+    "parameters": {
+      "rest_pose": true,
+      "orthographic": true,
+      "view": "side",
+      "quadruped_morphotype_guide_profile": "quadruped_morphotype_guide_short_leg_short_tail_v1",
+      "quadruped_far_limb_offset_ratio": 0.3,
+      "pose_template_clay_color": "#b88b6a",
+      "smooth_shading": true,
+      "torso_transform": "rigid_translation_down_only",
+      "camera_yaw_deg": 0,
+      "ground_delta": 0,
+      "width": 1024,
+      "height": 1024,
+      "n_frames": 1,
+      "camera_distance_multiplier": 1.5,
+      "ground_plane": true
+    }
+  },
+  "usage": {
+    "purpose": "license-authenticated generic short-leg and short-tail uniform-clay pose template for controlled quadruped appearance generation",
+    "pose_contract": "orthographic side torso/head; the four inferred feet remain anchored to one ground plane, the axial/head chain receives one rigid downward translation, each inferred leg chain is shortened without cross-section scaling, and the tail chain is shortened about its anatomical root; far-side limbs retain deterministic horizontal depth-disambiguating offsets",
+    "appearance_contract": "one uniform clay material and smooth polygon shading remove source material-region leakage while preserving the transformed guide silhouette",
+    "formal_dataset_registration_authorized": false
+  }
+}
