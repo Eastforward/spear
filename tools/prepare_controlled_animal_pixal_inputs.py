@@ -11,10 +11,14 @@ from __future__ import annotations
 
 import argparse
 import copy
+import ctypes
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -33,10 +37,14 @@ from tools import review_controlled_animal_flux2_candidates as review
 
 
 PIXAL_INPUT_SCHEMA = "avengine_controlled_animal_pixal_inputs_v1"
+ISNET_EXECUTION_RECEIPT_SCHEMA = "avengine_controlled_isnet_execution_receipt_v1"
 ISNET_PYTHON = Path("/data/jzy/miniconda3/envs/hunyuan3d/bin/python")
 ISNET_WORKER = Path(__file__).resolve().parent / "controlled_animal_isnet_worker.py"
+SPEAR_ROOT = Path(__file__).resolve().parents[1]
 PIXAL_MODEL_REVISION = "0b31f9160aa400719af409098bff7936a932f726"
 DINO_REVISION = "3c276edd87d6f6e569ff0c4400e086807d0f3881"
+_AT_FDCWD = -100
+_RENAME_NOREPLACE = 1
 PIXAL_ROUTE_CONTRACTS = {
     "flux2_pixal3d_animal_v1": {
         "asset_class": "animal",
@@ -77,6 +85,328 @@ def _relative_record(path: Path, root: Path) -> dict[str, Any]:
         "sha256": _sha256_file(path),
         "size_bytes": path.stat().st_size,
     }
+
+
+def _absolute_file_record(
+    path: Path,
+    *,
+    label: str,
+    allow_symlink: bool = False,
+    executable: bool = False,
+) -> dict[str, Any]:
+    path = Path(path).absolute()
+    if (
+        (path.is_symlink() and not allow_symlink)
+        or not path.is_file()
+        or (executable and not os.access(path, os.X_OK))
+    ):
+        raise contracts.ContractError(f"{label} is missing or invalid: {path}")
+    return {
+        "path": str(path),
+        "sha256": _sha256_file(path),
+        "size_bytes": path.stat().st_size,
+    }
+
+
+def _reauthenticate_absolute_file_record(
+    record: Mapping[str, Any],
+    *,
+    label: str,
+    allow_symlink: bool = False,
+    executable: bool = False,
+) -> None:
+    if not isinstance(record, Mapping) or set(record) != {
+        "path",
+        "sha256",
+        "size_bytes",
+    }:
+        raise contracts.ContractError(f"{label} file record is invalid")
+    path_value = record.get("path")
+    path = Path(path_value) if isinstance(path_value, str) else Path()
+    if (
+        not isinstance(path_value, str)
+        or not path.is_absolute()
+        or (path.is_symlink() and not allow_symlink)
+        or not path.is_file()
+        or (executable and not os.access(path, os.X_OK))
+        or path.stat().st_size != record.get("size_bytes")
+        or _sha256_file(path) != record.get("sha256")
+    ):
+        raise contracts.ContractError(f"{label} changed")
+
+
+def _copy_file_no_replace(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with source.open("rb") as input_stream, destination.open("xb") as output_stream:
+            shutil.copyfileobj(input_stream, output_stream, 1024 * 1024)
+            output_stream.flush()
+            os.fsync(output_stream.fileno())
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    destination.chmod(0o444)
+    directory_fd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _seal_runtime_directory(path: Path) -> None:
+    path = Path(path)
+    if path.is_symlink() or not path.is_dir():
+        raise contracts.ContractError(f"ISNet runtime directory is unsafe: {path}")
+    path.chmod(0o555)
+    directory_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _rename_noreplace(source: Path, destination: Path) -> None:
+    """Atomically publish one directory without replacing any peer's root."""
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    function = getattr(libc, "renameat2", None)
+    if function is None:
+        raise contracts.ContractError(
+            "atomic no-replace Pixal input publication requires Linux renameat2"
+        )
+    function.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    function.restype = ctypes.c_int
+    result = function(
+        _AT_FDCWD,
+        os.fsencode(source),
+        _AT_FDCWD,
+        os.fsencode(destination),
+        _RENAME_NOREPLACE,
+    )
+    if result == 0:
+        return
+    number = ctypes.get_errno()
+    if number in (errno.EEXIST, errno.ENOTEMPTY):
+        raise FileExistsError(
+            number,
+            "refusing to replace concurrently-created Pixal input root",
+            destination,
+        )
+    raise OSError(number, os.strerror(number), destination)
+
+
+def _rebind_command_root(
+    command: Sequence[str], *, source_root: Path, destination_root: Path
+) -> list[str]:
+    source = str(Path(source_root).absolute())
+    destination = str(Path(destination_root).absolute())
+    prefix = source + os.sep
+    return [
+        destination + argument[len(source) :]
+        if argument == source or argument.startswith(prefix)
+        else argument
+        for argument in command
+    ]
+
+
+def _prepare_isnet_execution(
+    *,
+    staging: Path,
+    output_root: Path,
+    jobs_path: Path,
+    status_path: Path,
+) -> dict[str, Any]:
+    configured_python = _absolute_file_record(
+        ISNET_PYTHON,
+        label="configured ISNet Python",
+        allow_symlink=True,
+        executable=True,
+    )
+    try:
+        resolved_python_path = Path(configured_python["path"]).resolve(strict=True)
+    except OSError as error:
+        raise contracts.ContractError("configured ISNet Python cannot be resolved") from error
+    resolved_python = _absolute_file_record(
+        resolved_python_path,
+        label="resolved ISNet Python",
+        executable=True,
+    )
+    if (
+        configured_python["sha256"] != resolved_python["sha256"]
+        or configured_python["size_bytes"] != resolved_python["size_bytes"]
+    ):
+        raise contracts.ContractError(
+            "configured and resolved ISNet Python identities differ"
+        )
+
+    worker_source = _absolute_file_record(
+        ISNET_WORKER, label="ISNet worker source"
+    )
+    model = _absolute_file_record(isnet.MODEL_PATH, label="pinned ISNet model")
+    if model["sha256"] != isnet.MODEL_SHA256:
+        raise contracts.ContractError("pinned ISNet model hash changed")
+
+    staged_worker = (
+        staging / ".runtime_commands" / "controlled_animal_isnet_worker.py"
+    )
+    _copy_file_no_replace(Path(worker_source["path"]), staged_worker)
+    staged_worker_record = _absolute_file_record(
+        staged_worker, label="frozen ISNet worker"
+    )
+    if (
+        staged_worker_record["sha256"] != worker_source["sha256"]
+        or staged_worker_record["size_bytes"] != worker_source["size_bytes"]
+    ):
+        raise contracts.ContractError("frozen ISNet worker differs from its source")
+    _seal_runtime_directory(staged_worker.parent)
+
+    staged_jobs_record = _absolute_file_record(jobs_path, label="ISNet jobs")
+    published_worker = (
+        output_root / ".runtime_commands" / "controlled_animal_isnet_worker.py"
+    )
+    published_jobs = output_root / "isnet_jobs.json"
+    published_status = output_root / "isnet_status.json"
+    command = [
+        resolved_python["path"],
+        str(published_worker),
+        "--jobs",
+        str(published_jobs),
+        "--status",
+        str(published_status),
+    ]
+    executed_command = _rebind_command_root(
+        command, source_root=output_root, destination_root=staging
+    )
+    expected_executed_command = [
+        resolved_python["path"],
+        str(staged_worker),
+        "--jobs",
+        str(jobs_path),
+        "--status",
+        str(status_path),
+    ]
+    if executed_command != expected_executed_command:
+        raise contracts.ContractError("ISNet command root rebinding is ambiguous")
+
+    receipt = {
+        "schema": ISNET_EXECUTION_RECEIPT_SCHEMA,
+        "model": model,
+        "python": {
+            "configured": configured_python,
+            "resolved": resolved_python,
+        },
+        "worker": {
+            "source": worker_source,
+            "executed": {
+                "path": str(published_worker),
+                "sha256": staged_worker_record["sha256"],
+                "size_bytes": staged_worker_record["size_bytes"],
+            },
+        },
+        "jobs": {
+            "path": str(published_jobs),
+            "sha256": staged_jobs_record["sha256"],
+            "size_bytes": staged_jobs_record["size_bytes"],
+        },
+        "working_directory": str(SPEAR_ROOT),
+        "command": command,
+        "command_sha256": _json_sha256(command),
+        "executed_command": executed_command,
+        "executed_command_sha256": _json_sha256(executed_command),
+        "path_rebinding": {
+            "staging_root": str(staging),
+            "published_root": str(output_root),
+        },
+    }
+    return {
+        "receipt": receipt,
+        "staged_worker": staged_worker,
+        "jobs_path": jobs_path,
+    }
+
+
+def _reauthenticate_isnet_execution(execution: Mapping[str, Any]) -> None:
+    receipt = execution["receipt"]
+    python = receipt["python"]
+    worker = receipt["worker"]
+    _reauthenticate_absolute_file_record(
+        python["configured"],
+        label="configured ISNet Python",
+        allow_symlink=True,
+        executable=True,
+    )
+    _reauthenticate_absolute_file_record(
+        python["resolved"], label="resolved ISNet Python", executable=True
+    )
+    try:
+        current_resolved_python = Path(python["configured"]["path"]).resolve(
+            strict=True
+        )
+    except OSError as error:
+        raise contracts.ContractError("configured ISNet Python changed") from error
+    if current_resolved_python != Path(python["resolved"]["path"]):
+        raise contracts.ContractError("configured ISNet Python target changed")
+    if (
+        python["configured"]["sha256"] != python["resolved"]["sha256"]
+        or python["configured"]["size_bytes"] != python["resolved"]["size_bytes"]
+    ):
+        raise contracts.ContractError(
+            "configured and resolved ISNet Python identities changed"
+        )
+    _reauthenticate_absolute_file_record(
+        worker["source"], label="ISNet worker source"
+    )
+    staged_worker_record = {
+        **worker["executed"],
+        "path": str(execution["staged_worker"]),
+    }
+    _reauthenticate_absolute_file_record(
+        staged_worker_record, label="frozen ISNet worker"
+    )
+    runtime_directory = Path(execution["staged_worker"]).parent
+    if (
+        runtime_directory.is_symlink()
+        or not runtime_directory.is_dir()
+        or stat.S_IMODE(runtime_directory.stat().st_mode) != 0o555
+    ):
+        raise contracts.ContractError("frozen ISNet worker directory changed")
+    if (
+        staged_worker_record["sha256"] != worker["source"]["sha256"]
+        or staged_worker_record["size_bytes"] != worker["source"]["size_bytes"]
+    ):
+        raise contracts.ContractError("frozen ISNet worker identity changed")
+    _reauthenticate_absolute_file_record(
+        receipt["model"], label="pinned ISNet model"
+    )
+    if receipt["model"]["sha256"] != isnet.MODEL_SHA256:
+        raise contracts.ContractError("pinned ISNet model identity changed")
+    staged_jobs_record = {**receipt["jobs"], "path": str(execution["jobs_path"])}
+    _reauthenticate_absolute_file_record(staged_jobs_record, label="ISNet jobs")
+
+    rebinding = receipt["path_rebinding"]
+    if (
+        rebinding
+        != {
+            "staging_root": str(Path(rebinding["staging_root"]).absolute()),
+            "published_root": str(Path(rebinding["published_root"]).absolute()),
+        }
+        or receipt["command_sha256"] != _json_sha256(receipt["command"])
+        or receipt["executed_command_sha256"]
+        != _json_sha256(receipt["executed_command"])
+        or receipt["executed_command"]
+        != _rebind_command_root(
+            receipt["command"],
+            source_root=Path(rebinding["published_root"]),
+            destination_root=Path(rebinding["staging_root"]),
+        )
+    ):
+        raise contracts.ContractError("ISNet command execution receipt changed")
 
 
 def _flux_one_shot_evidence(
@@ -516,33 +846,41 @@ def prepare_pixal_inputs(
         contracts.write_json_no_replace(jobs_path, jobs_payload)
         status_path = staging / "isnet_status.json"
         log_path = staging / "isnet.log"
-        command = [
-            str(ISNET_PYTHON),
-            str(ISNET_WORKER),
-            "--jobs",
-            str(jobs_path),
-            "--status",
-            str(status_path),
-        ]
-        with log_path.open("xb") as log:
-            completed = subprocess.run(
-                command,
-                cwd=Path(__file__).resolve().parents[1],
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                timeout=1800,
-                check=False,
-            )
-            log.flush()
-            os.fsync(log.fileno())
+        isnet_execution = _prepare_isnet_execution(
+            staging=staging,
+            output_root=output_root,
+            jobs_path=jobs_path,
+            status_path=status_path,
+        )
+        _reauthenticate_isnet_execution(isnet_execution)
+        try:
+            with log_path.open("xb") as log:
+                completed = subprocess.run(
+                    isnet_execution["receipt"]["executed_command"],
+                    cwd=SPEAR_ROOT,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    timeout=1800,
+                    check=False,
+                )
+                log.flush()
+                os.fsync(log.fileno())
+        finally:
+            _reauthenticate_isnet_execution(isnet_execution)
         if completed.returncode != 0:
             raise contracts.ContractError("ISNet worker failed")
         status = contracts.load_json(status_path)
+        expected_status_model = {
+            "path": isnet_execution["receipt"]["model"]["path"],
+            "sha256": isnet_execution["receipt"]["model"]["sha256"],
+            "name": "isnet-general-use",
+        }
         if (
             status.get("schema") != isnet.STATUS_SCHEMA
             or status.get("status") != "passed"
             or status.get("passed_count") != len(segmentation_jobs)
             or status.get("failed_count") != 0
+            or status.get("model") != expected_status_model
         ):
             raise contracts.ContractError("ISNet worker status is incomplete")
         status_by_id = {item["instance_id"]: item for item in status["jobs"]}
@@ -635,6 +973,10 @@ def prepare_pixal_inputs(
                     "status": "passed",
                 }
             )
+        _reauthenticate_isnet_execution(isnet_execution)
+        isnet_receipt = copy.deepcopy(isnet_execution["receipt"])
+        isnet_receipt["status"] = _relative_record(status_path, staging)
+        isnet_receipt["log"] = _relative_record(log_path, staging)
         pixal_payload: dict[str, Any] = {
             "schema": PIXAL_INPUT_SCHEMA,
             "status": "ready_for_pixal3d",
@@ -649,14 +991,7 @@ def prepare_pixal_inputs(
                 "sha256": _sha256_file(Path(review_batch_path)),
                 "review_batch_sha256": review_batch["review_batch_sha256"],
             },
-            "isnet": {
-                "model_path": str(isnet.MODEL_PATH),
-                "model_sha256": isnet.MODEL_SHA256,
-                "worker": str(ISNET_WORKER),
-                "python": str(ISNET_PYTHON),
-                "status": _relative_record(status_path, staging),
-                "log": _relative_record(log_path, staging),
-            },
+            "isnet": isnet_receipt,
             "pixal_output_root": str(pixal_output_root),
             "job_count": len(pixal_jobs),
             "jobs": pixal_jobs,
@@ -668,6 +1003,8 @@ def prepare_pixal_inputs(
                 "all_pixal_inputs_rgba_1024": True,
                 "pixal_and_dino_revisions_pinned": True,
                 "route_and_profile_bindings_reauthenticated": True,
+                "isnet_runtime_inputs_reauthenticated_before_and_after_execution": True,
+                "isnet_worker_executed_from_frozen_published_copy": True,
                 "static_jobs_have_no_rig_or_animation_binding": (
                     route_contract["asset_class"] != "static_object"
                     or all(
@@ -685,11 +1022,7 @@ def prepare_pixal_inputs(
         pixal_payload["manifest_sha256"] = _json_sha256(pixal_payload)
         contracts.write_json_no_replace(staging / "pixal_inputs_manifest.json", pixal_payload)
         material_execution.native._seal_readonly_tree(staging)
-        if output_root.exists() or output_root.is_symlink():
-            raise contracts.ContractError(
-                f"refusing to replace concurrently-created output: {output_root}"
-            )
-        os.rename(staging, output_root)
+        _rename_noreplace(staging, output_root)
         return output_root / "pixal_inputs_manifest.json"
     except Exception:
         material_execution.native._remove_staging_tree(staging)

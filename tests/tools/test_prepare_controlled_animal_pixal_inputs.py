@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import os
+import stat
 import subprocess
 from pathlib import Path
 
@@ -298,8 +300,42 @@ def test_prepare_pixal_inputs_publishes_the_authenticated_route_contract(
         "_seal_readonly_tree",
         lambda _path: None,
     )
+    reauthentication_calls = []
+    original_reauthenticate = preparation._reauthenticate_isnet_execution
+
+    def tracked_reauthentication(execution):
+        original_reauthenticate(execution)
+        reauthentication_calls.append(str(execution["staged_worker"]))
+
+    monkeypatch.setattr(
+        preparation,
+        "_reauthenticate_isnet_execution",
+        tracked_reauthentication,
+    )
+    executed_commands = []
+    rename_calls = []
+    original_rename_noreplace = preparation._rename_noreplace
+
+    def tracked_rename_noreplace(source, destination):
+        rename_calls.append((str(source), str(destination)))
+        original_rename_noreplace(source, destination)
+
+    monkeypatch.setattr(
+        preparation, "_rename_noreplace", tracked_rename_noreplace
+    )
 
     def fake_isnet(command, **_kwargs):
+        executed_commands.append(list(command))
+        assert command[0] == str(preparation.ISNET_PYTHON.resolve(strict=True))
+        assert Path(command[1]).name == "controlled_animal_isnet_worker.py"
+        assert Path(command[1]).parent.name == ".runtime_commands"
+        assert Path(command[1]) != preparation.ISNET_WORKER
+        assert stat.S_IMODE(Path(command[1]).parent.stat().st_mode) == 0o555
+        replacement = tmp_path / "replacement_isnet_worker.py"
+        replacement.write_bytes(b"print('replacement worker')\n")
+        with pytest.raises(PermissionError):
+            os.replace(replacement, Path(command[1]))
+        assert replacement.is_file()
         jobs_path = Path(command[command.index("--jobs") + 1])
         status_path = Path(command[command.index("--status") + 1])
         jobs = contracts.load_json(jobs_path)["jobs"]
@@ -324,6 +360,11 @@ def test_prepare_pixal_inputs_publishes_the_authenticated_route_contract(
             {
                 "schema": preparation.isnet.STATUS_SCHEMA,
                 "status": "passed",
+                "model": {
+                    "path": str(preparation.isnet.MODEL_PATH),
+                    "sha256": preparation.isnet.MODEL_SHA256,
+                    "name": "isnet-general-use",
+                },
                 "passed_count": len(jobs),
                 "failed_count": 0,
                 "jobs": status_jobs,
@@ -344,9 +385,80 @@ def test_prepare_pixal_inputs_publishes_the_authenticated_route_contract(
     assert manifest["asset_class"] == asset_class
     assert manifest["route"] == route
     assert manifest["job_count"] == 1
+    assert len(reauthentication_calls) == 3
+    assert len(executed_commands) == 1
+    assert len(rename_calls) == 1
+    assert rename_calls[0][1] == str(output_root)
     assert manifest["automatic_checks"][
         "static_jobs_have_no_rig_or_animation_binding"
     ] is True
+    assert manifest["automatic_checks"][
+        "isnet_runtime_inputs_reauthenticated_before_and_after_execution"
+    ] is True
+    assert manifest["automatic_checks"][
+        "isnet_worker_executed_from_frozen_published_copy"
+    ] is True
+    isnet_receipt = manifest["isnet"]
+    assert set(isnet_receipt) == {
+        "schema",
+        "model",
+        "python",
+        "worker",
+        "jobs",
+        "working_directory",
+        "command",
+        "command_sha256",
+        "executed_command",
+        "executed_command_sha256",
+        "path_rebinding",
+        "status",
+        "log",
+    }
+    assert (
+        isnet_receipt["schema"] == preparation.ISNET_EXECUTION_RECEIPT_SCHEMA
+    )
+    for record in (
+        isnet_receipt["model"],
+        isnet_receipt["python"]["configured"],
+        isnet_receipt["python"]["resolved"],
+        isnet_receipt["worker"]["source"],
+        isnet_receipt["worker"]["executed"],
+        isnet_receipt["jobs"],
+    ):
+        assert set(record) == {"path", "sha256", "size_bytes"}
+        path = Path(record["path"])
+        assert path.is_file()
+        assert preparation._sha256_file(path) == record["sha256"]
+        assert path.stat().st_size == record["size_bytes"]
+    assert isnet_receipt["python"]["configured"]["path"] == str(
+        preparation.ISNET_PYTHON
+    )
+    assert isnet_receipt["python"]["resolved"]["path"] == str(
+        preparation.ISNET_PYTHON.resolve(strict=True)
+    )
+    assert isnet_receipt["worker"]["source"]["path"] == str(
+        preparation.ISNET_WORKER
+    )
+    assert Path(isnet_receipt["worker"]["executed"]["path"]).is_relative_to(
+        output_root
+    )
+    assert isnet_receipt["command"][1] == isnet_receipt["worker"]["executed"][
+        "path"
+    ]
+    assert isnet_receipt["command"][3] == isnet_receipt["jobs"]["path"]
+    assert isnet_receipt["command_sha256"] == preparation._json_sha256(
+        isnet_receipt["command"]
+    )
+    assert isnet_receipt[
+        "executed_command_sha256"
+    ] == preparation._json_sha256(isnet_receipt["executed_command"])
+    assert isnet_receipt["executed_command"] == executed_commands[0]
+    assert isnet_receipt["executed_command"] == preparation._rebind_command_root(
+        isnet_receipt["command"],
+        source_root=Path(isnet_receipt["path_rebinding"]["published_root"]),
+        destination_root=Path(isnet_receipt["path_rebinding"]["staging_root"]),
+    )
+    assert isnet_receipt["path_rebinding"]["published_root"] == str(output_root)
     job = manifest["jobs"][0]
     assert job["asset_class"] == asset_class
     assert job["route"] == route
@@ -361,3 +473,105 @@ def test_prepare_pixal_inputs_publishes_the_authenticated_route_contract(
             "Idle",
         }
     assert job["controlled_request"]["profile_sha256"] == PROFILE_SHA256
+
+
+def _isolated_isnet_execution(tmp_path, monkeypatch):
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    resolved_python = runtime_root / "python3.10"
+    resolved_python.write_bytes(b"#!/bin/sh\nexit 0\n")
+    resolved_python.chmod(0o755)
+    configured_python = runtime_root / "python"
+    configured_python.symlink_to(resolved_python.name)
+    worker = runtime_root / "controlled_animal_isnet_worker.py"
+    worker.write_bytes(b"print('fixture worker')\n")
+    model = runtime_root / "isnet-general-use.onnx"
+    model.write_bytes(b"fixture model")
+    monkeypatch.setattr(preparation, "ISNET_PYTHON", configured_python)
+    monkeypatch.setattr(preparation, "ISNET_WORKER", worker)
+    monkeypatch.setattr(preparation.isnet, "MODEL_PATH", model)
+    monkeypatch.setattr(
+        preparation.isnet, "MODEL_SHA256", preparation._sha256_file(model)
+    )
+    staging = tmp_path / ".pixal_inputs.fixture.staging"
+    staging.mkdir()
+    jobs_path = staging / "isnet_jobs.json"
+    contracts.write_json_no_replace(
+        jobs_path,
+        {"schema": preparation.isnet.JOBS_SCHEMA, "jobs": [{"fixture": True}]},
+    )
+    output_root = tmp_path / "pixal_inputs"
+    execution = preparation._prepare_isnet_execution(
+        staging=staging,
+        output_root=output_root,
+        jobs_path=jobs_path,
+        status_path=staging / "isnet_status.json",
+    )
+    return execution, {
+        "configured_python": configured_python,
+        "resolved_python": resolved_python,
+        "worker": worker,
+        "model": model,
+        "jobs": jobs_path,
+    }
+
+
+@pytest.mark.parametrize(
+    ("tamper_target", "message"),
+    [
+        ("python_target", "configured ISNet Python target changed"),
+        ("worker_source", "ISNet worker source changed"),
+        ("frozen_worker", "frozen ISNet worker changed"),
+        ("model", "pinned ISNet model changed"),
+        ("jobs", "ISNet jobs changed"),
+        ("command", "ISNet command execution receipt changed"),
+        ("runtime_directory", "frozen ISNet worker directory changed"),
+    ],
+)
+def test_isnet_execution_reauthentication_fails_closed_on_runtime_tampering(
+    tmp_path, monkeypatch, tamper_target, message
+):
+    execution, paths = _isolated_isnet_execution(tmp_path, monkeypatch)
+    preparation._reauthenticate_isnet_execution(execution)
+
+    if tamper_target == "python_target":
+        replacement = paths["resolved_python"].with_name("python3.10.same-bytes")
+        replacement.write_bytes(paths["resolved_python"].read_bytes())
+        replacement.chmod(0o755)
+        paths["configured_python"].unlink()
+        paths["configured_python"].symlink_to(replacement.name)
+    elif tamper_target == "worker_source":
+        paths["worker"].write_bytes(b"print('changed worker')\n")
+    elif tamper_target == "frozen_worker":
+        frozen = Path(execution["staged_worker"])
+        frozen.chmod(0o644)
+        frozen.write_bytes(b"print('changed frozen worker')\n")
+    elif tamper_target == "model":
+        paths["model"].write_bytes(b"changed model")
+    elif tamper_target == "jobs":
+        paths["jobs"].write_bytes(b'{"changed":true}\n')
+    elif tamper_target == "runtime_directory":
+        Path(execution["staged_worker"]).parent.chmod(0o755)
+    else:
+        execution["receipt"]["command"].append("--changed")
+
+    with pytest.raises(contracts.ContractError, match=message):
+        preparation._reauthenticate_isnet_execution(execution)
+
+
+def test_atomic_no_replace_rejects_a_concurrently_created_empty_output_root(
+    tmp_path,
+):
+    staging = tmp_path / ".pixal_inputs.fixture.staging"
+    staging.mkdir()
+    staged_file = staging / "pixal_inputs_manifest.json"
+    staged_file.write_bytes(b'{"fixture":true}\n')
+    output_root = tmp_path / "pixal_inputs"
+    output_root.mkdir()
+
+    with pytest.raises(FileExistsError, match="concurrently-created"):
+        preparation._rename_noreplace(staging, output_root)
+
+    assert output_root.is_dir()
+    assert list(output_root.iterdir()) == []
+    assert staged_file.read_bytes() == b'{"fixture":true}\n'
