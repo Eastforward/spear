@@ -1,3 +1,4 @@
+import copy
 import json
 import sys
 from pathlib import Path
@@ -82,3 +83,82 @@ def test_deterministic_sampling(tmp_path):
     a = [lib.sample("x", np.random.default_rng(42)).path.name for _ in range(3)]
     b = [lib.sample("x", np.random.default_rng(42)).path.name for _ in range(3)]
     assert a == b
+
+
+def test_pinned_dog_and_cat_sources_match_real_wav_and_remain_nonformal():
+    lib = load_library(REPO / "data" / "audio_library_v1.json")
+
+    dog = lib.require_single("dog_bark")
+    cat = lib.require_single("cat_meow")
+
+    assert (dog.species, dog.sample_rate, dog.duration_s, dog.channels) == (
+        "dog",
+        44100,
+        10.0,
+        2,
+    )
+    assert (cat.species, cat.sample_rate, cat.duration_s, cat.channels) == (
+        "cat",
+        44100,
+        10.0,
+        2,
+    )
+    assert dog.sha256 == (
+        "d244289ddde2d60065e258ef8f336776f2209f7b9240a706dbf8d42888854033"
+    )
+    assert cat.sha256 == (
+        "accd2babb3facabd1f140ce16da9a3986e457f49f175bb0b162c9fa2e070b158"
+    )
+    for sample in (dog, cat):
+        assert sample.codec == "pcm_s16le"
+        assert sample.sample_width_bytes == 2
+        assert sample.frame_count == 441000
+        assert sample.item_level_license_status == "missing"
+        assert sample.item_level_license_snapshot is None
+        assert sample.formal_registration_authorized is False
+
+
+def _real_pinned_entries():
+    payload = json.loads((REPO / "data" / "audio_library_v1.json").read_text())
+    return [
+        copy.deepcopy(entry)
+        for entry in payload["samples"]
+        if entry["category"] in {"dog_bark", "cat_meow"}
+    ]
+
+
+def test_pinned_catalog_rejects_stale_wav_metadata(tmp_path):
+    entries = _real_pinned_entries()
+    entries[0]["sample_rate"] = 16000
+
+    with pytest.raises(ValueError, match="WAV metadata changed"):
+        load_library(_write_catalog(tmp_path, entries))
+
+
+def test_pinned_catalog_rejects_cross_species_duplicate(tmp_path):
+    entries = _real_pinned_entries()
+    cat = entries[1]
+    dog = entries[0]
+    for field in (
+        "path",
+        "sha256",
+        "size_bytes",
+        "codec",
+        "channels",
+        "sample_width_bytes",
+        "sample_rate",
+        "frame_count",
+        "duration_s",
+    ):
+        dog[field] = cat[field]
+
+    with pytest.raises(ValueError, match="duplicated across species"):
+        load_library(_write_catalog(tmp_path, entries))
+
+
+def test_pinned_catalog_cannot_authorize_formal_without_item_license(tmp_path):
+    entries = _real_pinned_entries()
+    entries[0]["formal_registration_authorized"] = True
+
+    with pytest.raises(ValueError, match="item-level license evidence"):
+        load_library(_write_catalog(tmp_path, entries))

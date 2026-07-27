@@ -15,8 +15,14 @@ from scipy.signal import resample_poly
 SPEAR_ROOT = Path(__file__).resolve().parents[1]
 TOOLS_ROOT = SPEAR_ROOT / "tools"
 sys.path.insert(0, str(TOOLS_ROOT))
+sys.path.insert(0, str(TOOLS_ROOT / "spike_rlr"))
 
 from audio_event_schedule import prepare_animal_call  # noqa: E402
+from animal_audio import (  # noqa: E402
+    pinned_animal_audio_contract,
+    resolve_animal_audio_path,
+    species_for_tag,
+)
 from gpurir_scenes.audio_registry import pick_audio  # noqa: E402
 from species_rig_map import ANIMATED_RIG_MAP, STATIC_MESH_MAP  # noqa: E402
 
@@ -44,11 +50,19 @@ def _load_mono(path: Path, sample_rate: int) -> np.ndarray:
 
 
 def _canonical_species(tag: str) -> str:
-    if tag.startswith("cat_"):
-        return "cat"
-    if tag.startswith("dog_"):
-        return "dog"
-    return tag
+    return species_for_tag(tag) or tag
+
+
+def _resolve_audit_source(tag: str, rng) -> tuple[Path, str, str, dict | None]:
+    """Use exact controlled sources for dog/cat; keep legacy lookup elsewhere."""
+    species = species_for_tag(tag)
+    if species in {"dog", "cat"}:
+        lookup = "dog_bark" if species == "dog" else "cat_meow"
+        path = Path(resolve_animal_audio_path(tag, lookup)).resolve()
+        contract = pinned_animal_audio_contract(lookup)
+        return path, "pinned_local", lookup, contract
+    audio_path, source_kind, keyword = pick_audio(tag, rng)
+    return Path(audio_path).resolve(), source_kind, str(keyword), None
 
 
 def parse_args(argv=None):
@@ -70,8 +84,9 @@ def main(argv=None):
     rows = []
     for index, tag in enumerate(tags):
         pick_rng = np.random.default_rng(args.seed + index)
-        audio_path, source_kind, keyword = pick_audio(tag, pick_rng)
-        source_path = Path(audio_path).resolve()
+        source_path, source_kind, keyword, pinned_contract = (
+            _resolve_audit_source(tag, pick_rng)
+        )
         source_signal = _load_mono(source_path, args.sample_rate)
         scheduled, schedule = prepare_animal_call(
             source_signal,
@@ -93,6 +108,16 @@ def main(argv=None):
                 "source_sha256": _sha256(source_path),
                 "preview_path": str(preview_path),
                 "preview_sha256": _sha256(preview_path),
+                "source_original_sample_rate_hz": (
+                    pinned_contract["sample_rate_hz"]
+                    if pinned_contract is not None
+                    else None
+                ),
+                "source_original_duration_s": (
+                    pinned_contract["duration_s"]
+                    if pinned_contract is not None
+                    else None
+                ),
             }
         )
         rows.append(
@@ -102,11 +127,16 @@ def main(argv=None):
                 "source_kind": source_kind,
                 "source_path": str(source_path),
                 "license_status": (
-                    "Stable Audio Open local license snapshot required"
-                    if source_kind.startswith("sao")
-                    else "local corpus item-level provenance/license review required"
+                    "item_level_license_evidence_missing"
+                    if pinned_contract is not None
+                    else (
+                        "Stable Audio Open local license snapshot required"
+                        if source_kind.startswith("sao")
+                        else "local corpus item-level provenance/license review required"
+                    )
                 ),
                 "registration_status": "research_candidate",
+                "formal_registration_authorized": False,
                 "schedule": schedule,
             }
         )

@@ -160,6 +160,45 @@ def test_sample_scene_default_pool_uses_registered_assets(tmp_path):
     }
 
 
+def test_sample_scene_propagates_pinned_animal_audio_evidence():
+    lib = load_library(REPO / "data" / "audio_library_v1.json")
+    template = {
+        "bounds_xy": list(BOUNDS),
+        "obstacles": [],
+        "valid_regions": [BOUNDS],
+        "distance_range_m": [0.5, 6.0],
+        "mic_height_range_m": [0.5, 1.8],
+        "source_height_m": 0.45,
+        "n_sources_override": 2,
+        "source_pool": [
+            {
+                "tag": "dog_pembroke_welsh_corgi_candidate",
+                "audio_lookup": "dog_bark",
+            },
+            {
+                "tag": "cat_british_shorthair_candidate",
+                "audio_lookup": "cat_meow",
+            },
+        ],
+    }
+
+    scene = sample_scene(template, lib, np.random.default_rng(20260727))
+    by_lookup = {source["audio_lookup"]: source for source in scene.source_specs}
+
+    assert by_lookup["dog_bark"]["audio_sha256"] == (
+        "d244289ddde2d60065e258ef8f336776f2209f7b9240a706dbf8d42888854033"
+    )
+    assert by_lookup["cat_meow"]["audio_sha256"] == (
+        "accd2babb3facabd1f140ce16da9a3986e457f49f175bb0b162c9fa2e070b158"
+    )
+    for source in by_lookup.values():
+        assert source["audio_source_sample_rate_hz"] == 44100
+        assert source["audio_source_duration_s"] == 10.0
+        assert source["audio_item_level_license_status"] == "missing"
+        assert source["audio_formal_registration_authorized"] is False
+        assert source["strict_audio"] is True
+
+
 def test_sample_scene_uses_configured_source_pool(tmp_path, monkeypatch):
     p = tmp_path / "cat.json"
     p.write_text(json.dumps({"samples": [

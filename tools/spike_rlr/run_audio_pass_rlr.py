@@ -27,6 +27,7 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -43,8 +44,11 @@ if str(TOOLS_ROOT) not in sys.path:
 from audio_event_schedule import prepare_animal_call
 from animal_audio import (
     is_animal_tag,
+    is_pinned_animal_audio_lookup,
     is_synthetic_audio_path,
+    pinned_animal_audio_contract,
     resolve_animal_audio_path,
+    species_for_tag,
 )
 from speech_audio import is_speech_lookup, resolve_speech_audio_path
 from source_trajectory import acoustic_trajectory
@@ -272,8 +276,21 @@ def _load_dry_source(
     n_samples = int(round(sample_rate * duration_s))
     is_speech_source = False
     manual_repeat_applied = False
+    source_spec = source_spec or {}
+    requested_audio_lookup = source_spec.get("audio_lookup")
+    fail_closed_audio = (
+        bool(source_spec.get("strict_audio"))
+        or (
+            requested_audio_lookup not in {None, "silent"}
+            and is_animal_tag(tag)
+        )
+        or (
+            requested_audio_lookup is None
+            and species_for_tag(tag) in {"dog", "cat"}
+        )
+    )
+    resolved_pinned_lookup = None
     try:
-        source_spec = source_spec or {}
         if source_spec.get("mute_audio") or source_spec.get("audio_lookup") == "silent":
             print(f"[audio] {tag}: muted by source spec")
             if schedule_metadata_out is not None:
@@ -302,9 +319,13 @@ def _load_dry_source(
                 audio_lookup=audio_lookup,
                 explicit_path=explicit_path,
             ))
+            if is_pinned_animal_audio_lookup(audio_lookup):
+                resolved_pinned_lookup = audio_lookup
             print(f"[audio] {tag}: using spec audio_path {os.path.basename(wav_path)}")
         elif audio_lookup:
             wav_path = str(resolve_animal_audio_path(tag, audio_lookup=audio_lookup))
+            if is_pinned_animal_audio_lookup(audio_lookup):
+                resolved_pinned_lookup = audio_lookup
             print(f"[audio] {tag}: using spec audio_lookup {audio_lookup} -> {os.path.basename(wav_path)}")
         else:
             override = _TAG_AUDIO_OVERRIDES.get(tag)
@@ -327,14 +348,48 @@ def _load_dry_source(
             wav_path = override
             print(f"[audio] {tag}: using SPIKE OVERRIDE {os.path.basename(wav_path)}")
         elif "wav_path" not in locals():
-            sys.path.insert(0, str(REPO_ROOT / "tools"))
-            from gpurir_scenes.audio_registry import pick_audio
-            picked = pick_audio(tag, np.random.default_rng(seed))
-            # pick_audio returns (path, source, keyword) or just path (varies by
-            # registry version). Support both.
-            wav_path = picked[0] if isinstance(picked, tuple) else picked
-            print(f"[audio] {tag}: using registry pick {os.path.basename(wav_path)}")
+            species = species_for_tag(tag)
+            if species in {"dog", "cat"}:
+                resolved_pinned_lookup = (
+                    "dog_bark" if species == "dog" else "cat_meow"
+                )
+                wav_path = resolve_animal_audio_path(tag)
+                print(
+                    f"[audio] {tag}: using pinned species default "
+                    f"{resolved_pinned_lookup} -> {os.path.basename(wav_path)}"
+                )
+            else:
+                sys.path.insert(0, str(REPO_ROOT / "tools"))
+                from gpurir_scenes.audio_registry import pick_audio
+                picked = pick_audio(tag, np.random.default_rng(seed))
+                # pick_audio returns (path, source, keyword) or just path
+                # (varies by registry version). Support both.
+                wav_path = picked[0] if isinstance(picked, tuple) else picked
+                print(
+                    f"[audio] {tag}: using registry pick "
+                    f"{os.path.basename(wav_path)}"
+                )
+        source_path = Path(wav_path)
+        source_digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        expected_digest = source_spec.get("audio_sha256")
+        if expected_digest is not None and source_digest != expected_digest:
+            raise ValueError(
+                f"audio_sha256 mismatch for {tag}: "
+                f"expected={expected_digest}, observed={source_digest}"
+            )
+        pinned_contract = (
+            pinned_animal_audio_contract(resolved_pinned_lookup)
+            if resolved_pinned_lookup is not None
+            else None
+        )
+        if pinned_contract is not None and source_digest != pinned_contract["sha256"]:
+            raise ValueError(
+                f"resolved {resolved_pinned_lookup!r} source changed before load"
+            )
         y, sr = sf.read(wav_path, dtype="float32")
+        source_original_sample_rate_hz = int(sr)
+        source_original_frame_count = int(len(y))
+        source_original_channels = int(y.shape[1]) if y.ndim > 1 else 1
         if y.ndim > 1:
             y = y.mean(axis=1)
         if sr != sample_rate:
@@ -429,6 +484,44 @@ def _load_dry_source(
                 ],
             }
         if schedule_metadata_out is not None:
+            schedule.update(
+                {
+                    "source_sha256": source_digest,
+                    "source_original_sample_rate_hz": (
+                        source_original_sample_rate_hz
+                    ),
+                    "source_original_frame_count": source_original_frame_count,
+                    "source_original_channels": source_original_channels,
+                    "render_sample_rate_hz": int(sample_rate),
+                }
+            )
+            if pinned_contract is not None:
+                schedule.update(
+                    {
+                        "audio_lookup": pinned_contract["audio_lookup"],
+                        "source_species": pinned_contract["species"],
+                        "source_codec": pinned_contract["codec"],
+                        "source_channels": pinned_contract["channels"],
+                        "source_sample_width_bytes": pinned_contract[
+                            "sample_width_bytes"
+                        ],
+                        "source_catalog_frame_count": pinned_contract[
+                            "frame_count"
+                        ],
+                        "source_catalog_duration_s": pinned_contract[
+                            "duration_s"
+                        ],
+                        "item_level_license_status": pinned_contract[
+                            "item_level_license_status"
+                        ],
+                        "item_level_license_snapshot": pinned_contract[
+                            "item_level_license_snapshot"
+                        ],
+                        "formal_registration_authorized": pinned_contract[
+                            "formal_registration_authorized"
+                        ],
+                    }
+                )
             schedule_metadata_out.update(schedule)
         # Peak normalize to prevent clipping in convolution
         peak = np.abs(y).max()
@@ -436,7 +529,7 @@ def _load_dry_source(
             y = y * (0.8 / peak)
         return y
     except Exception as e:
-        if (source_spec or {}).get("strict_audio"):
+        if fail_closed_audio:
             raise RuntimeError(f"strict audio source {tag} failed: {e}") from e
         # Fallback: use a bark-like AM sinusoid (obvious placeholder)
         print(f"[audio] WARNING: audio_registry failed for {tag}: {e}. Using placeholder tone.")

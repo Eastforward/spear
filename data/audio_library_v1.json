@@ -1,13 +1,23 @@
 {
-  "_doc": "Plan 2 initial audio catalog. dog_bark reuses the Plan 1 file used by dog_golden and dog_beagle_v2. cat_purring uses a local Omniloc cat purring clip. speech uses a local LibriTTS utterance for visible human-source smoke tests. music_piano is generated in-code by run_audio_pass_rlr.py's _synth_piano_scale — path is a sentinel string. Plan 3 will replace this with proper FSD50K + Stable Audio Open files.",
+  "_doc": "Plan 2 audio catalog. Source-file metadata describes the stored bytes, not the render target: dog_bark and cat_meow are exact 44.1 kHz stereo 10 s PCM WAV files that are resampled and event-scheduled at scene render time. Their item-level license snapshots are missing, so they remain research-only and formal registration is false. cat_purring uses a local Omniloc clip, speech uses a local LibriTTS utterance for visible human-source smoke tests, and music_piano is an explicit in-code sentinel. A future licensed catalog may replace the research-only animal clips.",
   "samples": [
     {
       "category": "dog_bark",
       "path": "/data/datasets/omniaudio/train-data-az-360-large/Barking Aldi Dog_358.wav",
       "is_synthetic": false,
-      "duration_s": 5.0,
-      "sample_rate": 16000,
-      "source": "omniaudio_traindata"
+      "duration_s": 10.0,
+      "sample_rate": 44100,
+      "source": "omniaudio_traindata",
+      "species": "dog",
+      "sha256": "d244289ddde2d60065e258ef8f336776f2209f7b9240a706dbf8d42888854033",
+      "size_bytes": 1764044,
+      "codec": "pcm_s16le",
+      "channels": 2,
+      "sample_width_bytes": 2,
+      "frame_count": 441000,
+      "item_level_license_status": "missing",
+      "item_level_license_snapshot": null,
+      "formal_registration_authorized": false
     },
     {
       "category": "dog_growl",
@@ -29,9 +39,19 @@
       "category": "cat_meow",
       "path": "/data/datasets/omniaudio/train-data-az-360-large/Cat Meowing_293.wav",
       "is_synthetic": false,
-      "duration_s": 5.0,
-      "sample_rate": 16000,
-      "source": "omniaudio_traindata"
+      "duration_s": 10.0,
+      "sample_rate": 44100,
+      "source": "omniaudio_traindata",
+      "species": "cat",
+      "sha256": "accd2babb3facabd1f140ce16da9a3986e457f49f175bb0b162c9fa2e070b158",
+      "size_bytes": 1764044,
+      "codec": "pcm_s16le",
+      "channels": 2,
+      "sample_width_bytes": 2,
+      "frame_count": 441000,
+      "item_level_license_status": "missing",
+      "item_level_license_snapshot": null,
+      "formal_registration_authorized": false
     },
     {
       "category": "cat_purring",

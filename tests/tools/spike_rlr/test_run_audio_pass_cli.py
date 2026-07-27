@@ -7,6 +7,8 @@ is verified in Task 9's live runs.
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[3]
 
 
@@ -155,6 +157,87 @@ def test_load_dry_source_repeats_requested_audio_clip():
     assert np.max(np.abs(first)) > 0.01
     np.testing.assert_allclose(first, second, atol=1e-6)
     assert np.max(np.abs(gap)) < 1e-6
+
+
+@pytest.mark.parametrize(
+    ("tag", "lookup", "expected_sha256"),
+    [
+        (
+            "dog_pembroke_welsh_corgi_candidate",
+            "dog_bark",
+            "d244289ddde2d60065e258ef8f336776f2209f7b9240a706dbf8d42888854033",
+        ),
+        (
+            "cat_british_shorthair_candidate",
+            "cat_meow",
+            "accd2babb3facabd1f140ce16da9a3986e457f49f175bb0b162c9fa2e070b158",
+        ),
+    ],
+)
+def test_pinned_animal_source_is_resampled_scheduled_and_hash_bound(
+    tag, lookup, expected_sha256
+):
+    import sys
+    import numpy as np
+
+    sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
+    from run_audio_pass_rlr import _load_dry_source
+
+    schedule = {}
+    y = _load_dry_source(
+        tag,
+        sample_rate=16000,
+        duration_s=1.0,
+        source_spec={"audio_lookup": lookup},
+        schedule_metadata_out=schedule,
+    )
+
+    assert y.shape == (16000,)
+    assert np.max(np.abs(y)) > 0.01
+    assert schedule["source_sha256"] == expected_sha256
+    assert schedule["source_original_sample_rate_hz"] == 44100
+    assert schedule["source_original_frame_count"] == 441000
+    assert schedule["source_original_channels"] == 2
+    assert schedule["render_sample_rate_hz"] == 16000
+    assert schedule["item_level_license_status"] == "missing"
+    assert schedule["formal_registration_authorized"] is False
+
+
+def test_pinned_animal_source_failure_never_falls_back_to_synthetic(
+    monkeypatch,
+):
+    import sys
+
+    sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
+    import run_audio_pass_rlr as rlr
+
+    def fail_resolve(*args, **kwargs):
+        raise ValueError("stale pinned source")
+
+    monkeypatch.setattr(rlr, "resolve_animal_audio_path", fail_resolve)
+
+    with pytest.raises(RuntimeError, match="strict audio source"):
+        rlr._load_dry_source(
+            "dog_pembroke_welsh_corgi_candidate",
+            sample_rate=16000,
+            duration_s=0.25,
+            source_spec={"audio_lookup": "dog_bark"},
+        )
+
+
+def test_unknown_explicit_animal_lookup_never_falls_back_to_synthetic():
+    import sys
+
+    sys.path.insert(0, str(REPO / "tools" / "spike_rlr"))
+    import run_audio_pass_rlr as rlr
+
+    with pytest.raises(RuntimeError, match="unknown animal audio_lookup"):
+        rlr._load_dry_source(
+            "cat_british_shorthair_candidate",
+            sample_rate=16000,
+            duration_s=0.25,
+            source_spec={"audio_lookup": "cat_meow_stale_typo"},
+        )
 
 
 def test_topdown_load_scene_dispatch_apartment():

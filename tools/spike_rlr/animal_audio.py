@@ -7,8 +7,13 @@ turn into a piano tone.
 """
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
+
+SPEAR_ROOT = Path(__file__).resolve().parents[2]
+AUDIO_LIBRARY_PATH = SPEAR_ROOT / "data/audio_library_v1.json"
+PINNED_AUDIO_LOOKUPS = frozenset({"dog_bark", "cat_meow"})
 
 SYNTHETIC_AUDIO_SENTINELS = {
     "__pink_noise__",
@@ -22,7 +27,7 @@ SYNTHETIC_AUDIO_SENTINELS = {
 _AUDIO_BY_LOOKUP = {
     "dog_bark": {
         "species": "dog",
-        "path": Path("/data/datasets/omniaudio/train-data-az-360-large/Barking Aldi Dog_358.wav"),
+        "catalog": True,
     },
     "dog_growl": {
         "species": "dog",
@@ -34,7 +39,7 @@ _AUDIO_BY_LOOKUP = {
     },
     "cat_meow": {
         "species": "cat",
-        "path": Path("/data/datasets/omniaudio/train-data-az-360-large/Cat Meowing_293.wav"),
+        "catalog": True,
     },
     "cat_purring": {
         "species": "cat",
@@ -139,7 +144,9 @@ def is_animal_tag(tag: str) -> bool:
 
 def _lookup_for_tag(tag: str, audio_lookup: str | None) -> str:
     species = species_for_tag(tag)
-    if audio_lookup in _AUDIO_BY_LOOKUP:
+    if audio_lookup is not None:
+        if audio_lookup not in _AUDIO_BY_LOOKUP:
+            raise KeyError(f"unknown animal audio_lookup {audio_lookup!r}")
         lookup_species = _AUDIO_BY_LOOKUP[audio_lookup]["species"]
         if species is not None and lookup_species != species:
             raise ValueError(
@@ -152,6 +159,62 @@ def _lookup_for_tag(tag: str, audio_lookup: str | None) -> str:
     raise KeyError(f"no animal audio fallback for tag {tag!r}")
 
 
+def is_pinned_animal_audio_lookup(audio_lookup: str | None) -> bool:
+    return audio_lookup in PINNED_AUDIO_LOOKUPS
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def pinned_animal_audio_contract(audio_lookup: str) -> dict | None:
+    """Return a freshly authenticated exact-source record for a pinned lookup."""
+    if audio_lookup not in PINNED_AUDIO_LOOKUPS:
+        return None
+    # Import lazily so the lightweight species helpers do not need NumPy until
+    # a controlled dry source is actually resolved.
+    from audio_library import load_library
+
+    sample = load_library(AUDIO_LIBRARY_PATH).require_single(audio_lookup)
+    expected_species = _AUDIO_BY_LOOKUP[audio_lookup]["species"]
+    if sample.species != expected_species:
+        raise ValueError(
+            f"catalog species for {audio_lookup!r} is {sample.species!r}, "
+            f"expected {expected_species!r}"
+        )
+    if (
+        sample.sha256 is None
+        or sample.size_bytes is None
+        or sample.channels is None
+        or sample.sample_width_bytes is None
+        or sample.frame_count is None
+        or sample.item_level_license_status is None
+    ):
+        raise ValueError(f"incomplete pinned animal audio contract: {audio_lookup}")
+    return {
+        "audio_lookup": audio_lookup,
+        "species": sample.species,
+        "path": sample.path,
+        "sha256": sample.sha256,
+        "size_bytes": sample.size_bytes,
+        "codec": sample.codec,
+        "channels": sample.channels,
+        "sample_width_bytes": sample.sample_width_bytes,
+        "sample_rate_hz": sample.sample_rate,
+        "frame_count": sample.frame_count,
+        "duration_s": sample.duration_s,
+        "item_level_license_status": sample.item_level_license_status,
+        "item_level_license_snapshot": sample.item_level_license_snapshot,
+        "formal_registration_authorized": (
+            sample.formal_registration_authorized
+        ),
+    }
+
+
 def resolve_animal_audio_path(
     tag: str,
     audio_lookup: str | None = None,
@@ -159,17 +222,38 @@ def resolve_animal_audio_path(
 ) -> str:
     """Resolve a real dry-source file for an animal source.
 
-    `explicit_path` wins when it points to a real file. Synthetic sentinel
-    strings are intentionally not returned here; the caller should detect and
-    route them to its synthesis code.
+    Pinned lookups are resolved from ``data/audio_library_v1.json`` and
+    authenticated on every call. An explicit path for such a lookup must have
+    the same SHA-256; it cannot bypass the controlled source contract.
+    Synthetic sentinel strings are intentionally rejected here; callers may
+    route an explicitly requested debug sentinel to synthesis before invoking
+    this resolver.
     """
-    if explicit_path and not is_synthetic_audio_path(explicit_path):
-        return str(explicit_path)
-
     lookup = _lookup_for_tag(tag, audio_lookup)
-    path = Path(_AUDIO_BY_LOOKUP[lookup]["path"])
-    if not path.exists():
+    pinned = pinned_animal_audio_contract(lookup)
+    if pinned is not None:
+        path = Path(pinned["path"])
+    else:
+        path = Path(_AUDIO_BY_LOOKUP[lookup]["path"])
+
+    if explicit_path:
+        if is_synthetic_audio_path(explicit_path):
+            raise ValueError(
+                "synthetic sentinel is not a real animal dry-source path"
+            )
+        explicit = Path(explicit_path)
+        if not explicit.is_file():
+            raise FileNotFoundError(explicit)
+        if pinned is not None and _sha256(explicit) != pinned["sha256"]:
+            raise ValueError(
+                f"explicit path does not match pinned {lookup!r} SHA-256"
+            )
+        path = explicit
+
+    if not path.is_file():
         raise FileNotFoundError(path)
+    if pinned is not None and _sha256(path) != pinned["sha256"]:
+        raise ValueError(f"pinned {lookup!r} source changed after catalog load")
     return str(path)
 
 

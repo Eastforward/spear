@@ -258,6 +258,23 @@ def sample_scene(spec_template: dict, audio_lib, rng) -> SceneSample:
                     "start_pos_m": list(start),
                     "end_pos_m": list(end),
                 }
+                if audio_sample.sha256 is not None:
+                    source_spec.update(
+                        {
+                            "audio_sha256": audio_sample.sha256,
+                            "audio_source_sample_rate_hz": (
+                                audio_sample.sample_rate
+                            ),
+                            "audio_source_duration_s": audio_sample.duration_s,
+                            "audio_item_level_license_status": (
+                                audio_sample.item_level_license_status
+                            ),
+                            "audio_formal_registration_authorized": (
+                                audio_sample.formal_registration_authorized
+                            ),
+                            "strict_audio": True,
+                        }
+                    )
                 if "asset_id" in pool_entry:
                     source_spec["asset_id"] = pool_entry["asset_id"]
                 if "asset_class" in pool_entry:
