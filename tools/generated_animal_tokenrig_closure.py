@@ -1403,7 +1403,7 @@ def validate_closure(
     if not isinstance(extra_records, list) or len(extra_records) != len(extra_upstream):
         raise ClosureError("closure extra upstream evidence count mismatch")
     for index, (record, expected_path) in enumerate(
-        zip(extra_records, extra_upstream, strict=True)
+        zip(extra_records, extra_upstream)
     ):
         original, _copy = validate_original_and_copy(
             closure_root, record, f"extra upstream manifest {index}"

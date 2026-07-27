@@ -10,6 +10,12 @@ import pytest
 from tools import generated_animal_tokenrig_closure as closure
 
 
+def test_closure_validation_remains_compatible_with_python_39() -> None:
+    source = Path(closure.__file__).read_text(encoding="utf-8")
+
+    assert "zip(extra_records, extra_upstream, strict=True)" not in source
+
+
 def descriptor(path: Path) -> dict:
     return {
         "path": str(path),
