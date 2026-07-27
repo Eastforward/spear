@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Segment approved FLUX.2 animals and compile authenticated Pixal3D jobs."""
+"""Segment approved FLUX.2 source assets and compile authenticated Pixal3D jobs.
+
+Animal and static-object requests share the same image segmentation and
+Pixal3D inference implementation, but retain different downstream contracts.
+The authenticated FLUX batch and execution preflight select that contract; a
+static object is never represented as an animated-transfer animal.
+"""
 
 from __future__ import annotations
 
@@ -31,6 +37,23 @@ ISNET_PYTHON = Path("/data/jzy/miniconda3/envs/hunyuan3d/bin/python")
 ISNET_WORKER = Path(__file__).resolve().parent / "controlled_animal_isnet_worker.py"
 PIXAL_MODEL_REVISION = "0b31f9160aa400719af409098bff7936a932f726"
 DINO_REVISION = "3c276edd87d6f6e569ff0c4400e086807d0f3881"
+PIXAL_ROUTE_CONTRACTS = {
+    "flux2_pixal3d_animal_v1": {
+        "asset_class": "animal",
+        "generation_schema": "flux2_pixal3d_generation_plan_v1",
+        "job_prefix": "animal_",
+        "rig_mode": "animated_transfer",
+        "base_template_kind": "reference_image",
+        "rig_required": True,
+    },
+    "flux2_pixal3d_static_v1": {
+        "asset_class": "static_object",
+        "generation_schema": "flux2_pixal3d_static_generation_plan_v1",
+        "job_prefix": "static_",
+        "base_template_kind": "text_prompt_only",
+        "rig_required": False,
+    },
+}
 
 
 def _json_sha256(value: Any) -> str:
@@ -133,6 +156,268 @@ def load_review_batch(path: Path):
     return payload
 
 
+def _require_sha256(value: Any, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise contracts.ContractError(f"{label} must be a lowercase SHA-256")
+    return value
+
+
+def _load_authenticated_preflight(flux_batch: Mapping[str, Any]) -> dict[str, Any]:
+    record = flux_batch.get("execution_preflight")
+    if not isinstance(record, Mapping) or set(record) != {
+        "path",
+        "sha256",
+        "preflight_sha256",
+    }:
+        raise contracts.ContractError("FLUX batch execution preflight record is invalid")
+    path = Path(record["path"]).resolve()
+    if path.is_symlink() or not path.is_file():
+        raise contracts.ContractError("FLUX batch execution preflight is missing")
+    if _sha256_file(path) != _require_sha256(
+        record["sha256"], "execution preflight file hash"
+    ):
+        raise contracts.ContractError("FLUX batch execution preflight file changed")
+    preflight = material_execution._load_preflight(path)
+    if preflight.get("preflight_sha256") != _require_sha256(
+        record["preflight_sha256"], "execution preflight content hash"
+    ):
+        raise contracts.ContractError(
+            "FLUX batch execution preflight content hash changed"
+        )
+    return preflight
+
+
+def _validate_route_job(
+    job: Any, route: str, route_contract: Mapping[str, Any]
+) -> tuple[str, str]:
+    if not isinstance(job, Mapping):
+        raise contracts.ContractError(f"{route} execution job must be an object")
+    plan = job.get("generation_plan")
+    consumers = job.get("consumer_requests")
+    if not isinstance(plan, Mapping) or not isinstance(consumers, list):
+        raise contracts.ContractError(f"{route} execution job is incomplete")
+    if (
+        plan.get("route") != route
+        or plan.get("schema") != route_contract["generation_schema"]
+    ):
+        raise contracts.ContractError(f"{route} generation plan route/schema changed")
+    if len(consumers) != 1 or not isinstance(consumers[0], Mapping):
+        raise contracts.ContractError(
+            f"{route} execution job must bind exactly one request"
+        )
+    instance_id = consumers[0].get("instance_id")
+    request_sha256 = _require_sha256(
+        consumers[0].get("request_sha256"), f"{route} request hash"
+    )
+    if not isinstance(instance_id, str) or not instance_id:
+        raise contracts.ContractError(f"{route} execution job has no instance ID")
+    expected_job_id = f"{route_contract['job_prefix']}{request_sha256[:16]}"
+    if job.get("execution_job_id") != expected_job_id:
+        raise contracts.ContractError(
+            f"{route} execution job ID does not match its request hash"
+        )
+    _require_sha256(job.get("profile_sha256"), f"{route} profile hash")
+    if not isinstance(job.get("profile_schema_id"), str) or not job[
+        "profile_schema_id"
+    ]:
+        raise contracts.ContractError(f"{route} execution job has no profile ID")
+
+    base_template = plan.get("base_template")
+    if (
+        not isinstance(base_template, Mapping)
+        or base_template.get("kind") != route_contract["base_template_kind"]
+    ):
+        raise contracts.ContractError(f"{route} base-template contract changed")
+    rig_profile = job.get("rig_profile")
+    if route_contract["rig_required"]:
+        rig_actions = (
+            rig_profile.get("actions")
+            if isinstance(rig_profile, Mapping)
+            else None
+        )
+        if (
+            not isinstance(rig_profile, Mapping)
+            or not isinstance(rig_actions, list)
+            or len(rig_actions) != 2
+            or set(rig_actions) != {"Walking", "Idle"}
+        ):
+            raise contracts.ContractError(
+                "animal Pixal job must retain its Walking/Idle rig profile"
+            )
+        try:
+            one_shot.validate_base_acquisition_record(
+                plan.get("base_acquisition_policy")
+            )
+        except one_shot.PolicyError as error:
+            raise contracts.ContractError(str(error)) from error
+    else:
+        if rig_profile is not None or base_template.get("artifact") is not None:
+            raise contracts.ContractError(
+                "static-object Pixal job must have no rig or reference-image binding"
+            )
+        try:
+            one_shot.validate_static_base_acquisition_record(
+                plan.get("base_acquisition_policy")
+            )
+        except one_shot.PolicyError as error:
+            raise contracts.ContractError(str(error)) from error
+    return instance_id, request_sha256
+
+
+def _validate_candidate_job_binding(
+    candidate: Mapping[str, Any],
+    job: Mapping[str, Any],
+    *,
+    route: str,
+    route_contract: Mapping[str, Any],
+) -> None:
+    index = candidate.get("index")
+    manifest = candidate.get("manifest")
+    files = candidate.get("files")
+    if not all(isinstance(value, Mapping) for value in (index, manifest, files)):
+        raise contracts.ContractError("FLUX candidate bundle is incomplete")
+    consumer = job["consumer_requests"][0]
+    expected = {
+        "instance_id": consumer["instance_id"],
+        "execution_job_id": job["execution_job_id"],
+        "profile_schema_id": job["profile_schema_id"],
+        "sampled_attributes": job["sampled_attributes"],
+    }
+    for key, value in expected.items():
+        if index.get(key) != value:
+            raise contracts.ContractError(
+                f"FLUX candidate {key} does not match authenticated {route} job"
+            )
+    manifest_expected = {
+        **expected,
+        "profile_sha256": job["profile_sha256"],
+        "request_sha256": consumer["request_sha256"],
+    }
+    for key, value in manifest_expected.items():
+        if manifest.get(key) != value:
+            raise contracts.ContractError(
+                f"FLUX candidate manifest {key} does not match authenticated "
+                f"{route} job"
+            )
+    has_source = "source" in files or "source" in index
+    manifest_has_source = manifest.get("input") is not None
+    if route_contract["asset_class"] == "static_object":
+        if has_source or manifest_has_source:
+            raise contracts.ContractError(
+                "static-object Pixal candidate must not fabricate a source image"
+            )
+    elif not has_source or not manifest_has_source:
+        raise contracts.ContractError(
+            "animal Pixal candidate must retain its authenticated source image"
+        )
+
+
+def _authenticated_route_jobs(
+    flux_batch: Mapping[str, Any],
+    preflight: Mapping[str, Any],
+    candidates: Mapping[str, Mapping[str, Any]],
+) -> tuple[str, Mapping[str, Any], dict[str, Mapping[str, Any]]]:
+    """Resolve one homogeneous Pixal route from sealed batch/preflight evidence."""
+
+    if not candidates:
+        raise contracts.ContractError("FLUX batch contains no candidates")
+    routes = preflight.get("routes")
+    if not isinstance(routes, Mapping):
+        raise contracts.ContractError("execution preflight routes are invalid")
+    jobs_by_route: dict[str, dict[str, Mapping[str, Any]]] = {}
+    for route, route_contract in PIXAL_ROUTE_CONTRACTS.items():
+        jobs = routes.get(route, [])
+        if not isinstance(jobs, list):
+            raise contracts.ContractError(f"execution preflight {route} jobs are invalid")
+        indexed: dict[str, Mapping[str, Any]] = {}
+        for job in jobs:
+            instance_id, _request_sha256 = _validate_route_job(
+                job, route, route_contract
+            )
+            if instance_id in indexed:
+                raise contracts.ContractError(
+                    f"execution preflight repeats {route} instance {instance_id}"
+                )
+            indexed[instance_id] = job
+        jobs_by_route[route] = indexed
+
+    resolved_routes: set[str] = set()
+    selected_jobs: dict[str, Mapping[str, Any]] = {}
+    for instance_id, candidate in candidates.items():
+        matches = [
+            (route, jobs[instance_id])
+            for route, jobs in jobs_by_route.items()
+            if instance_id in jobs
+        ]
+        if len(matches) != 1:
+            raise contracts.ContractError(
+                f"FLUX candidate {instance_id} does not resolve to one Pixal route"
+            )
+        route, job = matches[0]
+        if instance_id in selected_jobs:
+            raise contracts.ContractError(f"duplicate FLUX candidate: {instance_id}")
+        _validate_candidate_job_binding(
+            candidate,
+            job,
+            route=route,
+            route_contract=PIXAL_ROUTE_CONTRACTS[route],
+        )
+        resolved_routes.add(route)
+        selected_jobs[instance_id] = job
+    if len(resolved_routes) != 1:
+        raise contracts.ContractError("one Pixal input batch cannot mix asset routes")
+    route = next(iter(resolved_routes))
+
+    selection = flux_batch.get("selection")
+    if not isinstance(selection, Mapping):
+        raise contracts.ContractError("FLUX batch selection contract is invalid")
+    declared_route = selection.get("route")
+    if declared_route is None:
+        # Animal batches sealed before static-object support did not record a
+        # route. Their authenticated preflight/job bindings remain sufficient
+        # to recover the only then-supported route.
+        if route != "flux2_pixal3d_animal_v1":
+            raise contracts.ContractError(
+                "static-object FLUX batches must explicitly declare their route"
+            )
+    elif declared_route not in PIXAL_ROUTE_CONTRACTS:
+        raise contracts.ContractError("FLUX batch declares an unsupported Pixal route")
+    elif declared_route != route:
+        raise contracts.ContractError(
+            "FLUX batch route differs from its authenticated execution jobs"
+        )
+    return route, PIXAL_ROUTE_CONTRACTS[route], selected_jobs
+
+
+def _controlled_request(
+    controlled_job: Mapping[str, Any],
+    *,
+    instance_id: str,
+    route: str,
+    route_contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    generation = controlled_job["generation_plan"]
+    return {
+        "execution_job_id": controlled_job["execution_job_id"],
+        "instance_id": instance_id,
+        "request_sha256": controlled_job["consumer_requests"][0]["request_sha256"],
+        "generation_seed": int(generation["generation_seed"]),
+        "profile_schema_id": controlled_job["profile_schema_id"],
+        "profile_sha256": controlled_job["profile_sha256"],
+        "asset_class": route_contract["asset_class"],
+        "route": route,
+        "sampled_attributes": copy.deepcopy(controlled_job["sampled_attributes"]),
+        "target_physical_profile": copy.deepcopy(
+            controlled_job["target_physical_profile"]
+        ),
+        "rig_profile": copy.deepcopy(controlled_job["rig_profile"]),
+    }
+
+
 def prepare_pixal_inputs(
     review_batch_path: Path,
     output_root: Path,
@@ -171,12 +456,10 @@ def prepare_pixal_inputs(
     if not approved_reviews:
         raise contracts.ContractError("no approved candidates for Pixal3D")
 
-    preflight_path = Path(flux_batch["execution_preflight"]["path"])
-    preflight = material_execution._load_preflight(preflight_path)
-    animal_jobs = {
-        job["consumer_requests"][0]["instance_id"]: job
-        for job in preflight["routes"]["flux2_pixal3d_animal_v1"]
-    }
+    preflight = _load_authenticated_preflight(flux_batch)
+    route, route_contract, controlled_jobs = _authenticated_route_jobs(
+        flux_batch, preflight, candidates
+    )
     output_root = Path(output_root).absolute()
     pixal_output_root = Path(pixal_output_root).absolute()
     if output_root.exists() or output_root.is_symlink():
@@ -256,7 +539,11 @@ def prepare_pixal_inputs(
                 opened.load()
                 if opened.mode != "RGBA" or opened.size != (1024, 1024):
                     raise contracts.ContractError("Pixal input RGBA contract changed")
-            controlled_job = animal_jobs[instance_id]
+            if instance_id not in controlled_jobs:
+                raise contracts.ContractError(
+                    f"approved candidate has no authenticated {route} job: {instance_id}"
+                )
+            controlled_job = controlled_jobs[instance_id]
             generation = controlled_job["generation_plan"]
             if (
                 generation["model_revisions"]["pixal3d"] != PIXAL_MODEL_REVISION
@@ -268,53 +555,48 @@ def prepare_pixal_inputs(
             )
             pixal_output = pixal_output_root / instance_id / "pixal_raw_1024.glb"
             candidate_record = candidates[instance_id]["index"]["candidate"]
-            pixal_jobs.append(
-                {
-                    "legacy_tag": instance_id,
-                    "candidate_tag": f"{instance_id}_pixal_v1",
-                    "rig_mode": "animated_transfer",
-                    "seed": int(generation["generation_seed"]),
-                    "attempt_ordinal": 0,
-                    "one_shot_execution": one_shot.stage_record("pixal3d"),
-                    "reference": {
-                        "source": {
-                            "path": str(candidates[instance_id]["files"]["candidate"]),
-                            "sha256": candidate_record["sha256"],
-                            "size_bytes": candidate_record["size_bytes"],
-                        },
-                        "pixal_input": {
-                            "path": str(public_rgba),
-                            "sha256": _sha256_file(rgba_path),
-                            "size_bytes": rgba_path.stat().st_size,
-                        },
-                        "normalization": "pinned_isnet_general_use_alpha_v1",
+            pixal_job = {
+                "legacy_tag": instance_id,
+                "candidate_tag": f"{instance_id}_pixal_v1",
+                "asset_class": route_contract["asset_class"],
+                "route": route,
+                "seed": int(generation["generation_seed"]),
+                "attempt_ordinal": 0,
+                "one_shot_execution": one_shot.stage_record("pixal3d"),
+                "reference": {
+                    "source": {
+                        "path": str(candidates[instance_id]["files"]["candidate"]),
+                        "sha256": candidate_record["sha256"],
+                        "size_bytes": candidate_record["size_bytes"],
                     },
-                    "output": str(pixal_output),
-                    "manifest": str(pixal_output.with_suffix(".manifest.json")),
-                    "controlled_request": {
-                        "execution_job_id": controlled_job["execution_job_id"],
-                        "instance_id": instance_id,
-                        "request_sha256": controlled_job["consumer_requests"][0][
-                            "request_sha256"
-                        ],
-                        "generation_seed": int(generation["generation_seed"]),
-                        "profile_schema_id": controlled_job["profile_schema_id"],
-                        "sampled_attributes": controlled_job["sampled_attributes"],
-                        "target_physical_profile": controlled_job[
-                            "target_physical_profile"
-                        ],
+                    "pixal_input": {
+                        "path": str(public_rgba),
+                        "sha256": _sha256_file(rgba_path),
+                        "size_bytes": rgba_path.stat().st_size,
                     },
-                    "model_revisions": {
-                        "pixal3d": PIXAL_MODEL_REVISION,
-                        "dino": DINO_REVISION,
-                    },
-                    "parameters": {
-                        "resolution": 1024,
-                        "manual_fov": 0.2,
-                        "low_vram": False,
-                    },
-                }
-            )
+                    "normalization": "pinned_isnet_general_use_alpha_v1",
+                },
+                "output": str(pixal_output),
+                "manifest": str(pixal_output.with_suffix(".manifest.json")),
+                "controlled_request": _controlled_request(
+                    controlled_job,
+                    instance_id=instance_id,
+                    route=route,
+                    route_contract=route_contract,
+                ),
+                "model_revisions": {
+                    "pixal3d": PIXAL_MODEL_REVISION,
+                    "dino": DINO_REVISION,
+                },
+                "parameters": {
+                    "resolution": 1024,
+                    "manual_fov": 0.2,
+                    "low_vram": False,
+                },
+            }
+            if route_contract["rig_required"]:
+                pixal_job["rig_mode"] = "animated_transfer"
+            pixal_jobs.append(pixal_job)
             segmentations.append(
                 {
                     "instance_id": instance_id,
@@ -335,6 +617,8 @@ def prepare_pixal_inputs(
             "status": "ready_for_pixal3d",
             "state_classification": "research_candidate",
             "formal_dataset_registration_authorized": False,
+            "asset_class": route_contract["asset_class"],
+            "route": route,
             "one_shot_execution": one_shot.stage_record("pixal3d"),
             "upstream_flux_one_shot_evidence": upstream_one_shot,
             "review_batch": {
@@ -360,6 +644,15 @@ def prepare_pixal_inputs(
                 "all_isnet_segmentations_passed": True,
                 "all_pixal_inputs_rgba_1024": True,
                 "pixal_and_dino_revisions_pinned": True,
+                "route_and_profile_bindings_reauthenticated": True,
+                "static_jobs_have_no_rig_or_animation_binding": (
+                    route_contract["asset_class"] != "static_object"
+                    or all(
+                        "rig_mode" not in job
+                        and job["controlled_request"]["rig_profile"] is None
+                        for job in pixal_jobs
+                    )
+                ),
                 "one_pixal_invocation_per_frozen_request": True,
                 "seed_retry_forbidden": True,
                 "candidate_ranking_or_best_of_n_forbidden": True,
