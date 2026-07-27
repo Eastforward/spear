@@ -169,6 +169,46 @@ def test_builds_authenticated_walk_idle_pair(tmp_path: Path) -> None:
     assert idle["sources"][0]["trajectory_m"] == [[2.0, 0.0, 0.0]] * 5
 
 
+def test_generated_dog_pair_embeds_pinned_audio_contract() -> None:
+    trajectory = [[float(index), 0.0, 0.0] for index in range(5)]
+    template = {
+        "sources": [
+            {
+                "tag": "template",
+                "trajectory_m": trajectory,
+                "start_pos_m": trajectory[0],
+                "end_pos_m": trajectory[-1],
+            }
+        ],
+        "camera_pass_table_loop_contract": {"left_front_nearest_frame": 2},
+        "rig_direction_check_windows": [{"frame_a": 0, "frame_b": 1}],
+    }
+    config = {
+        "asset_id": "corgi_generated_001",
+        "tag": "pixal_generated_corgi_001",
+        "species": "dog",
+        "breed": "pembroke_welsh_corgi",
+        "profile_schema_id": "dog_corgi_v1",
+        "sampled_attributes": {"size": "medium"},
+        "walking_forward_yaw_offset_deg": 0.0,
+        "actor_scale": 0.1,
+        "ground_snap_max_abs_correction_cm": 25.0,
+        "audio_lookup": "dog_bark",
+        "audio_source_height_offset_m": 0.28,
+        "scale_rationale": "fixture",
+    }
+
+    source = subject._build_pair(
+        template,
+        config=config,
+        gate={"status": "approved_for_research_candidate_apartment"},
+    )["Walking"]["sources"][0]
+
+    assert source["audio_contract"]["audio_lookup"] == "dog_bark"
+    assert source["audio_sha256"] == source["audio_contract"]["sha256"]
+    assert source["audio_source_channels"] == 1
+
+
 def test_refuses_changed_decision_and_existing_output(tmp_path: Path) -> None:
     inputs = _fixture(tmp_path)
     output_root = tmp_path / "output"

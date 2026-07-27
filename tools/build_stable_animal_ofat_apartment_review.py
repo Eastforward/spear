@@ -7,11 +7,14 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import html
+import io
 import json
+import math
 import os
 from pathlib import Path
 import sys
 from typing import Any, Sequence
+import wave
 
 
 SPEAR_ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +24,12 @@ if str(SPEAR_ROOT) not in sys.path:
 
 from tools import controlled_source_asset_schema as contracts  # noqa: E402
 from tools import finalize_stable_animal_ofat_review as ofat_lib  # noqa: E402
+from tools.spike_rlr.animal_audio import (  # noqa: E402
+    load_authenticated_file_bytes,
+    load_authenticated_json,
+    validate_animal_audio_evidence,
+    validate_animal_silence_contract,
+)
 
 
 SPEC_SCHEMA = "stable_animal_walk_idle_apartment_specs_v1"
@@ -32,6 +41,7 @@ MEDIA_FIELDS = {
     "main": "apartment_video",
     "topdown": "topdown_review_video",
 }
+AUDIO_EVIDENCE_SCHEMA = "avengine_audio_artifact_evidence_v1"
 
 
 class ReviewError(RuntimeError):
@@ -73,7 +83,13 @@ def descriptor(path: Path) -> dict[str, Any]:
 def verify_descriptor(record: dict[str, Any], label: str) -> dict[str, Any]:
     if not isinstance(record, dict):
         raise ReviewError(f"{label} descriptor is missing")
-    path = Path(str(record.get("path", ""))).resolve()
+    configured_path = Path(str(record.get("path", "")))
+    if (
+        configured_path.is_symlink()
+        or configured_path.resolve() != configured_path.absolute()
+    ):
+        raise ReviewError(f"{label} descriptor path is indirect")
+    path = configured_path.resolve()
     observed = descriptor(path)
     if (
         observed["sha256"] != record.get("sha256")
@@ -87,9 +103,191 @@ def server_url(path: str) -> str:
     resolved = Path(path).resolve()
     try:
         relative = resolved.relative_to(AVENGINE_ROOT.resolve())
-    except ValueError as error:
-        raise ReviewError(f"media escaped AVEngine HTTP root: {resolved}") from error
+    except ValueError:
+        try:
+            tmp_relative = resolved.relative_to(
+                (SPEAR_ROOT / "tmp").resolve()
+            )
+        except ValueError as error:
+            raise ReviewError(
+                f"media escaped AVEngine HTTP root: {resolved}"
+            ) from error
+        relative = Path("external") / "SPEAR" / "tmp" / tmp_relative
     return "/" + relative.as_posix()
+
+
+def _source_for_tag(spec: dict[str, Any], tag: str) -> dict[str, Any]:
+    sources = [
+        source
+        for source in spec.get("sources", [])
+        if isinstance(source, dict) and source.get("tag") == tag
+    ]
+    if len(sources) != 1:
+        raise ValueError(f"final clip must contain exactly one source {tag!r}")
+    return sources[0]
+
+
+def _validate_audio_artifact_evidence(
+    *,
+    artifacts: dict[str, dict[str, Any]],
+    expects_audible_audio: bool,
+) -> dict[str, Any]:
+    evidence_descriptor = artifacts["audio_evidence"]
+    evidence = load_authenticated_json(
+        Path(evidence_descriptor["path"]),
+        expected_sha256=evidence_descriptor["sha256"],
+        expected_size_bytes=evidence_descriptor["size_bytes"],
+    )
+    signal = evidence.get("signal")
+    audio_descriptor = artifacts["binaural_audio"]
+    expected_status = (
+        "rlr_verified" if expects_audible_audio else "intentional_silence"
+    )
+    if (
+        evidence.get("schema_version") != AUDIO_EVIDENCE_SCHEMA
+        or evidence.get("status") != expected_status
+        or evidence.get("expects_audible_audio") is not expects_audible_audio
+        or evidence.get("eligible_for_visual_review") is not True
+        or evidence.get("eligible_for_acoustic_training")
+        is not expects_audible_audio
+        or not isinstance(signal, dict)
+        or signal.get("path") != audio_descriptor["path"]
+        or signal.get("sha256") != audio_descriptor["sha256"]
+        or signal.get("size_bytes") != audio_descriptor["size_bytes"]
+        or signal.get("channel_count") != 2
+        or signal.get("is_effectively_silent") is expects_audible_audio
+    ):
+        raise ValueError("final clip audio artifact classification changed")
+    return evidence
+
+
+def _validate_zero_pcm16_stereo(
+    *,
+    audio_descriptor: dict[str, Any],
+    spec: dict[str, Any],
+) -> None:
+    audio_config = spec.get("audio_config", {})
+    render_config = spec.get("render_config", {})
+    sample_rate_hz = int(audio_config.get("sample_rate_hz", 16000))
+    duration_value = audio_config.get("duration_s")
+    if duration_value is None:
+        duration_value = render_config["duration_s"]
+    duration_s = float(duration_value)
+    expected_frames = int(round(sample_rate_hz * duration_s))
+    payload = load_authenticated_file_bytes(
+        Path(audio_descriptor["path"])
+    )
+    if (
+        len(payload) != audio_descriptor["size_bytes"]
+        or hashlib.sha256(payload).hexdigest() != audio_descriptor["sha256"]
+    ):
+        raise ValueError("intentional-silence WAV descriptor changed")
+    try:
+        with wave.open(io.BytesIO(payload), "rb") as wav:
+            pcm = wav.readframes(expected_frames + 1)
+            if (
+                wav.getnchannels() != 2
+                or wav.getsampwidth() != 2
+                or wav.getframerate() != sample_rate_hz
+                or wav.getnframes() != expected_frames
+                or wav.getcomptype() != "NONE"
+                or len(pcm) != expected_frames * 4
+                or any(pcm)
+            ):
+                raise ValueError(
+                    "intentional-silence WAV is not exact PCM16 stereo zero"
+                )
+    except wave.Error as error:
+        raise ValueError("intentional-silence WAV is malformed") from error
+
+
+def _validate_clip_audio(
+    *,
+    artifacts: dict[str, dict[str, Any]],
+    final_spec: dict[str, Any],
+    tag: str,
+) -> dict[str, Any]:
+    source = _source_for_tag(final_spec, tag)
+    is_silent = bool(source.get("mute_audio")) or (
+        source.get("audio_lookup") == "silent"
+    )
+    common = {
+        "spec",
+        "runtime_gate",
+        "actor_visual_metadata",
+        "apartment_video",
+        "topdown_review_video",
+        "annotated_review_video",
+        "binaural_audio",
+        "audio_evidence",
+    }
+    required = set(common)
+    if not is_silent:
+        required.update(
+            {
+                "binaural_source_schedule",
+                "binaural_audio_render_manifest",
+            }
+        )
+    if set(artifacts) != required:
+        raise ValueError("clip audio evidence set changed")
+
+    audio_evidence = _validate_audio_artifact_evidence(
+        artifacts=artifacts,
+        expects_audible_audio=not is_silent,
+    )
+    if is_silent:
+        validate_animal_silence_contract(tag, source)
+        _validate_zero_pcm16_stereo(
+            audio_descriptor=artifacts["binaural_audio"],
+            spec=final_spec,
+        )
+        signal = audio_evidence["signal"]
+        if (
+            signal.get("sample_rate_hz")
+            != int(final_spec["audio_config"]["sample_rate_hz"])
+            or signal.get("frame_count")
+            != int(
+                round(
+                    float(final_spec["audio_config"]["duration_s"])
+                    * int(final_spec["audio_config"]["sample_rate_hz"])
+                )
+            )
+            or not math.isclose(
+                float(signal.get("peak_abs", math.inf)),
+                0.0,
+                rel_tol=0.0,
+                abs_tol=0.0,
+            )
+        ):
+            raise ValueError("intentional-silence signal evidence changed")
+        return {"mode": "authenticated_intentional_silence"}
+
+    audio_schedule = load_authenticated_json(
+        Path(artifacts["binaural_source_schedule"]["path"]),
+        expected_sha256=artifacts["binaural_source_schedule"]["sha256"],
+        expected_size_bytes=artifacts["binaural_source_schedule"][
+            "size_bytes"
+        ],
+    )
+    audio_render_manifest = load_authenticated_json(
+        Path(artifacts["binaural_audio_render_manifest"]["path"]),
+        expected_sha256=artifacts["binaural_audio_render_manifest"]["sha256"],
+        expected_size_bytes=artifacts["binaural_audio_render_manifest"][
+            "size_bytes"
+        ],
+    )
+    validate_animal_audio_evidence(
+        spec=final_spec,
+        schedule=audio_schedule,
+        audio_path=Path(artifacts["binaural_audio"]["path"]),
+        expected_tags={tag},
+        audio_descriptor=artifacts["binaural_audio"],
+        render_manifest=audio_render_manifest,
+        spec_path=Path(artifacts["spec"]["path"]),
+        schedule_path=Path(artifacts["binaural_source_schedule"]["path"]),
+    )
+    return {"mode": "authenticated_active_frame_rir"}
 
 
 def authenticate(args: argparse.Namespace) -> dict[str, Any]:
@@ -169,18 +367,6 @@ def authenticate(args: argparse.Namespace) -> dict[str, Any]:
                 for key, value in clip.items()
                 if key != "clip_id"
             }
-            required = {
-                "spec",
-                "runtime_gate",
-                "actor_visual_metadata",
-                "apartment_video",
-                "topdown_review_video",
-                "annotated_review_video",
-                "binaural_audio",
-                "binaural_source_schedule",
-            }
-            if set(artifacts) != required:
-                raise ReviewError(f"clip evidence set changed: {instance_id}/{action}")
             # Finalization copies the immutable planned spec into the clip
             # directory, so authenticate content rather than demanding the
             # two evidence paths be identical.
@@ -191,6 +377,21 @@ def authenticate(args: argparse.Namespace) -> dict[str, Any]:
                 != planned["spec_evidence"]["size_bytes"]
             ):
                 raise ReviewError(f"final clip spec changed: {instance_id}/{action}")
+            try:
+                final_spec = load_authenticated_json(
+                    Path(artifacts["spec"]["path"]),
+                    expected_sha256=artifacts["spec"]["sha256"],
+                    expected_size_bytes=artifacts["spec"]["size_bytes"],
+                )
+                _validate_clip_audio(
+                    artifacts=artifacts,
+                    final_spec=final_spec,
+                    tag=record["tag"],
+                )
+            except (KeyError, TypeError, ValueError, OSError) as error:
+                raise ReviewError(
+                    f"strict audio evidence failed: {instance_id}/{action}"
+                ) from error
             _visual_path, visual = load_json(
                 Path(artifacts["actor_visual_metadata"]["path"]),
                 "actor visual metadata",
@@ -239,8 +440,8 @@ def authenticate(args: argparse.Namespace) -> dict[str, Any]:
         "schema": "stable_animal_ofat_apartment_review_manifest_v1",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "state_classification": (
-            "research_candidate_automatic_ue_walk_idle_audio_passed_"
-            "pending_human_visual_review"
+            "research_candidate_automatic_ue_walk_idle_audio_technical_"
+            "passed_content_license_and_human_visual_review_pending"
         ),
         "formal_dataset_registration_authorized": False,
         "inputs": {
@@ -257,9 +458,12 @@ def authenticate(args: argparse.Namespace) -> dict[str, Any]:
             "all_walk_idle_pairs_complete": True,
             "all_registry_artifacts_rehashed": True,
             "all_runtime_direction_and_ground_checks_passed": True,
-            "all_audio_and_event_schedules_present": True,
+            "all_audio_source_contracts_and_waveforms_passed": True,
             "human_visual_review": "pending",
-            "overall": "passed_pending_human_visual_review",
+            "overall": (
+                "technical_passed_content_license_and_human_visual_review_"
+                "pending"
+            ),
         },
     }
 

@@ -22,6 +22,11 @@ def test_walk_moves_and_idle_stays_at_left_front():
         "dog_golden",
     }
     assert pair["walking"]["sources"][0]["wanted_anim"] == "Walking"
+    assert (
+        pair["walking"]["sources"][0]["audio_contract"]["audio_lookup"]
+        == "cat_meow"
+    )
+    assert pair["walking"]["sources"][0]["audio_source_channels"] == 1
     assert pair["idle"]["sources"][0]["wanted_anim"] == "Idle"
     assert pair["idle"]["sources"][0]["trajectory_m"] == [[2.0, 0.0, 0.0]] * 6
     assert pair["idle"]["rig_direction_check_windows"] == []

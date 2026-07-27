@@ -14,6 +14,16 @@ import shutil
 import tempfile
 from typing import Any
 
+if __package__ in (None, ""):
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tools.spike_rlr.animal_audio import (
+    bind_animal_silence_contract,
+    bind_pinned_animal_audio_contract,
+)
+
 
 SCHEMA = "stable_animal_walk_idle_apartment_specs_v1"
 IMPORT_SCHEMA = "stable_animal_ue_import_batch_v1"
@@ -181,6 +191,10 @@ def build_pair(
             "stable_animal_gate": copy.deepcopy(gate),
         }
     )
+    if source["audio_lookup"] == "silent":
+        bind_animal_silence_contract(source)
+    else:
+        bind_pinned_animal_audio_contract(source)
     walking["camera_pass_table_loop_contract"]["animal_scale_rationale"] = {
         "template_id": job["template_id"],
         "actor_scale": job["actor_scale"],
@@ -323,7 +337,8 @@ def build_specs(
             ),
             "audio_policy": (
                 "species-matched short calls are energy-segmented and repeated "
-                "with silent gaps"
+                "with silent gaps; approved alpaca/donkey sources carry an "
+                "authenticated explicit-silence contract"
             ),
             "avatar_count": len(records),
             "clip_count": len(records) * 2,

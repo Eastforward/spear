@@ -10,6 +10,13 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+if __package__ in (None, ""):
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tools.spike_rlr.animal_audio import bind_pinned_animal_audio_contract
+
 
 SPEAR_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_IMPORTS = (
@@ -118,6 +125,7 @@ def build_pair(template: dict, *, ue_tag: str, legacy_tag: str) -> dict[str, dic
             "mute_audio": False,
         }
     )
+    bind_pinned_animal_audio_contract(source)
     walking["camera_pass_table_loop_contract"]["animal_scale_rationale"] = {
         "actor_scale": profile["actor_scale"],
         "policy": "species-appropriate head-height canary; packaged bounds are authoritative",

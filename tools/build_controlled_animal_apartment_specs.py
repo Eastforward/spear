@@ -22,6 +22,7 @@ if __package__ in (None, ""):
 from tools import controlled_source_asset_schema as contracts
 from tools import review_controlled_animal_animation_candidates as animation_decisions
 from tools import run_controlled_animal_lod_binding as lod_binding
+from tools.spike_rlr.animal_audio import bind_pinned_animal_audio_contract
 
 
 SCHEMA = "controlled_animal_walk_idle_apartment_specs_v1"
@@ -246,6 +247,7 @@ def build_pair(
             "mute_audio": False,
         }
     )
+    bind_pinned_animal_audio_contract(source)
     walking["camera_pass_table_loop_contract"]["animal_scale_rationale"] = {
         "profile_schema_id": attempt["profile_schema_id"],
         "base_actor_scale": profile["base_actor_scale"],

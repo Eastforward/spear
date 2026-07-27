@@ -20,6 +20,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import controlled_source_asset_schema as contracts
+from tools.spike_rlr.animal_audio import bind_pinned_animal_audio_contract
 
 
 CONFIG_SCHEMA = "user_approved_generated_animal_apartment_config_v1"
@@ -215,6 +216,7 @@ def _build_pair(
             "controlled_animal_gate": copy.deepcopy(gate),
         }
     )
+    bind_pinned_animal_audio_contract(source)
     walking["camera_pass_table_loop_contract"]["animal_scale_rationale"] = {
         "actor_scale": config["actor_scale"],
         "policy": config["scale_rationale"],

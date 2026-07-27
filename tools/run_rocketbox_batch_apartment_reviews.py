@@ -9,10 +9,10 @@ import os
 import queue
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
-import wave
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -20,6 +20,21 @@ from pathlib import Path
 
 
 SPEAR_ROOT = Path(__file__).resolve().parents[1]
+if str(SPEAR_ROOT) not in sys.path:
+    sys.path.insert(0, str(SPEAR_ROOT))
+
+from tools.spike_rlr.animal_audio import (  # noqa: E402
+    animal_species_for_source,
+    is_animal_tag,
+    load_authenticated_file_bytes,
+    load_authenticated_json,
+    pinned_audio_lookup_for_tag,
+    pinned_audio_lookup_for_source,
+    species_for_tag,
+    validate_animal_silence_contract,
+    validate_animal_audio_evidence,
+)
+
 DEFAULT_LAUNCHER = SPEAR_ROOT / "tools/spike_rlr/run_human_apartment_smoke.py"
 DEFAULT_PYTHON = Path("/data/jzy/miniconda3/envs/spear-env/bin/python")
 DEFAULT_SS2_PYTHON = Path("/data/jzy/miniconda3/envs/ss2/bin/python")
@@ -75,6 +90,25 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _authenticated_artifact_payload(artifact: dict) -> bytes:
+    path = Path(os.path.abspath(os.fspath(artifact["path"])))
+    payload = load_authenticated_file_bytes(path)
+    if (
+        len(payload) != artifact["size_bytes"]
+        or hashlib.sha256(payload).hexdigest() != artifact["sha256"]
+    ):
+        raise ValueError(f"artifact descriptor bytes changed: {path}")
+    return payload
+
+
+def _authenticated_artifact_json(artifact: dict) -> dict:
+    payload = _authenticated_artifact_payload(artifact)
+    value = json.loads(payload.decode("utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("gate artifact JSON must be an object")
+    return value
+
+
 def _controlled_animal_source_gate_is_valid(source: dict) -> bool:
     gate = source.get("controlled_animal_gate", {})
     if (
@@ -89,21 +123,8 @@ def _controlled_animal_source_gate_is_valid(source: dict) -> bool:
     decision_artifact = gate.get("animation_decision", {})
     import_artifact = gate.get("ue_import_result", {})
     try:
-        decision_path = Path(decision_artifact["path"]).resolve()
-        import_path = Path(import_artifact["path"]).resolve()
-        for path, artifact in (
-            (decision_path, decision_artifact),
-            (import_path, import_artifact),
-        ):
-            if (
-                path.is_symlink()
-                or not path.is_file()
-                or path.stat().st_size != artifact["size_bytes"]
-                or _sha256_file(path) != artifact["sha256"]
-            ):
-                return False
-        decision = _read_json(decision_path)
-        imported = _read_json(import_path)
+        decision = _authenticated_artifact_json(decision_artifact)
+        imported = _authenticated_artifact_json(import_artifact)
     except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
         return False
     result = {
@@ -142,21 +163,9 @@ def _stable_animal_source_gate_is_valid(source: dict) -> bool:
     import_artifact = gate.get("ue_import_result", {})
     deformation_artifact = gate.get("deformation_audit", {})
     try:
-        for artifact in (
-            registry_artifact,
-            import_artifact,
-            deformation_artifact,
-        ):
-            path = Path(artifact["path"]).resolve()
-            if (
-                path.is_symlink()
-                or not path.is_file()
-                or path.stat().st_size != artifact["size_bytes"]
-                or _sha256_file(path) != artifact["sha256"]
-            ):
-                return False
-        registry = _read_json(Path(registry_artifact["path"]))
-        imported = _read_json(Path(import_artifact["path"]))
+        registry = _authenticated_artifact_json(registry_artifact)
+        imported = _authenticated_artifact_json(import_artifact)
+        _authenticated_artifact_payload(deformation_artifact)
     except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
         return False
     entry = {
@@ -494,40 +503,106 @@ def raw_render_is_complete(job: ReviewJob) -> bool:
     return True
 
 
+def _audible_source_tags(
+    spec: dict,
+    *,
+    expected_job_tag: str | None = None,
+) -> set[str]:
+    sources = spec.get("sources", [])
+    if not isinstance(sources, list):
+        raise ValueError("review spec sources must be a list")
+    audible_tags = set()
+    seen_tags = set()
+    for source in sources:
+        if not isinstance(source, dict):
+            raise ValueError("review source spec must be an object")
+        tag = source.get("tag")
+        mute_audio = source.get("mute_audio", False)
+        lookup = source.get("audio_lookup")
+        if not isinstance(tag, str) or not tag or tag in seen_tags:
+            raise ValueError("review source tags are missing or duplicated")
+        seen_tags.add(tag)
+        if not isinstance(mute_audio, bool):
+            raise ValueError("mute_audio must be boolean")
+        if lookup is not None and not isinstance(lookup, str):
+            raise ValueError("audio_lookup must be a string when present")
+        silent = mute_audio or lookup == "silent"
+        animal_species = animal_species_for_source(tag, source)
+        if animal_species is not None:
+            pinned_lookup = pinned_audio_lookup_for_source(tag, source)
+            if silent:
+                if pinned_lookup is not None:
+                    raise ValueError(
+                        f"controlled {animal_species} source {tag!r} "
+                        "cannot bypass its canonical dry audio"
+                    )
+                validate_animal_silence_contract(tag, source)
+                continue
+            if source.get("strict_audio") is not True:
+                raise ValueError(
+                    f"controlled animal source {tag!r} must enable strict_audio"
+                )
+            if pinned_lookup is not None and lookup not in (None, pinned_lookup):
+                raise ValueError(
+                    f"controlled animal source {tag!r} changed its canonical "
+                    "audio lookup"
+                )
+        if not silent:
+            audible_tags.add(tag)
+    if expected_job_tag is not None:
+        if seen_tags != {expected_job_tag}:
+            raise ValueError(
+                "controlled animal review spec source identity changed"
+            )
+    return audible_tags
+
+
 def audio_is_required(job: ReviewJob) -> bool:
-    spec = _read_json(job.spec_path)
-    return any(
-        not source.get("mute_audio") and source.get("audio_lookup") != "silent"
-        for source in spec.get("sources", [])
+    if job.spec_path.is_symlink():
+        raise ValueError("review spec cannot be symlinked")
+    return bool(
+        _audible_source_tags(
+            load_authenticated_json(job.spec_path),
+            expected_job_tag=job.tag,
+        )
     )
 
 
 def audio_is_complete(job: ReviewJob) -> bool:
-    if not audio_is_required(job):
-        return True
-    audio_path = job.output_dir / "binaural.wav"
-    schedule_path = job.output_dir / "binaural_source_schedule.json"
     try:
-        spec = _read_json(job.spec_path)
-        schedule = _read_json(schedule_path)
-        expected_duration_s = float(spec["audio_config"]["duration_s"])
-        with wave.open(str(audio_path), "rb") as stream:
-            channels = int(stream.getnchannels())
-            sample_rate = int(stream.getframerate())
-            duration_s = float(stream.getnframes()) / sample_rate
-    except (KeyError, TypeError, ValueError, OSError, EOFError, wave.Error):
+        if not audio_is_required(job):
+            return True
+        audio_path = job.output_dir / "binaural.wav"
+        schedule_path = job.output_dir / "binaural_source_schedule.json"
+        render_manifest_path = (
+            job.output_dir / "binaural_audio_render_manifest.json"
+        )
+        if (
+            audio_path.is_symlink()
+            or schedule_path.is_symlink()
+            or render_manifest_path.is_symlink()
+            or job.spec_path.is_symlink()
+        ):
+            return False
+        spec = load_authenticated_json(job.spec_path)
+        schedule = load_authenticated_json(schedule_path)
+        render_manifest = load_authenticated_json(render_manifest_path)
+        expected_tags = _audible_source_tags(
+            spec,
+            expected_job_tag=job.tag,
+        )
+        validate_animal_audio_evidence(
+            spec=spec,
+            schedule=schedule,
+            audio_path=audio_path,
+            expected_tags=expected_tags,
+            render_manifest=render_manifest,
+            spec_path=job.spec_path,
+            schedule_path=schedule_path,
+        )
+    except (KeyError, TypeError, ValueError, OSError):
         return False
-    expected_tags = {
-        source["tag"]
-        for source in spec.get("sources", [])
-        if not source.get("mute_audio") and source.get("audio_lookup") != "silent"
-    }
-    return (
-        channels == 2
-        and sample_rate == int(spec["audio_config"]["sample_rate_hz"])
-        and abs(duration_s - expected_duration_s) <= 1.0 / sample_rate
-        and set(schedule.get("sources", {})) == expected_tags
-    )
+    return True
 
 
 def build_audio_command(job: ReviewJob, *, quality: str) -> list[str]:
@@ -557,6 +632,7 @@ def job_is_complete(job: ReviewJob) -> bool:
         finish is None
         or finish.get("status") != "passed"
         or finish.get("stage") not in {None, "all", "finalize"}
+        or not audio_is_complete(job)
     ):
         return False
     try:
