@@ -33,6 +33,11 @@ PRODUCTION_PROFILE = (
     / "data/controlled_source_attributes_v1/contracts"
     / "quadruped_morphotype_guide_short_leg_short_tail_v1.json"
 )
+TAIL_STUMP_PRODUCTION_PROFILE = (
+    SPEAR_ROOT
+    / "data/controlled_source_attributes_v1/contracts"
+    / "quadruped_morphotype_guide_short_leg_tail_stump_v3.json"
+)
 DOG_FIXTURE = AVENGINE_ROOT / "assets/mesh_library/quaternius_animalpack/Dog.glb"
 
 
@@ -111,6 +116,31 @@ def test_production_profile_matches_the_validated_fixture():
     assert production == fixture
 
 
+def test_tail_stump_profile_preserves_non_degenerate_tail_targets_at_lower_bound():
+    semantics, records = _synthetic_rig()
+    profile = load_morphotype_guide_profile(TAIL_STUMP_PRODUCTION_PROFILE)
+    plan = build_morphotype_guide_plan(
+        profile,
+        semantics,
+        records,
+        bbox_height=1.0,
+    )
+
+    assert profile.tail_length_ratio == 0.05
+    assert plan.target_tail_length > 0.0
+    assert plan.target_tail_length / plan.source_tail_length == pytest.approx(
+        0.05,
+        abs=1.0e-12,
+    )
+    assert all(
+        any(
+            abs(component) > 1.0e-12
+            for component in _segment_vector(plan.targets[name])
+        )
+        for name in plan.tail_chain
+    )
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
@@ -124,7 +154,7 @@ def test_production_profile_matches_the_validated_fixture():
             "leg_length_ratio must be in",
         ),
         (
-            lambda value: value["transforms"].update({"tail_length_ratio": 0.1}),
+            lambda value: value["transforms"].update({"tail_length_ratio": 0.04}),
             "tail_length_ratio must be in",
         ),
         (

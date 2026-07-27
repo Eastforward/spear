@@ -1,0 +1,102 @@
+{
+  "schema": "avengine_controlled_reference_provenance_v1",
+  "reference_id": "quaternius_dog_short_leg_tail_stump_side_clay_v3",
+  "state_classification": "research_candidate",
+  "method_revision": {
+    "kind": "new_render_only_morphotype_method_revision",
+    "supersedes_reference_id": "quaternius_dog_short_leg_min_tail_side_clay_v2",
+    "supersedes_reference_path": "data/controlled_source_attributes_v1/references/animal/quaternius_dog_short_leg_min_tail_side_clay_v2/provenance.json",
+    "triggered_by_rejected_candidate_sha256": "6682838d09f1d68556b6ac045169b253d7b348e451747eaac6b775377ea1bde2",
+    "reason": "The v3 candidate preserved the corrected low-set short legs and four distinct planted paws, but FLUX expanded the 0.25 guide tail into a full-length tail. This revision changes the frozen generic render method to a non-degenerate 0.05 tail-root stump and does not retry or select another seed."
+  },
+  "reference": {
+    "path": "data/controlled_source_attributes_v1/references/animal/quaternius_dog_short_leg_tail_stump_side_clay_v3/frame_0000.png",
+    "sha256": "7d4ea944cd70c84ddec379092e29e7a4dcbe3886c8ce6d84b7ea6b50c47b5ab7",
+    "size_bytes": 1033946,
+    "canvas": [
+      1024,
+      1024
+    ]
+  },
+  "source_rig": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/quaternius_animalpack/Dog.glb",
+    "sha256": "bf9d2fdaf74a36be453edf4516a0b13b042cfce2d2614e0bf3ee24d40d553032",
+    "size_bytes": 143692,
+    "pose": "authored_armature_rest_pose_with_deterministic_render_only_morphotype_guide_and_far_limb_offset"
+  },
+  "license_snapshot": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/README.md",
+    "sha256": "5887c71ec9a300997bee4445def8f4fb9014ea4e09b36522c1efb9b8eb3a5aef",
+    "size_bytes": 1347,
+    "declared_license": "CC0-1.0",
+    "upstream_url": "https://quaternius.com/packs/animatedanimals.html"
+  },
+  "morphotype_guide": {
+    "profile": {
+      "path": "data/controlled_source_attributes_v1/contracts/quadruped_morphotype_guide_short_leg_tail_stump_v3.json",
+      "sha256": "078985528e4f7673dfc1977c3c3a26bb048418610b256c95ee71ecbd5eafb4f4",
+      "size_bytes": 213
+    },
+    "implementation": {
+      "path": "tools/quadruped_morphotype_guide.py",
+      "sha256": "a8877ef7297c91cdb7e29d0539ee2fc49ad981c16dfceb3564c9d1f226159f87",
+      "size_bytes": 16843
+    },
+    "leg_length_ratio": 0.65,
+    "tail_length_ratio": 0.05,
+    "body_drop_height_ratio": 0.1539846974465941,
+    "maximum_endpoint_residual_height_ratio": 6.573155835528555e-07,
+    "maximum_foot_position_residual_height_ratio": 5.6177038619223733e-08,
+    "maximum_foot_ground_residual_height_ratio": 3.399989047615281e-09,
+    "mesh_ground_residual_height_ratio": 5.0999835714229214e-09,
+    "maximum_cross_section_scale_error": 2.384185791015625e-07,
+    "maximum_torso_segment_scale_error": 3.0530488981383996e-07,
+    "realized_tail_length_ratio": 0.05000006059315269,
+    "render_only": true,
+    "source_asset_unchanged": true
+  },
+  "render": {
+    "spear_base_revision": "6304d1f3d3cfe941cb1b70abd9bfb00c47dafe2e",
+    "renderer_path": "tools/blender_render_glb_animation.py",
+    "renderer_sha256": "4583538a0e2f999eee38f98fa27457fc28019d68ed15fa18a45070cc95de449d",
+    "blender_version": "4.2.1 LTS",
+    "parameters": {
+      "rest_pose": true,
+      "orthographic": true,
+      "view": "side",
+      "quadruped_morphotype_guide_profile": "quadruped_morphotype_guide_short_leg_tail_stump_v3",
+      "quadruped_far_limb_offset_ratio": 0.35,
+      "pose_template_clay_color": "#b88b6a",
+      "smooth_shading": true,
+      "torso_transform": "rigid_translation_down_only",
+      "camera_yaw_deg": 0,
+      "ground_delta": 0,
+      "width": 1024,
+      "height": 1024,
+      "n_frames": 1,
+      "samples": 64,
+      "camera_distance_multiplier": 1.5,
+      "ground_plane": true
+    }
+  },
+  "visual_inspection": {
+    "reviewer": "codex_objective_render_check_20260727_v4",
+    "result": "passed",
+    "checks": {
+      "tail_is_root_stump_without_visible_free_shaft": "passed",
+      "tail_stump_clear_of_hind_legs_and_paws": "passed",
+      "low_set_short_leg_proportions": "passed",
+      "exactly_four_distinct_lower_limb_and_paw_silhouettes": "passed",
+      "four_paws_on_one_ground_plane": "passed"
+    },
+    "notes": "The exact-side 1024 render has only one tiny triangular protrusion immediately behind the rump and no visible free tail shaft. Two front and two hind lower-limb/paw silhouettes remain separated by plain-background gaps, and every paw remains planted on the common ground plane."
+  },
+  "usage": {
+    "purpose": "license-authenticated generic short-leg and tail-root-stump uniform-clay pose template for controlled quadruped appearance generation",
+    "pose_contract": "orthographic side torso/head; the four inferred feet remain anchored to one ground plane, the axial/head chain receives one rigid downward translation, each inferred leg chain is shortened without cross-section scaling, and the non-degenerate tail chain is compressed about its anatomical root into a visible stump; far-side limbs retain deterministic horizontal depth-disambiguating offsets",
+    "appearance_contract": "one uniform clay material and smooth polygon shading remove source material-region leakage while preserving the transformed guide silhouette",
+    "formal_dataset_registration_authorized": false
+  }
+}

@@ -18,7 +18,10 @@ from typing import Mapping, Sequence
 
 MORPHOTYPE_GUIDE_SCHEMA = "avengine_quadruped_morphotype_guide_v1"
 MIN_LEG_LENGTH_RATIO = 0.55
-MIN_TAIL_LENGTH_RATIO = 0.25
+# Keep every inferred tail segment non-degenerate while admitting a bounded
+# render-only stump guide.  Zero is deliberately forbidden because Blender
+# cannot construct a pose basis for a zero-length target segment.
+MIN_TAIL_LENGTH_RATIO = 0.05
 MAX_LENGTH_RATIO = 1.0
 MAX_GROUND_RESIDUAL_HEIGHT_RATIO = 0.01
 MAX_FOOT_GROUND_SPREAD_HEIGHT_RATIO = 0.01

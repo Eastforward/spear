@@ -1,0 +1,10 @@
+{
+  "schema": "avengine_quadruped_morphotype_guide_v1",
+  "transforms": {
+    "leg_length_ratio": 0.65,
+    "tail_length_ratio": 0.05
+  },
+  "validation": {
+    "maximum_ground_residual_height_ratio": 0.005
+  }
+}
