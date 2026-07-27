@@ -139,6 +139,18 @@ def test_approved_attempt_ids_requires_decisions_for_every_attempt():
         registry.approved_attempt_ids(decisions, attempts)
 
 
+def test_approved_attempt_ids_rejects_an_all_rejected_batch():
+    decisions = {
+        "animal_rejected": {"payload": {"decision": "rejected"}},
+    }
+    attempts = {
+        "animal_rejected": {"instance_id": "animal_rejected"},
+    }
+
+    with pytest.raises(contracts.ContractError, match="at least one approved"):
+        registry.approved_attempt_ids(decisions, attempts)
+
+
 def test_frozen_historical_preflight_accepts_additive_current_route_without_rewrite(
     frozen_historical_preflight,
 ):

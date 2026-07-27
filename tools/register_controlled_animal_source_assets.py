@@ -701,11 +701,16 @@ def approved_attempt_ids(
         raise contracts.ContractError(
             "static decision/Pixal attempt coverage differs"
         )
-    return {
+    approved = {
         instance_id
         for instance_id, value in decisions.items()
         if value["payload"]["decision"] == "approved_for_lod_and_binding"
     }
+    if not approved:
+        raise contracts.ContractError(
+            "source registry requires at least one approved static candidate"
+        )
+    return approved
 
 
 def register(
