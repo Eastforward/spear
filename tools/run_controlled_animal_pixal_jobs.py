@@ -8,7 +8,6 @@ import copy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import hashlib
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -60,6 +59,17 @@ def load_pixal_inputs(path: Path) -> tuple[Path, dict[str, Any]]:
     if path.is_symlink() or not path.is_file():
         raise contracts.ContractError(f"Pixal input manifest is missing: {path}")
     payload = contracts.load_json(path)
+    if (
+        isinstance(payload, dict)
+        and payload.get("schema")
+        == "avengine_controlled_pixal_inputs_combined_v1"
+    ):
+        # Import lazily: the combiner deliberately delegates each base-parent
+        # validation back to this function, while combined parents themselves
+        # are forbidden.  This keeps the original v1 contract unchanged.
+        from tools import combine_controlled_pixal_input_manifests as combined
+
+        return combined.load_combined_pixal_inputs(path)
     if (
         not isinstance(payload, dict)
         or payload.get("schema") != pixal_inputs.PIXAL_INPUT_SCHEMA
