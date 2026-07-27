@@ -1,0 +1,74 @@
+{
+  "schema": "avengine_controlled_profile_method_revision_provenance_v1",
+  "profile": {
+    "path": "data/controlled_source_attributes_v1/candidate_profiles/animal/cat_british_shorthair_four_limb_rest_side_v1.json",
+    "sha256": "4f24d6a9c8ee4f51355fbeac1f55262f7bb8dec36bb214089878096d37fd2b62",
+    "size_bytes": 9694,
+    "profile_schema_id": "cat_british_shorthair_four_limb_rest_side_v1",
+    "profile_revision": "2026_07_27_v3_reconstruction_safe_whiskerless_four_limb_method",
+    "canonical_sha256": "ee28acb603545a79e0fd71dc4b5590f105858189caf957e50c983ee4327511b6"
+  },
+  "method_revision": {
+    "kind": "new_reconstruction_safe_prompt_method_revision",
+    "supersedes_profile_revision": "2026_07_27_v2_one_shot_blue_adult_base",
+    "superseded_profile_canonical_sha256": "a98ccd68dd09dcf37560bc95a21153566b9af7e0928c6168a32e7184e71dc2df",
+    "reason": "The owner-accepted v2 image preserved the British Shorthair identity and four visible 2D limbs, but its one allowed Pixal reconstruction turned thin whiskers into long stray geometry and did not reconstruct complete independent far-side front and hind limb chains. The v3 profile changes the image-generation method to omit reconstructable thin whisker strands and require continuous background-separated, horizontally staggered limb chains from torso to paw.",
+    "this_is_not_a_seed_retry": true,
+    "same_candidate_retry_allowed": false,
+    "same_generation_seed_retry_allowed": false,
+    "candidate_ranking_allowed": false,
+    "next_execution_requires_new_profile_bound_request": true,
+    "next_execution_requires_new_batch_seed": true,
+    "forbidden_replay_request_sha256": "06078fe113745471d02fbac94b6f1c91f45e88d61cb025806a03a3630751545b",
+    "forbidden_replay_candidate_sha256": "e097fa8f85af7c8aa9fa4ce2d7bf3c74be9ba89351a37e452ef61f139a5524df",
+    "forbidden_replay_generation_seed": 3750817048556489000
+  },
+  "triggering_failure": {
+    "instance_id": "cat_british_shorthair_four_limb_rest_side_06078fe11374",
+    "request_sha256": "06078fe113745471d02fbac94b6f1c91f45e88d61cb025806a03a3630751545b",
+    "generation_seed": 3750817048556489000,
+    "owner_accepted_2d": {
+      "path": "tmp/new_animal_assets/british_shorthair_20260727_02/flux_2d_review_owner/reviews/cat_british_shorthair_four_limb_rest_side_06078fe11374.json",
+      "sha256": "63001d8f18f70f83103fbd26691c77a77a0e9388f4fa41ab1749f058e8fa63e6",
+      "size_bytes": 2435,
+      "candidate_sha256": "e097fa8f85af7c8aa9fa4ce2d7bf3c74be9ba89351a37e452ef61f139a5524df",
+      "decision": "approved_for_pixal3d"
+    },
+    "raw_pixal_manifest": {
+      "path": "tmp/new_animal_assets/british_shorthair_20260727_02/pixal/cat_british_shorthair_four_limb_rest_side_06078fe11374/pixal_raw_1024.manifest.json",
+      "sha256": "d2976c9431fe13b9fff5604819139a83bef17d32ae114df99fd3a6d153d2ec81",
+      "size_bytes": 3694
+    },
+    "raw_pixal_glb": {
+      "path": "tmp/new_animal_assets/british_shorthair_20260727_02/pixal/cat_british_shorthair_four_limb_rest_side_06078fe11374/pixal_raw_1024.glb",
+      "sha256": "7570694820c781cbc731ca909c964efa4a4a8b3c9ff388efc68c2108b3dbd192",
+      "size_bytes": 38136180
+    },
+    "static_review": {
+      "path": "tmp/new_animal_assets/british_shorthair_20260727_02/pixal_static_review/cat_british_shorthair_four_limb_rest_side_06078fe11374/static_review_manifest.json",
+      "sha256": "26ada98d59928b47a27298e64dc3d73e16af53a0d7c6951b78a15e6d1af7cc29",
+      "size_bytes": 4135,
+      "review_sha256": "7e3e7dfad913dc508f5882b9e1fc60e5ad1d3b5ee824afcb80c9de6cb012b8e3"
+    },
+    "formal_rejection_decision": {
+      "path": "tmp/new_animal_assets/british_shorthair_20260727_02/pixal_static_decision_codex1/cat_british_shorthair_four_limb_rest_side_06078fe11374/static_decision.json",
+      "sha256": "948810bd0fd44fa2b953d082b8b0e2611ebe4cfe04202a89e121c147eb037d7d",
+      "size_bytes": 1754,
+      "decision_sha256": "abc335d5dfa9d89b005a06afa4fb347a98a9039ef3a7d5064cfc83abdab9bd77",
+      "decision": "rejected",
+      "checks": {
+        "complete_silhouette": false,
+        "four_limbs_usable": false,
+        "pose_riggable": false,
+        "texture_coherent": true,
+        "no_large_holes": true
+      }
+    }
+  },
+  "reconstruction_safe_method": {
+    "muzzle": "whiskers absent or too short and subtle to form any visible free-standing strand; no thin line, filament, wire, hair strand, whisker shaft, or curve",
+    "limbs": "exactly four complete independently bindable chains, unmistakably staggered horizontally, with continuous plain-background separation from torso emergence through every paw",
+    "preserved_identity": "adult stocky cobby British Shorthair with round head, broad cheeks, sturdy legs, dense plush blue-gray short coat, and exactly one thick medium rounded-tip tail"
+  },
+  "formal_dataset_registration_authorized": false
+}
