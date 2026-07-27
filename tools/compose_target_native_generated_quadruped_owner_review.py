@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime, timezone
 import errno
 from fractions import Fraction
@@ -21,12 +22,12 @@ import os
 from pathlib import Path
 import platform
 import re
+import secrets
 import shutil
 import stat
 import struct
 import subprocess
 import sys
-import tempfile
 from typing import Any
 
 
@@ -226,6 +227,43 @@ RECEIPT_TOP_LEVEL_FIELDS = frozenset(
 
 class PresentationContractError(RuntimeError):
     """The v4 review cannot safely be presented."""
+
+
+@dataclass
+class HeldDirectory:
+    """One directory inode held open across every security-sensitive operation."""
+
+    path: Path
+    name: str
+    descriptor: int
+    device: int
+    inode: int
+    owner_uid: int
+    owner_gid: int
+    mode: int
+    closed: bool = False
+
+    def close(self) -> None:
+        if not self.closed:
+            os.close(self.descriptor)
+            self.closed = True
+
+
+@dataclass
+class OutputLocation:
+    root: Path
+    output_name: str
+    parent: HeldDirectory
+    review_root: Path
+
+
+@dataclass
+class StagingInventory:
+    """Exact known staging entries; anything else forces quarantine."""
+
+    top_level_files: dict[str, dict] = dataclass_field(default_factory=dict)
+    snapshot_directory: dict | None = None
+    snapshot_files: dict[str, dict] = dataclass_field(default_factory=dict)
 
 
 def parse_args(argv=None):
@@ -1534,20 +1572,6 @@ def reauthenticate_private_snapshots(
             )
 
 
-def remove_private_snapshots(snapshot_root: Path, videos: list[Path]) -> None:
-    for video in videos:
-        video = resolve_regular_file(video, "private snapshot")
-        try:
-            video.relative_to(snapshot_root)
-        except ValueError as error:
-            raise PresentationContractError(
-                "private snapshot escaped its staging directory"
-            ) from error
-        video.chmod(0o600)
-        video.unlink()
-    snapshot_root.rmdir()
-
-
 def write_json_exclusive(path: Path, payload: dict) -> None:
     with path.open("x", encoding="utf-8") as stream:
         json.dump(
@@ -1567,134 +1591,647 @@ def run_ffmpeg(argv: list[str]) -> None:
     subprocess.run(argv, cwd=SPEAR_ROOT, check=True)
 
 
-def _directory_identity(path: Path) -> tuple[int, int]:
-    current = os.stat(path, follow_symlinks=False)
+def _require_child_name(name: str, label: str) -> str:
+    if (
+        not isinstance(name, str)
+        or not name
+        or name in {".", ".."}
+        or Path(name).name != name
+        or os.sep in name
+        or (os.altsep is not None and os.altsep in name)
+    ):
+        raise PresentationContractError(f"{label} is not one safe child name")
+    return name
+
+
+def _directory_guard(current: os.stat_result) -> dict:
     if not stat.S_ISDIR(current.st_mode):
-        raise PresentationContractError(f"expected a directory: {path}")
-    return current.st_dev, current.st_ino
+        raise PresentationContractError("held object is not a directory")
+    return {
+        "device": current.st_dev,
+        "inode": current.st_ino,
+        "owner_uid": current.st_uid,
+        "owner_gid": current.st_gid,
+        "mode": stat.S_IMODE(current.st_mode),
+    }
 
 
-def _require_directory_identity(
+def _held_directory(
+    *,
     path: Path,
-    expected: tuple[int, int],
+    name: str,
+    descriptor: int,
+    expected: os.stat_result,
     label: str,
-) -> None:
-    path = resolve_directory(path, label)
-    if _directory_identity(path) != expected:
-        raise PresentationContractError(f"{label} identity changed")
+) -> HeldDirectory:
+    opened = os.fstat(descriptor)
+    expected_guard = _directory_guard(expected)
+    opened_guard = _directory_guard(opened)
+    if opened_guard != expected_guard:
+        raise PresentationContractError(f"{label} changed while it was opened")
+    return HeldDirectory(
+        path=path,
+        name=name,
+        descriptor=descriptor,
+        device=opened_guard["device"],
+        inode=opened_guard["inode"],
+        owner_uid=opened_guard["owner_uid"],
+        owner_gid=opened_guard["owner_gid"],
+        mode=opened_guard["mode"],
+    )
 
 
-def fsync_directory(path: Path) -> None:
-    path = resolve_directory(path, "directory to fsync")
-    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+def _require_held_directory(
+    directory: HeldDirectory,
+    label: str,
+    *,
+    expected_mode: int | None = None,
+) -> os.stat_result:
+    if directory.closed:
+        raise PresentationContractError(f"{label} descriptor is closed")
+    current = os.fstat(directory.descriptor)
+    guard = _directory_guard(current)
+    if (
+        guard["device"] != directory.device
+        or guard["inode"] != directory.inode
+        or guard["owner_uid"] != directory.owner_uid
+        or guard["owner_gid"] != directory.owner_gid
+        or (expected_mode is not None and guard["mode"] != expected_mode)
+    ):
+        raise PresentationContractError(f"{label} descriptor identity changed")
+    return current
 
 
-def prepare_output_location(
-    path: Path,
-    review_path: Path,
-) -> tuple[Path, Path, tuple[int, int]]:
-    lexical = _lexical_absolute(path)
-    _reject_unsafe_symlinks(lexical, "output root", file_leaf=False)
-    if os.path.lexists(lexical):
-        raise PresentationContractError(f"refusing to replace output root: {lexical}")
-    root = lexical.resolve(strict=False)
-    review_root = review_path.resolve().parent
+def _require_secure_output_parent(current: os.stat_result) -> None:
+    mode = stat.S_IMODE(current.st_mode)
+    if (
+        not stat.S_ISDIR(current.st_mode)
+        or current.st_uid != os.geteuid()
+        or current.st_gid != os.getegid()
+        or mode & 0o700 != 0o700
+        or mode & 0o002
+    ):
+        raise PresentationContractError("output parent owner/mode policy failed")
+
+
+def _require_outside_review_tree(root: Path, review_root: Path) -> None:
     if root == review_root or review_root in root.parents:
         raise PresentationContractError(
             "presentation output root must be outside the immutable review run"
         )
-    lexical.parent.mkdir(parents=True, exist_ok=True)
-    parent = resolve_directory(lexical.parent, "output parent")
-    root = parent / lexical.name
-    if os.path.lexists(root):
-        raise PresentationContractError(f"refusing to replace output root: {root}")
-    return root, parent, _directory_identity(parent)
 
 
-def create_private_staging(
-    parent: Path,
-    output_name: str,
-) -> tuple[Path, tuple[int, int]]:
-    staging = Path(
-        tempfile.mkdtemp(
-            prefix=f".{output_name}.",
-            suffix=".staging",
-            dir=parent,
+def _require_parent_path_binding(location: OutputLocation) -> None:
+    parent = resolve_directory(location.parent.path, "output parent")
+    current = os.stat(parent, follow_symlinks=False)
+    _require_secure_output_parent(current)
+    expected = _require_held_directory(
+        location.parent,
+        "output parent",
+        expected_mode=location.parent.mode,
+    )
+    if _directory_guard(current) != _directory_guard(expected):
+        raise PresentationContractError("output parent path identity changed")
+    _require_outside_review_tree(
+        parent / location.output_name,
+        location.review_root,
+    )
+
+
+def _directory_entry_matches(
+    parent_descriptor: int,
+    name: str,
+    directory: HeldDirectory,
+) -> bool:
+    try:
+        current = os.stat(
+            _require_child_name(name, "directory entry"),
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
         )
-    )
-    staging.chmod(0o700)
-    staging = resolve_directory(staging, "private staging root")
-    return staging, _directory_identity(staging)
-
-
-def remove_owned_tree(
-    root: Path,
-    identity: tuple[int, int],
-) -> None:
-    try:
-        stat = root.lstat()
     except FileNotFoundError:
-        return
-    if root.is_symlink() or not root.is_dir() or (stat.st_dev, stat.st_ino) != identity:
-        return
-    root.chmod(0o700)
-    for directory, directories, files in os.walk(
-        root, topdown=False, followlinks=False
-    ):
-        directory_path = Path(directory)
-        for name in files:
-            child = directory_path / name
-            if child.is_symlink():
-                child.unlink()
-            else:
-                os.chmod(child, 0o600, follow_symlinks=False)
-                child.unlink()
-        for name in directories:
-            child = directory_path / name
-            if child.is_symlink():
-                child.unlink()
-            else:
-                child.chmod(0o700)
-                child.rmdir()
-    root.rmdir()
-
-
-def seal_readonly_tree(root: Path) -> None:
-    root = resolve_directory(root, "publication staging root")
-    descendants = sorted(root.rglob("*"), key=lambda item: str(item))
-    for path in descendants:
-        _reject_unsafe_symlinks(path, "publication artifact", file_leaf=False)
-        if path.is_symlink():
-            raise PresentationContractError(
-                f"publication artifact is a symlink: {path}"
-            )
-    files = [path for path in descendants if path.is_file()]
-    directories = sorted(
-        (path for path in descendants if path.is_dir()),
-        key=lambda item: len(item.parts),
-        reverse=True,
+        return False
+    return (
+        stat.S_ISDIR(current.st_mode)
+        and current.st_dev == directory.device
+        and current.st_ino == directory.inode
+        and current.st_uid == directory.owner_uid
+        and current.st_gid == directory.owner_gid
     )
-    for path in files:
-        current = os.stat(path, follow_symlinks=False)
-        if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
-            raise PresentationContractError(
-                f"publication artifact is not a private regular file: {path}"
-            )
-        with path.open("rb") as stream:
-            os.fsync(stream.fileno())
-        path.chmod(0o444)
-    for path in directories:
-        path.chmod(0o555)
-    directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+
+
+def _file_guard_from_stat(path: Path, current: os.stat_result) -> dict:
+    if (
+        not stat.S_ISREG(current.st_mode)
+        or current.st_size <= 0
+        or current.st_nlink != 1
+    ):
+        raise PresentationContractError(
+            f"staging artifact is not one private regular file: {path}"
+        )
+    return {
+        "path": str(path),
+        "device": current.st_dev,
+        "inode": current.st_ino,
+        "mode": stat.S_IMODE(current.st_mode),
+        "link_count": current.st_nlink,
+        "size_bytes": current.st_size,
+        "mtime_ns": current.st_mtime_ns,
+        "ctime_ns": current.st_ctime_ns,
+    }
+
+
+def _file_guard_at(
+    directory_descriptor: int,
+    name: str,
+    path: Path,
+    label: str,
+) -> dict:
+    name = _require_child_name(name, label)
+    before = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+    guard = _file_guard_from_stat(path, before)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(name, flags, dir_fd=directory_descriptor)
     try:
-        os.fsync(directory_fd)
+        opened = _file_guard_from_stat(path, os.fstat(descriptor))
+        if opened != guard:
+            raise PresentationContractError(f"{label} changed while it was opened")
     finally:
-        os.close(directory_fd)
-    root.chmod(0o555)
+        os.close(descriptor)
+    after = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+    if _file_guard_from_stat(path, after) != guard:
+        raise PresentationContractError(f"{label} changed during authentication")
+    return guard
+
+
+def _require_file_guard_at(
+    directory_descriptor: int,
+    name: str,
+    path: Path,
+    expected: dict,
+    label: str,
+) -> None:
+    observed = _file_guard_at(directory_descriptor, name, path, label)
+    if observed != expected:
+        raise PresentationContractError(f"{label} identity changed")
+
+
+def _read_stable_bytes_at(
+    directory_descriptor: int,
+    name: str,
+    path: Path,
+    label: str,
+) -> tuple[bytes, dict]:
+    name = _require_child_name(name, label)
+    before = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+    guard = _file_guard_from_stat(path, before)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(name, flags, dir_fd=directory_descriptor)
+    try:
+        opened = _file_guard_from_stat(path, os.fstat(descriptor))
+        if opened != guard:
+            raise PresentationContractError(f"{label} changed before it was read")
+        chunks = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        closed = _file_guard_from_stat(path, os.fstat(descriptor))
+        if closed != guard:
+            raise PresentationContractError(f"{label} changed while it was read")
+    finally:
+        os.close(descriptor)
+    _require_file_guard_at(directory_descriptor, name, path, guard, label)
+    return b"".join(chunks), guard
+
+
+def _file_record_at(
+    directory_descriptor: int,
+    name: str,
+    path: Path,
+    label: str,
+) -> dict:
+    encoded, _guard = _read_stable_bytes_at(
+        directory_descriptor,
+        name,
+        path,
+        label,
+    )
+    return {
+        "path": str(path),
+        "sha256": sha256_bytes(encoded),
+        "size_bytes": len(encoded),
+    }
+
+
+def prepare_output_location(path: Path, review_path: Path) -> OutputLocation:
+    lexical = _lexical_absolute(path)
+    _reject_unsafe_symlinks(lexical, "output root", file_leaf=False)
+    if os.path.lexists(lexical):
+        raise PresentationContractError(f"refusing to replace output root: {lexical}")
+    output_name = _require_child_name(lexical.name, "output root name")
+    review_root = review_path.resolve(strict=True).parent
+    _require_outside_review_tree(lexical.resolve(strict=False), review_root)
+
+    # Requiring an existing parent avoids a check-then-create write through an
+    # ancestor that can be replaced between lexical validation and mkdir().
+    parent = resolve_directory(lexical.parent, "output parent")
+    root = parent / output_name
+    _require_outside_review_tree(root, review_root)
+    parent_before = os.stat(parent, follow_symlinks=False)
+    _require_secure_output_parent(parent_before)
+    flags = (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(parent, flags)
+    try:
+        held_parent = _held_directory(
+            path=parent,
+            name=parent.name,
+            descriptor=descriptor,
+            expected=parent_before,
+            label="output parent",
+        )
+        location = OutputLocation(
+            root=root,
+            output_name=output_name,
+            parent=held_parent,
+            review_root=review_root,
+        )
+        _require_parent_path_binding(location)
+        try:
+            os.stat(
+                output_name,
+                dir_fd=descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return location
+        raise PresentationContractError(f"refusing to replace output root: {root}")
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def create_private_staging(location: OutputLocation) -> HeldDirectory:
+    parent = location.parent
+    _require_parent_path_binding(location)
+    _require_held_directory(parent, "output parent", expected_mode=parent.mode)
+    for _attempt in range(128):
+        name = f".{location.output_name}.{secrets.token_hex(16)}.staging"
+        try:
+            os.mkdir(name, mode=0o700, dir_fd=parent.descriptor)
+        except FileExistsError:
+            continue
+        break
+    else:
+        raise PresentationContractError("could not allocate unique private staging")
+
+    descriptor = None
+    staging = None
+    try:
+        before = os.stat(name, dir_fd=parent.descriptor, follow_symlinks=False)
+        flags = (
+            os.O_RDONLY
+            | os.O_DIRECTORY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        descriptor = os.open(name, flags, dir_fd=parent.descriptor)
+        staging = _held_directory(
+            path=parent.path / name,
+            name=name,
+            descriptor=descriptor,
+            expected=before,
+            label="private staging root",
+        )
+        os.fchmod(descriptor, 0o700)
+        staging.mode = 0o700
+        _require_held_directory(
+            staging,
+            "private staging root",
+            expected_mode=0o700,
+        )
+        if not _directory_entry_matches(parent.descriptor, name, staging):
+            raise PresentationContractError(
+                "private staging parent entry identity changed"
+            )
+        os.fsync(parent.descriptor)
+        return staging
+    except Exception:
+        if descriptor is not None and staging is not None:
+            try:
+                if _directory_entry_matches(
+                    parent.descriptor, name, staging
+                ) and not os.listdir(descriptor):
+                    os.rmdir(name, dir_fd=parent.descriptor)
+            except OSError:
+                pass
+            finally:
+                os.close(descriptor)
+        elif descriptor is not None:
+            os.close(descriptor)
+        raise
+
+
+def _snapshot_directory_guard(
+    staging: HeldDirectory,
+    name: str,
+) -> tuple[dict, int]:
+    name = _require_child_name(name, "private snapshot directory")
+    current = os.stat(
+        name,
+        dir_fd=staging.descriptor,
+        follow_symlinks=False,
+    )
+    guard = _directory_guard(current)
+    flags = (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(name, flags, dir_fd=staging.descriptor)
+    if _directory_guard(os.fstat(descriptor)) != guard:
+        os.close(descriptor)
+        raise PresentationContractError(
+            "private snapshot directory changed while it was opened"
+        )
+    return guard, descriptor
+
+
+def register_snapshot_tree(
+    staging: HeldDirectory,
+    inventory: StagingInventory,
+    snapshot_root: Path,
+    videos: list[Path],
+    snapshot_bindings: list[dict],
+) -> None:
+    if (
+        inventory.snapshot_directory is not None
+        or inventory.snapshot_files
+        or len(videos) != len(MEDIA_LAYOUT)
+        or len(snapshot_bindings) != len(MEDIA_LAYOUT)
+    ):
+        raise PresentationContractError("private snapshot registration set is invalid")
+    directory_name = _require_child_name(
+        snapshot_root.name,
+        "private snapshot directory",
+    )
+    directory_guard, descriptor = _snapshot_directory_guard(
+        staging,
+        directory_name,
+    )
+    try:
+        expected_names = {video.name for video in videos}
+        if set(os.listdir(descriptor)) != expected_names:
+            raise PresentationContractError("private snapshot artifact set changed")
+        registered = {}
+        for video, binding in zip(videos, snapshot_bindings):
+            expected = binding["private_snapshot_file_guard"]
+            observed = _file_guard_at(
+                descriptor,
+                video.name,
+                video,
+                "private snapshot",
+            )
+            if observed != expected:
+                raise PresentationContractError("private snapshot fd binding changed")
+            registered[video.name] = observed
+    finally:
+        os.close(descriptor)
+    inventory.snapshot_directory = {
+        "name": directory_name,
+        **directory_guard,
+    }
+    inventory.snapshot_files = registered
+
+
+def register_top_level_file(
+    staging: HeldDirectory,
+    inventory: StagingInventory,
+    name: str,
+    path: Path,
+    label: str,
+    *,
+    expected: dict | None = None,
+) -> dict:
+    if name in inventory.top_level_files:
+        raise PresentationContractError(f"{label} was registered twice")
+    guard = _file_guard_at(staging.descriptor, name, path, label)
+    if expected is not None and guard != expected:
+        raise PresentationContractError(f"{label} fd binding changed")
+    inventory.top_level_files[name] = guard
+    return guard
+
+
+def remove_private_snapshots(
+    staging: HeldDirectory,
+    inventory: StagingInventory,
+) -> None:
+    directory_guard = inventory.snapshot_directory
+    if directory_guard is None or len(inventory.snapshot_files) != len(MEDIA_LAYOUT):
+        raise PresentationContractError(
+            "private snapshot cleanup inventory is incomplete"
+        )
+    name = directory_guard["name"]
+    observed_guard, descriptor = _snapshot_directory_guard(staging, name)
+    try:
+        if observed_guard != {
+            key: directory_guard[key]
+            for key in ("device", "inode", "owner_uid", "owner_gid", "mode")
+        }:
+            raise PresentationContractError(
+                "private snapshot directory identity changed"
+            )
+        if set(os.listdir(descriptor)) != set(inventory.snapshot_files):
+            raise PresentationContractError(
+                "private snapshot cleanup found unknown artifacts"
+            )
+        for filename, guard in inventory.snapshot_files.items():
+            _require_file_guard_at(
+                descriptor,
+                filename,
+                Path(guard["path"]),
+                guard,
+                "private snapshot",
+            )
+        for filename, guard in inventory.snapshot_files.items():
+            _require_file_guard_at(
+                descriptor,
+                filename,
+                Path(guard["path"]),
+                guard,
+                "private snapshot",
+            )
+            os.unlink(filename, dir_fd=descriptor)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.rmdir(name, dir_fd=staging.descriptor)
+    os.fsync(staging.descriptor)
+    inventory.snapshot_directory = None
+    inventory.snapshot_files.clear()
+
+
+def write_json_exclusive_at(
+    staging: HeldDirectory,
+    inventory: StagingInventory,
+    name: str,
+    path: Path,
+    payload: dict,
+) -> dict:
+    name = _require_child_name(name, "presentation receipt")
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(name, flags, 0o600, dir_fd=staging.descriptor)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", closefd=False) as stream:
+            json.dump(
+                payload,
+                stream,
+                indent=2,
+                sort_keys=True,
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        os.close(descriptor)
+    return register_top_level_file(
+        staging,
+        inventory,
+        name,
+        path,
+        "presentation receipt",
+    )
+
+
+def require_receipt_self_hash_at(
+    staging: HeldDirectory,
+    name: str,
+    path: Path,
+    expected: dict,
+) -> None:
+    encoded, guard = _read_stable_bytes_at(
+        staging.descriptor,
+        name,
+        path,
+        "presentation receipt",
+    )
+    try:
+        observed = strict_json_loads(encoded)
+    except StrictJSONError as error:
+        raise PresentationContractError(
+            "presentation receipt is not strict JSON"
+        ) from error
+    if observed != expected:
+        raise PresentationContractError(
+            "presentation receipt changed after serialization"
+        )
+    validate_presentation_receipt(observed)
+    _require_file_guard_at(
+        staging.descriptor,
+        name,
+        path,
+        guard,
+        "presentation receipt",
+    )
+
+
+def seal_readonly_tree(
+    staging: HeldDirectory,
+    inventory: StagingInventory,
+) -> None:
+    _require_held_directory(
+        staging,
+        "publication staging root",
+        expected_mode=0o700,
+    )
+    if inventory.snapshot_directory is not None or inventory.snapshot_files:
+        raise PresentationContractError(
+            "private snapshots remain in publication staging"
+        )
+    if set(inventory.top_level_files) != {OUTPUT_VIDEO_NAME, RECEIPT_NAME}:
+        raise PresentationContractError("publication artifact inventory changed")
+    if set(os.listdir(staging.descriptor)) != set(inventory.top_level_files):
+        raise PresentationContractError("publication artifact set changed")
+    for name, guard in inventory.top_level_files.items():
+        _require_file_guard_at(
+            staging.descriptor,
+            name,
+            Path(guard["path"]),
+            guard,
+            "publication artifact",
+        )
+    for name, guard in tuple(inventory.top_level_files.items()):
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(name, flags, dir_fd=staging.descriptor)
+        try:
+            opened = _file_guard_from_stat(Path(guard["path"]), os.fstat(descriptor))
+            if opened != guard:
+                raise PresentationContractError(
+                    "publication artifact changed before sealing"
+                )
+            os.fsync(descriptor)
+            os.fchmod(descriptor, 0o444)
+        finally:
+            os.close(descriptor)
+        inventory.top_level_files[name] = _file_guard_at(
+            staging.descriptor,
+            name,
+            Path(guard["path"]),
+            "publication artifact",
+        )
+    os.fsync(staging.descriptor)
+    os.fchmod(staging.descriptor, 0o555)
+    staging.mode = 0o555
+    os.fsync(staging.descriptor)
+    _require_held_directory(
+        staging,
+        "publication staging root",
+        expected_mode=0o555,
+    )
+
+
+def require_readonly_publication_fd(
+    staging: HeldDirectory,
+    inventory: StagingInventory,
+) -> None:
+    _require_held_directory(
+        staging,
+        "sealed publication",
+        expected_mode=0o555,
+    )
+    if (
+        inventory.snapshot_directory is not None
+        or inventory.snapshot_files
+        or set(inventory.top_level_files) != {OUTPUT_VIDEO_NAME, RECEIPT_NAME}
+        or set(os.listdir(staging.descriptor)) != set(inventory.top_level_files)
+    ):
+        raise PresentationContractError("publication artifact set changed")
+    for name, guard in inventory.top_level_files.items():
+        observed = _file_guard_at(
+            staging.descriptor,
+            name,
+            Path(guard["path"]),
+            "sealed publication artifact",
+        )
+        if observed != guard or observed["mode"] != 0o444:
+            raise PresentationContractError(
+                "publication artifact is not sealed read-only"
+            )
 
 
 def require_readonly_publication(root: Path) -> None:
@@ -1714,7 +2251,16 @@ def require_readonly_publication(root: Path) -> None:
             )
 
 
-def atomic_publish_no_replace(staging: Path, output_root: Path) -> None:
+def _renameat2_no_replace(
+    source_directory_descriptor: int,
+    source_name: str,
+    target_directory_descriptor: int,
+    target_name: str,
+    *,
+    target_display: Path,
+) -> None:
+    source_name = _require_child_name(source_name, "rename source")
+    target_name = _require_child_name(target_name, "rename target")
     try:
         renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
     except AttributeError as error:
@@ -1729,13 +2275,12 @@ def atomic_publish_no_replace(staging: Path, output_root: Path) -> None:
         ctypes.c_uint,
     ]
     renameat2.restype = ctypes.c_int
-    at_fdcwd = -100
     rename_noreplace = 1
     result = renameat2(
-        at_fdcwd,
-        os.fsencode(staging),
-        at_fdcwd,
-        os.fsencode(output_root),
+        source_directory_descriptor,
+        os.fsencode(source_name),
+        target_directory_descriptor,
+        os.fsencode(target_name),
         rename_noreplace,
     )
     if result == 0:
@@ -1743,13 +2288,231 @@ def atomic_publish_no_replace(staging: Path, output_root: Path) -> None:
     error_number = ctypes.get_errno()
     if error_number == errno.EEXIST:
         raise PresentationContractError(
-            f"refusing to replace output root: {output_root}"
+            f"refusing to replace output root: {target_display}"
         )
     if error_number in {errno.ENOSYS, errno.EINVAL, errno.ENOTSUP}:
         raise PresentationContractError(
             "atomic no-replace directory publication is unsupported"
         )
-    raise OSError(error_number, os.strerror(error_number), str(output_root))
+    raise OSError(error_number, os.strerror(error_number), str(target_display))
+
+
+def atomic_publish_no_replace(
+    location: OutputLocation,
+    staging: HeldDirectory,
+) -> None:
+    _require_held_directory(
+        location.parent,
+        "output parent",
+        expected_mode=location.parent.mode,
+    )
+    _require_held_directory(
+        staging,
+        "publication staging root",
+        expected_mode=0o555,
+    )
+    if not _directory_entry_matches(
+        location.parent.descriptor,
+        staging.name,
+        staging,
+    ):
+        raise PresentationContractError("private staging parent entry identity changed")
+    _renameat2_no_replace(
+        location.parent.descriptor,
+        staging.name,
+        location.parent.descriptor,
+        location.output_name,
+        target_display=location.root,
+    )
+
+
+def _find_held_directory_entry(
+    parent: HeldDirectory,
+    directory: HeldDirectory,
+) -> str | None:
+    matches = []
+    for name in os.listdir(parent.descriptor):
+        try:
+            current = os.stat(
+                name,
+                dir_fd=parent.descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            continue
+        if (
+            stat.S_ISDIR(current.st_mode)
+            and current.st_dev == directory.device
+            and current.st_ino == directory.inode
+        ):
+            matches.append(name)
+    if len(matches) > 1:
+        raise PresentationContractError(
+            "held staging directory has ambiguous parent entries"
+        )
+    return matches[0] if matches else None
+
+
+def quarantine_staging(
+    location: OutputLocation,
+    staging: HeldDirectory,
+) -> str:
+    _require_held_directory(staging, "quarantined staging")
+    os.fchmod(staging.descriptor, 0o700)
+    staging.mode = 0o700
+    entry_name = _find_held_directory_entry(location.parent, staging)
+    if entry_name is None:
+        return "quarantined_detached_inode"
+    for _attempt in range(128):
+        quarantine_name = f".quarantine.{location.output_name}.{secrets.token_hex(16)}"
+        try:
+            _renameat2_no_replace(
+                location.parent.descriptor,
+                entry_name,
+                location.parent.descriptor,
+                quarantine_name,
+                target_display=location.parent.path / quarantine_name,
+            )
+        except PresentationContractError as error:
+            if "refusing to replace output root" in str(error):
+                continue
+            raise
+        staging.name = quarantine_name
+        staging.path = location.parent.path / quarantine_name
+        os.fsync(location.parent.descriptor)
+        return "quarantined"
+    return "quarantined_name_allocation_failed"
+
+
+def _preflight_known_staging_cleanup(
+    staging: HeldDirectory,
+    inventory: StagingInventory,
+) -> None:
+    expected_names = set(inventory.top_level_files)
+    if inventory.snapshot_directory is not None:
+        expected_names.add(inventory.snapshot_directory["name"])
+    if set(os.listdir(staging.descriptor)) != expected_names:
+        raise PresentationContractError(
+            "staging cleanup found unknown or missing artifacts"
+        )
+    for name, guard in inventory.top_level_files.items():
+        _require_file_guard_at(
+            staging.descriptor,
+            name,
+            Path(guard["path"]),
+            guard,
+            "known staging artifact",
+        )
+    if inventory.snapshot_directory is None:
+        if inventory.snapshot_files:
+            raise PresentationContractError(
+                "staging cleanup snapshot inventory is inconsistent"
+            )
+        return
+    name = inventory.snapshot_directory["name"]
+    observed_guard, descriptor = _snapshot_directory_guard(staging, name)
+    try:
+        expected_guard = {
+            key: inventory.snapshot_directory[key]
+            for key in ("device", "inode", "owner_uid", "owner_gid", "mode")
+        }
+        if observed_guard != expected_guard:
+            raise PresentationContractError("known snapshot directory identity changed")
+        if set(os.listdir(descriptor)) != set(inventory.snapshot_files):
+            raise PresentationContractError(
+                "snapshot cleanup found unknown or missing artifacts"
+            )
+        for filename, guard in inventory.snapshot_files.items():
+            _require_file_guard_at(
+                descriptor,
+                filename,
+                Path(guard["path"]),
+                guard,
+                "known private snapshot",
+            )
+    finally:
+        os.close(descriptor)
+
+
+def cleanup_unpublished_staging(
+    location: OutputLocation,
+    staging: HeldDirectory,
+    inventory: StagingInventory,
+) -> str:
+    """Remove only a completely authenticated known tree, otherwise quarantine."""
+
+    try:
+        _require_held_directory(staging, "unpublished staging")
+        entry_name = _find_held_directory_entry(location.parent, staging)
+        if entry_name != staging.name:
+            return quarantine_staging(location, staging)
+        _preflight_known_staging_cleanup(staging, inventory)
+        os.fchmod(staging.descriptor, 0o700)
+        staging.mode = 0o700
+        if inventory.snapshot_directory is not None:
+            remove_private_snapshots(staging, inventory)
+        for name, guard in tuple(inventory.top_level_files.items()):
+            _require_file_guard_at(
+                staging.descriptor,
+                name,
+                Path(guard["path"]),
+                guard,
+                "known staging artifact",
+            )
+            os.unlink(name, dir_fd=staging.descriptor)
+            del inventory.top_level_files[name]
+        os.fsync(staging.descriptor)
+        if os.listdir(staging.descriptor):
+            return quarantine_staging(location, staging)
+        if not _directory_entry_matches(
+            location.parent.descriptor,
+            staging.name,
+            staging,
+        ):
+            return quarantine_staging(location, staging)
+        os.rmdir(staging.name, dir_fd=location.parent.descriptor)
+        os.fsync(location.parent.descriptor)
+        return "removed"
+    except (OSError, PresentationContractError):
+        try:
+            return quarantine_staging(location, staging)
+        except (OSError, PresentationContractError):
+            return "quarantined_in_place"
+
+
+def require_published_binding(
+    location: OutputLocation,
+    staging: HeldDirectory,
+) -> None:
+    _require_held_directory(
+        location.parent,
+        "output parent",
+        expected_mode=location.parent.mode,
+    )
+    _require_held_directory(
+        staging,
+        "published output root",
+        expected_mode=0o555,
+    )
+    if not _directory_entry_matches(
+        location.parent.descriptor,
+        location.output_name,
+        staging,
+    ):
+        raise PresentationContractError(
+            "published output parent entry identity changed"
+        )
+    _require_parent_path_binding(location)
+    published_path = resolve_directory(location.root, "published output root")
+    current = os.stat(published_path, follow_symlinks=False)
+    if (
+        current.st_dev != staging.device
+        or current.st_ino != staging.inode
+        or current.st_uid != staging.owner_uid
+        or current.st_gid != staging.owner_gid
+        or stat.S_IMODE(current.st_mode) != 0o555
+    ):
+        raise PresentationContractError("published output path identity changed")
 
 
 def _require_record_shape(value: Any, fields: frozenset, label: str) -> dict:
@@ -2507,225 +3270,281 @@ def main(argv=None):
         ffprobe=ffprobe,
         ffmpeg=ffmpeg,
     )
-    output_root, output_parent, output_parent_identity = prepare_output_location(
-        args.output_root, review_path
-    )
-    staging, staging_identity = create_private_staging(output_parent, output_root.name)
-    published = False
+    location = prepare_output_location(args.output_root, review_path)
+    staging = None
     try:
-        snapshot_root = staging / ".private_input_snapshots"
-        videos, snapshot_bindings = snapshot_authenticated_media(
-            initial,
-            snapshot_root,
-            ffmpeg=ffmpeg,
-            ffprobe=ffprobe,
-        )
-
-        # This catches mutations, replacements, and byte-restoration races during
-        # snapshotting because the authenticated graph includes ctime/inode guards.
-        after_snapshot = authenticate_review(
-            review_path,
-            expected_review_sha256,
-            ffprobe=ffprobe,
-            ffmpeg=ffmpeg,
-        )
-        if after_snapshot != initial:
-            raise PresentationContractError(
-                "v4 review authority graph changed during private snapshotting"
+        staging = create_private_staging(location)
+        inventory = StagingInventory()
+        published = False
+        try:
+            snapshot_root = staging.path / ".private_input_snapshots"
+            videos, snapshot_bindings = snapshot_authenticated_media(
+                initial,
+                snapshot_root,
+                ffmpeg=ffmpeg,
+                ffprobe=ffprobe,
+            )
+            register_snapshot_tree(
+                staging,
+                inventory,
+                snapshot_root,
+                videos,
+                snapshot_bindings,
             )
 
-        staged_video = staging / OUTPUT_VIDEO_NAME
-        ffmpeg_argv = build_ffmpeg_argv(
-            ffmpeg=ffmpeg,
-            font=font,
-            videos=videos,
-            output=staged_video,
-        )
-        run_ffmpeg(ffmpeg_argv)
-        staged_video = resolve_regular_file(staged_video, "six-view presentation")
-
-        output_readback = probe_video(
-            staged_video,
-            ffprobe=ffprobe,
-            ffmpeg=ffmpeg,
-            expected_width=OUTPUT_WIDTH,
-            expected_height=OUTPUT_HEIGHT,
-            expected_frames=REVIEW_FRAME_COUNT,
-            expected_fps=REVIEW_MEDIA_FPS,
-        )
-        content_readback = audit_frame_cell_content(
-            ffmpeg=ffmpeg,
-            font=font,
-            snapshots=videos,
-            output_video=staged_video,
-            snapshot_bindings=snapshot_bindings,
-        )
-        reauthenticate_private_snapshots(
-            videos,
-            snapshot_bindings,
-            ffmpeg=ffmpeg,
-            ffprobe=ffprobe,
-        )
-
-        # FFmpeg only reads private snapshots, but the full original authority
-        # graph must still remain byte- and identity-stable until composition ends.
-        final_inputs = authenticate_review(
-            review_path,
-            expected_review_sha256,
-            ffprobe=ffprobe,
-            ffmpeg=ffmpeg,
-        )
-        if final_inputs != initial:
-            raise PresentationContractError(
-                "v4 review authority graph changed during composition"
+            # This catches mutations, replacements, and byte-restoration races during
+            # snapshotting because the authenticated graph includes ctime/inode guards.
+            after_snapshot = authenticate_review(
+                review_path,
+                expected_review_sha256,
+                ffprobe=ffprobe,
+                ffmpeg=ffmpeg,
             )
-        final_runtime_identity = capture_runtime_identity(
-            ffmpeg=ffmpeg,
-            ffprobe=ffprobe,
-            font=font,
-        )
-        if final_runtime_identity != runtime_identity:
-            raise PresentationContractError(
-                "presentation toolchain identity changed during composition"
+            if after_snapshot != initial:
+                raise PresentationContractError(
+                    "v4 review authority graph changed during private snapshotting"
+                )
+
+            staged_video = staging.path / OUTPUT_VIDEO_NAME
+            ffmpeg_argv = build_ffmpeg_argv(
+                ffmpeg=ffmpeg,
+                font=font,
+                videos=videos,
+                output=staged_video,
+            )
+            run_ffmpeg(ffmpeg_argv)
+            staged_video = resolve_regular_file(
+                staged_video,
+                "six-view presentation",
             )
 
-        source_order = [
-            {
-                "ordinal": index,
-                "label": label,
-                "video": initial["media"][label]["video"],
+            output_readback = probe_video(
+                staged_video,
+                ffprobe=ffprobe,
+                ffmpeg=ffmpeg,
+                expected_width=OUTPUT_WIDTH,
+                expected_height=OUTPUT_HEIGHT,
+                expected_frames=REVIEW_FRAME_COUNT,
+                expected_fps=REVIEW_MEDIA_FPS,
+            )
+            register_top_level_file(
+                staging,
+                inventory,
+                OUTPUT_VIDEO_NAME,
+                staged_video,
+                "six-view presentation",
+                expected=output_readback["file_guard"],
+            )
+            content_readback = audit_frame_cell_content(
+                ffmpeg=ffmpeg,
+                font=font,
+                snapshots=videos,
+                output_video=staged_video,
+                snapshot_bindings=snapshot_bindings,
+            )
+            reauthenticate_private_snapshots(
+                videos,
+                snapshot_bindings,
+                ffmpeg=ffmpeg,
+                ffprobe=ffprobe,
+            )
+
+            # FFmpeg only reads private snapshots, but the full original authority
+            # graph must still remain byte- and identity-stable until composition ends.
+            final_inputs = authenticate_review(
+                review_path,
+                expected_review_sha256,
+                ffprobe=ffprobe,
+                ffmpeg=ffmpeg,
+            )
+            if final_inputs != initial:
+                raise PresentationContractError(
+                    "v4 review authority graph changed during composition"
+                )
+            final_runtime_identity = capture_runtime_identity(
+                ffmpeg=ffmpeg,
+                ffprobe=ffprobe,
+                font=font,
+            )
+            if final_runtime_identity != runtime_identity:
+                raise PresentationContractError(
+                    "presentation toolchain identity changed during composition"
+                )
+
+            source_order = [
+                {
+                    "ordinal": index,
+                    "label": label,
+                    "video": initial["media"][label]["video"],
+                }
+                for index, label in enumerate(MEDIA_LABELS)
+            ]
+            source_set = [
+                {
+                    "ordinal": index,
+                    "label": label,
+                    "video": initial["media"][label]["video"],
+                    "render_manifest": initial["media"][label]["render_manifest"],
+                    "encode_manifest": initial["media"][label]["encode_manifest"],
+                    "frame_set": initial["media"][label]["frame_set"],
+                }
+                for index, label in enumerate(MEDIA_LABELS)
+            ]
+            published_video = dict(output_readback["video"])
+            published_video["path"] = str(location.root / OUTPUT_VIDEO_NAME)
+            receipt = {
+                "schema": PRESENTATION_SCHEMA,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "status": PRESENTATION_STATUS,
+                "authority": {
+                    "purpose": "owner_animation_review_presentation_only",
+                    "decision_authority": "none",
+                    "user_decision_recorded": False,
+                    "source_review_modified": False,
+                    "formal_dataset_registration_authorized": False,
+                },
+                "expected_source_review_sha256": expected_review_sha256,
+                "source_review": initial["review_run"],
+                "reviewed_animation": initial["animated_glb"],
+                "authenticated_inputs": initial["media"],
+                "source_authority_guards": initial["authority_guards"],
+                "source_authority_guard_sha256": initial["authority_guard_sha256"],
+                "source_order": source_order,
+                "source_order_sha256": canonical_json_sha256(source_order),
+                "source_set": source_set,
+                "source_set_sha256": canonical_json_sha256(source_set),
+                "private_composition_inputs": snapshot_bindings,
+                "frame_cell_content_readback": content_readback,
+                "presentation_contract": presentation_contract(),
+                "automatic_checks": {
+                    "external_source_review_sha256_authenticated": True,
+                    "review_schema_status_and_automatic_gates_authenticated": True,
+                    "six_source_media_and_lineage_receipts_authenticated": True,
+                    "all_render_frame_bindings_authenticated": True,
+                    "source_unique_video_streams_authenticated": True,
+                    "source_counted_frames_authenticated": True,
+                    "source_full_decodes_authenticated": True,
+                    "private_snapshot_hashes_authenticated": True,
+                    "private_snapshot_counted_frames_authenticated": True,
+                    "private_snapshot_full_decodes_authenticated": True,
+                    "private_snapshots_unchanged_after_composition": True,
+                    "source_graph_unchanged_after_snapshot": True,
+                    "source_graph_unchanged_after_composition": True,
+                    "source_restore_race_guards_unchanged": True,
+                    "fixed_source_order_authenticated": True,
+                    "toolchain_identity_and_versions_unchanged": True,
+                    "output_unique_video_stream_authenticated": True,
+                    "output_counted_frames_authenticated": True,
+                    "output_full_decode_authenticated": True,
+                    "all_output_frame_cell_content_authenticated": True,
+                    "source_review_unmodified": True,
+                    "formal_dataset_registration_authority_not_granted": True,
+                },
+                "toolchain": runtime_identity,
+                "command": {
+                    "cwd": str(SPEAR_ROOT),
+                    "ffmpeg_argv": ffmpeg_argv,
+                    "output_probe_argv": output_readback["ffprobe_argv"],
+                    "output_full_decode_argv": output_readback["full_decode"]["argv"],
+                },
+                "output": {
+                    **published_video,
+                    "readback": output_readback["readback"],
+                    "full_decode_passed": output_readback["full_decode"]["passed"],
+                },
+                "receipt_sha256": None,
             }
-            for index, label in enumerate(MEDIA_LABELS)
-        ]
-        source_set = [
-            {
-                "ordinal": index,
-                "label": label,
-                "video": initial["media"][label]["video"],
-                "render_manifest": initial["media"][label]["render_manifest"],
-                "encode_manifest": initial["media"][label]["encode_manifest"],
-                "frame_set": initial["media"][label]["frame_set"],
-            }
-            for index, label in enumerate(MEDIA_LABELS)
-        ]
-        published_video = dict(output_readback["video"])
-        published_video["path"] = str(output_root / OUTPUT_VIDEO_NAME)
-        receipt = {
-            "schema": PRESENTATION_SCHEMA,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "status": PRESENTATION_STATUS,
-            "authority": {
-                "purpose": "owner_animation_review_presentation_only",
-                "decision_authority": "none",
-                "user_decision_recorded": False,
-                "source_review_modified": False,
-                "formal_dataset_registration_authorized": False,
-            },
-            "expected_source_review_sha256": expected_review_sha256,
-            "source_review": initial["review_run"],
-            "reviewed_animation": initial["animated_glb"],
-            "authenticated_inputs": initial["media"],
-            "source_authority_guards": initial["authority_guards"],
-            "source_authority_guard_sha256": initial["authority_guard_sha256"],
-            "source_order": source_order,
-            "source_order_sha256": canonical_json_sha256(source_order),
-            "source_set": source_set,
-            "source_set_sha256": canonical_json_sha256(source_set),
-            "private_composition_inputs": snapshot_bindings,
-            "frame_cell_content_readback": content_readback,
-            "presentation_contract": presentation_contract(),
-            "automatic_checks": {
-                "external_source_review_sha256_authenticated": True,
-                "review_schema_status_and_automatic_gates_authenticated": True,
-                "six_source_media_and_lineage_receipts_authenticated": True,
-                "all_render_frame_bindings_authenticated": True,
-                "source_unique_video_streams_authenticated": True,
-                "source_counted_frames_authenticated": True,
-                "source_full_decodes_authenticated": True,
-                "private_snapshot_hashes_authenticated": True,
-                "private_snapshot_counted_frames_authenticated": True,
-                "private_snapshot_full_decodes_authenticated": True,
-                "private_snapshots_unchanged_after_composition": True,
-                "source_graph_unchanged_after_snapshot": True,
-                "source_graph_unchanged_after_composition": True,
-                "source_restore_race_guards_unchanged": True,
-                "fixed_source_order_authenticated": True,
-                "toolchain_identity_and_versions_unchanged": True,
-                "output_unique_video_stream_authenticated": True,
-                "output_counted_frames_authenticated": True,
-                "output_full_decode_authenticated": True,
-                "all_output_frame_cell_content_authenticated": True,
-                "source_review_unmodified": True,
-                "formal_dataset_registration_authority_not_granted": True,
-            },
-            "toolchain": runtime_identity,
-            "command": {
-                "cwd": str(SPEAR_ROOT),
-                "ffmpeg_argv": ffmpeg_argv,
-                "output_probe_argv": output_readback["ffprobe_argv"],
-                "output_full_decode_argv": output_readback["full_decode"]["argv"],
-            },
-            "output": {
-                **published_video,
-                "readback": output_readback["readback"],
-                "full_decode_passed": output_readback["full_decode"]["passed"],
-            },
-            "receipt_sha256": None,
-        }
-        receipt["receipt_sha256"] = hash_without(receipt, "receipt_sha256")
-        receipt_path = staging / RECEIPT_NAME
-        write_json_exclusive(receipt_path, receipt)
-        require_receipt_self_hash(receipt_path, receipt)
-        require_same_guard(
-            output_readback["file_guard"],
-            staged_video,
-            "six-view presentation",
-        )
-        staged_record = file_record(staged_video)
-        if any(
-            staged_record[key] != published_video[key]
-            for key in ("sha256", "size_bytes")
-        ):
-            raise PresentationContractError(
-                "presentation changed after its receipt was written"
+            receipt["receipt_sha256"] = hash_without(receipt, "receipt_sha256")
+            receipt_path = staging.path / RECEIPT_NAME
+            write_json_exclusive_at(
+                staging,
+                inventory,
+                RECEIPT_NAME,
+                receipt_path,
+                receipt,
             )
+            require_receipt_self_hash_at(
+                staging,
+                RECEIPT_NAME,
+                receipt_path,
+                receipt,
+            )
+            _require_file_guard_at(
+                staging.descriptor,
+                OUTPUT_VIDEO_NAME,
+                staged_video,
+                inventory.top_level_files[OUTPUT_VIDEO_NAME],
+                "six-view presentation",
+            )
+            staged_record = _file_record_at(
+                staging.descriptor,
+                OUTPUT_VIDEO_NAME,
+                staged_video,
+                "six-view presentation",
+            )
+            if any(
+                staged_record[key] != published_video[key]
+                for key in ("sha256", "size_bytes")
+            ):
+                raise PresentationContractError(
+                    "presentation changed after its receipt was written"
+                )
 
-        remove_private_snapshots(snapshot_root, videos)
-        seal_readonly_tree(staging)
-        require_readonly_publication(staging)
-        _require_directory_identity(
-            output_parent, output_parent_identity, "output parent"
-        )
-        if os.path.lexists(output_root):
-            raise PresentationContractError(
-                f"refusing to replace output root: {output_root}"
+            remove_private_snapshots(staging, inventory)
+            seal_readonly_tree(staging, inventory)
+            require_readonly_publication_fd(staging, inventory)
+            _require_parent_path_binding(location)
+            try:
+                os.stat(
+                    location.output_name,
+                    dir_fd=location.parent.descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                pass
+            else:
+                raise PresentationContractError(
+                    f"refusing to replace output root: {location.root}"
+                )
+            atomic_publish_no_replace(location, staging)
+            published = True
+
+            # From this point onward the final is an immutable publication.  A
+            # post-publication validation or fsync failure must never delete it.
+            os.fsync(location.parent.descriptor)
+            require_published_binding(location, staging)
+            require_readonly_publication_fd(staging, inventory)
+            final_video = location.root / OUTPUT_VIDEO_NAME
+            final_receipt_path = location.root / RECEIPT_NAME
+            require_receipt_self_hash_at(
+                staging,
+                RECEIPT_NAME,
+                final_receipt_path,
+                receipt,
             )
-        atomic_publish_no_replace(staging, output_root)
-        published = True
-        fsync_directory(output_parent)
-        _require_directory_identity(
-            output_root, staging_identity, "published output root"
-        )
-        require_readonly_publication(output_root)
-        final_video = output_root / OUTPUT_VIDEO_NAME
-        receipt_path = output_root / RECEIPT_NAME
-        require_receipt_self_hash(receipt_path, receipt)
-        if file_record(final_video) != {
-            key: published_video[key] for key in FILE_RECORD_FIELDS
-        }:
-            raise PresentationContractError(
-                "published presentation does not match its receipt"
+            if _file_record_at(
+                staging.descriptor,
+                OUTPUT_VIDEO_NAME,
+                final_video,
+                "published presentation",
+            ) != {key: published_video[key] for key in FILE_RECORD_FIELDS}:
+                raise PresentationContractError(
+                    "published presentation does not match its receipt"
+                )
+            print(
+                "GENERATED_QUADRUPED_OWNER_REVIEW_PRESENTATION_OK "
+                f"video={final_video} receipt={final_receipt_path}",
+                flush=True,
             )
-        print(
-            "GENERATED_QUADRUPED_OWNER_REVIEW_PRESENTATION_OK "
-            f"video={final_video} receipt={receipt_path}",
-            flush=True,
-        )
-        return 0
-    except Exception:
-        cleanup_path = output_root if published else staging
-        remove_owned_tree(cleanup_path, staging_identity)
-        raise
+            return 0
+        except Exception:
+            if not published:
+                cleanup_unpublished_staging(location, staging, inventory)
+            raise
+        finally:
+            staging.close()
+    finally:
+        location.parent.close()
 
 
 if __name__ == "__main__":

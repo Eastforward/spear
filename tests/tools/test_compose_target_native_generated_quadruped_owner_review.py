@@ -1060,20 +1060,364 @@ def test_runtime_identity_records_tool_versions_and_font_version():
 
 
 def test_atomic_publish_never_replaces_a_concurrent_output(tmp_path):
-    staging = tmp_path / "staging"
-    staging.mkdir()
-    (staging / "artifact").write_bytes(b"private")
+    review_root = tmp_path / "review"
+    review_root.mkdir()
+    review_path = review_root / "review_run.json"
+    review_path.write_bytes(b"review")
     output = tmp_path / "output"
-    output.mkdir()
-    (output / "owner").write_bytes(b"concurrent")
+    location = subject.prepare_output_location(output, review_path)
+    staging = subject.create_private_staging(location)
+    try:
+        artifact = staging.path / "artifact"
+        artifact.write_bytes(b"private")
+        os.fchmod(staging.descriptor, 0o555)
+        staging.mode = 0o555
+        output.mkdir()
+        (output / "owner").write_bytes(b"concurrent")
 
+        with pytest.raises(
+            subject.PresentationContractError,
+            match="refusing to replace output root",
+        ):
+            subject.atomic_publish_no_replace(location, staging)
+        assert artifact.read_bytes() == b"private"
+        assert (output / "owner").read_bytes() == b"concurrent"
+    finally:
+        os.fchmod(staging.descriptor, 0o700)
+        staging.close()
+        location.parent.close()
+
+
+def test_output_parent_policy_rejects_world_writable_directory(tmp_path):
+    review_root = tmp_path / "review"
+    review_root.mkdir()
+    review_path = review_root / "review_run.json"
+    review_path.write_bytes(b"review")
+    output_parent = tmp_path / "world_writable"
+    output_parent.mkdir()
+    output_parent.chmod(0o707)
+    try:
+        with pytest.raises(
+            subject.PresentationContractError,
+            match="owner/mode policy",
+        ):
+            subject.prepare_output_location(
+                output_parent / "presentation",
+                review_path,
+            )
+    finally:
+        output_parent.chmod(0o700)
+
+
+def test_final_parent_resolution_rejects_ancestor_symlink_swap_into_review(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = build_review_fixture(tmp_path)
+    install_fake_runtime(monkeypatch, tmp_path)
+    output_parent = tmp_path / "safe_output_parent"
+    output_parent.mkdir()
+    displaced_parent = tmp_path / "displaced_output_parent"
+    output_root = output_parent / "presentation"
+    original_reject = subject._reject_unsafe_symlinks
+    swapped = False
+
+    def swap_after_component_check(path, label, *, file_leaf):
+        nonlocal swapped
+        original_reject(path, label, file_leaf=file_leaf)
+        if label == "output parent" and not swapped:
+            output_parent.rename(displaced_parent)
+            output_parent.symlink_to(
+                fixture["root"],
+                target_is_directory=True,
+            )
+            swapped = True
+
+    monkeypatch.setattr(
+        subject,
+        "_reject_unsafe_symlinks",
+        swap_after_component_check,
+    )
+    with pytest.raises(
+        subject.PresentationContractError,
+        match="outside the immutable review run",
+    ):
+        subject.main(
+            [
+                "--review-run",
+                str(fixture["review"]),
+                "--expected-review-run-sha256",
+                fixture["sha256"],
+                "--output-root",
+                str(output_root),
+            ]
+        )
+    assert swapped is True
+    assert not output_root.exists()
+    assert not list(fixture["root"].glob(".presentation.*.staging"))
+
+
+def test_main_dirfd_publish_never_replaces_concurrent_output(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = build_review_fixture(tmp_path)
+    install_fake_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        subject,
+        "run_ffmpeg",
+        lambda argv: Path(argv[-1]).write_bytes(b"composed-h264-six-view"),
+    )
+    output_parent = tmp_path / "concurrent_parent"
+    output_parent.mkdir()
+    output_root = output_parent / "presentation"
+    original_publish = subject.atomic_publish_no_replace
+
+    def publish_after_concurrent_creator(location, staging):
+        output_root.mkdir()
+        (output_root / "owner").write_bytes(b"concurrent")
+        original_publish(location, staging)
+
+    monkeypatch.setattr(
+        subject,
+        "atomic_publish_no_replace",
+        publish_after_concurrent_creator,
+    )
     with pytest.raises(
         subject.PresentationContractError,
         match="refusing to replace output root",
     ):
-        subject.atomic_publish_no_replace(staging, output)
-    assert (staging / "artifact").read_bytes() == b"private"
-    assert (output / "owner").read_bytes() == b"concurrent"
+        subject.main(
+            [
+                "--review-run",
+                str(fixture["review"]),
+                "--expected-review-run-sha256",
+                fixture["sha256"],
+                "--output-root",
+                str(output_root),
+            ]
+        )
+    assert (output_root / "owner").read_bytes() == b"concurrent"
+    assert not list(output_parent.glob(".presentation.*.staging"))
+    assert not list(output_parent.glob(".quarantine.presentation.*"))
+
+
+def test_parent_swap_and_same_inode_move_fail_without_deleting_published_final(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = build_review_fixture(tmp_path)
+    install_fake_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        subject,
+        "run_ffmpeg",
+        lambda argv: Path(argv[-1]).write_bytes(b"composed-h264-six-view"),
+    )
+    output_parent = tmp_path / "published_parent"
+    output_parent.mkdir()
+    displaced_parent = tmp_path / "published_parent.displaced"
+    output_root = output_parent / "presentation"
+    original_publish = subject.atomic_publish_no_replace
+    published_inode = None
+
+    def publish_then_swap_parent(location, staging):
+        nonlocal published_inode
+        original_publish(location, staging)
+        published_inode = staging.inode
+        output_parent.rename(displaced_parent)
+        output_parent.mkdir(mode=location.parent.mode)
+        displaced_parent.chmod(0o700)
+        output_parent.chmod(0o700)
+        os.fchmod(staging.descriptor, 0o700)
+        (displaced_parent / location.output_name).rename(
+            output_parent / location.output_name
+        )
+        os.fchmod(staging.descriptor, 0o555)
+        displaced_parent.chmod(location.parent.mode)
+        output_parent.chmod(location.parent.mode)
+
+    monkeypatch.setattr(
+        subject,
+        "atomic_publish_no_replace",
+        publish_then_swap_parent,
+    )
+    try:
+        with pytest.raises(
+            subject.PresentationContractError,
+            match="published output parent entry identity changed",
+        ):
+            subject.main(
+                [
+                    "--review-run",
+                    str(fixture["review"]),
+                    "--expected-review-run-sha256",
+                    fixture["sha256"],
+                    "--output-root",
+                    str(output_root),
+                ]
+            )
+        assert output_root.is_dir()
+        assert output_root.stat().st_ino == published_inode
+        assert (output_root / subject.OUTPUT_VIDEO_NAME).is_file()
+        assert (output_root / subject.RECEIPT_NAME).is_file()
+        assert not list(displaced_parent.glob(".presentation.*.staging"))
+    finally:
+        unseal_output(output_root)
+
+
+def test_cleanup_substitution_quarantines_owned_inode_without_deleting_replacement(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = build_review_fixture(tmp_path)
+    install_fake_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        subject,
+        "run_ffmpeg",
+        lambda argv: Path(argv[-1]).write_bytes(b"composed-h264-six-view"),
+    )
+    output_parent = tmp_path / "cleanup_parent"
+    output_parent.mkdir()
+    output_root = output_parent / "presentation"
+    original_seal = subject.seal_readonly_tree
+    replacement_sentinel = None
+    owned_inode = None
+
+    def substitute_staging_before_failure(staging, inventory):
+        nonlocal replacement_sentinel, owned_inode
+        owned_inode = staging.inode
+        displaced = staging.path.with_name(f"{staging.name}.displaced")
+        staging.path.rename(displaced)
+        staging.path.mkdir()
+        replacement_sentinel = staging.path / "must_survive"
+        replacement_sentinel.write_bytes(b"replacement")
+        raise subject.PresentationContractError("forced post-substitution failure")
+
+    monkeypatch.setattr(
+        subject,
+        "seal_readonly_tree",
+        substitute_staging_before_failure,
+    )
+    try:
+        with pytest.raises(
+            subject.PresentationContractError,
+            match="forced post-substitution failure",
+        ):
+            subject.main(
+                [
+                    "--review-run",
+                    str(fixture["review"]),
+                    "--expected-review-run-sha256",
+                    fixture["sha256"],
+                    "--output-root",
+                    str(output_root),
+                ]
+            )
+        assert replacement_sentinel.read_bytes() == b"replacement"
+        quarantines = list(output_parent.glob(".quarantine.presentation.*"))
+        assert len(quarantines) == 1
+        assert quarantines[0].stat().st_ino == owned_inode
+        assert not output_root.exists()
+    finally:
+        monkeypatch.setattr(subject, "seal_readonly_tree", original_seal)
+
+
+def test_staging_restore_race_is_quarantined_before_publication(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = build_review_fixture(tmp_path)
+    install_fake_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        subject,
+        "run_ffmpeg",
+        lambda argv: Path(argv[-1]).write_bytes(b"composed-h264-six-view"),
+    )
+    output_parent = tmp_path / "byte_swap_parent"
+    output_parent.mkdir()
+    output_root = output_parent / "presentation"
+    original_seal = subject.seal_readonly_tree
+
+    def restore_video_bytes_before_seal(staging, inventory):
+        video = staging.path / subject.OUTPUT_VIDEO_NAME
+        original = video.read_bytes()
+        original_stat = video.stat()
+        video.write_bytes(b"x" * len(original))
+        video.write_bytes(original)
+        os.utime(
+            video,
+            ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+        )
+        original_seal(staging, inventory)
+
+    monkeypatch.setattr(
+        subject,
+        "seal_readonly_tree",
+        restore_video_bytes_before_seal,
+    )
+    with pytest.raises(
+        subject.PresentationContractError,
+        match="publication artifact identity changed",
+    ):
+        subject.main(
+            [
+                "--review-run",
+                str(fixture["review"]),
+                "--expected-review-run-sha256",
+                fixture["sha256"],
+                "--output-root",
+                str(output_root),
+            ]
+        )
+    quarantines = list(output_parent.glob(".quarantine.presentation.*"))
+    assert len(quarantines) == 1
+    assert (quarantines[0] / subject.OUTPUT_VIDEO_NAME).is_file()
+    assert not output_root.exists()
+    assert not list(output_parent.glob(".presentation.*.staging"))
+
+
+def test_unknown_staging_entry_forces_quarantine_without_recursive_cleanup(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = build_review_fixture(tmp_path)
+    install_fake_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        subject,
+        "run_ffmpeg",
+        lambda argv: Path(argv[-1]).write_bytes(b"composed-h264-six-view"),
+    )
+    output_parent = tmp_path / "unknown_entry_parent"
+    output_parent.mkdir()
+    output_root = output_parent / "presentation"
+    original_seal = subject.seal_readonly_tree
+
+    def add_unknown_entry(staging, inventory):
+        (staging.path / "unknown_must_survive").write_bytes(b"unknown")
+        raise subject.PresentationContractError("forced unknown-entry failure")
+
+    monkeypatch.setattr(subject, "seal_readonly_tree", add_unknown_entry)
+    try:
+        with pytest.raises(
+            subject.PresentationContractError,
+            match="forced unknown-entry failure",
+        ):
+            subject.main(
+                [
+                    "--review-run",
+                    str(fixture["review"]),
+                    "--expected-review-run-sha256",
+                    fixture["sha256"],
+                    "--output-root",
+                    str(output_root),
+                ]
+            )
+        quarantines = list(output_parent.glob(".quarantine.presentation.*"))
+        assert len(quarantines) == 1
+        assert (quarantines[0] / "unknown_must_survive").read_bytes() == b"unknown"
+        assert not output_root.exists()
+    finally:
+        monkeypatch.setattr(subject, "seal_readonly_tree", original_seal)
 
 
 def test_real_ffmpeg_end_to_end_publishes_only_sealed_video_and_receipt(
