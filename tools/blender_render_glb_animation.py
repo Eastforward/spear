@@ -10,6 +10,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import sys
@@ -26,6 +27,12 @@ if SPEAR_ROOT not in sys.path:
 from tools.generated_quadruped_semantics import (  # noqa: E402
     SemanticRigError,
     infer_quadruped_semantics,
+)
+from tools.quadruped_morphotype_guide import (  # noqa: E402
+    MORPHOTYPE_GUIDE_SCHEMA,
+    MorphotypeGuideError,
+    build_morphotype_guide_plan,
+    load_morphotype_guide_profile,
 )
 
 
@@ -67,6 +74,16 @@ def parse_argv():
             "frames of a native action. The target fore-aft separation is this "
             "fraction of the hip span. This preserves native joint rotations "
             "and avoids translating a shoulder/hip chain through the skin."
+        ),
+    )
+    p.add_argument(
+        "--quadruped-morphotype-guide-profile",
+        default=None,
+        help=(
+            "Strict avengine_quadruped_morphotype_guide_v1 JSON profile for a "
+            "bone-name-independent, render-only rest-pose guide. It applies "
+            "bounded leg and tail ratios to the imported in-memory pose, keeps "
+            "all four inferred feet grounded, and never exports the source GLB."
         ),
     )
     p.add_argument(
@@ -199,6 +216,29 @@ def mesh_bbox(meshes):
             for axis in range(3):
                 mn[axis] = min(mn[axis], p[axis])
                 mx[axis] = max(mx[axis], p[axis])
+    return mn, mx
+
+
+def evaluated_mesh_bbox(meshes):
+    """Measure visible geometry after armature deformation."""
+    dependency_graph = bpy.context.evaluated_depsgraph_get()
+    mn = [1e9, 1e9, 1e9]
+    mx = [-1e9, -1e9, -1e9]
+    vertex_count = 0
+    for obj in meshes:
+        evaluated_object = obj.evaluated_get(dependency_graph)
+        evaluated_mesh = evaluated_object.to_mesh()
+        try:
+            for vertex in evaluated_mesh.vertices:
+                point = evaluated_object.matrix_world @ vertex.co
+                vertex_count += 1
+                for axis in range(3):
+                    mn[axis] = min(mn[axis], point[axis])
+                    mx[axis] = max(mx[axis], point[axis])
+        finally:
+            evaluated_object.to_mesh_clear()
+    if vertex_count == 0:
+        raise SystemExit("review-visible evaluated mesh has no vertices")
     return mn, mx
 
 
@@ -391,8 +431,224 @@ def infer_canonical_quadruped(armature, body):
             front_axis="positive-x",
         )
     except SemanticRigError as error:
-        raise SystemExit(f"quadruped far-limb semantic inference failed: {error}") from error
+        raise SystemExit(f"quadruped semantic inference failed: {error}") from error
     return semantics, records, minimum, maximum, extent
+
+
+def _bone_depth(bone):
+    depth = 0
+    while bone.parent is not None:
+        depth += 1
+        bone = bone.parent
+    return depth
+
+
+def _target_pose_matrix(armature, bone, target):
+    """Map one rest bone to a target segment without scaling its cross-section."""
+    world_to_armature = armature.matrix_world.inverted()
+    target_head = world_to_armature @ mathutils.Vector(target.head_world)
+    target_tail = world_to_armature @ mathutils.Vector(target.tail_world)
+    source_direction = bone.tail_local - bone.head_local
+    target_direction = target_tail - target_head
+    source_length = source_direction.length
+    target_length = target_direction.length
+    if source_length <= 1.0e-12 or target_length <= 1.0e-12:
+        raise SystemExit(
+            f"morphotype guide produced a degenerate segment for inferred bone {bone.name}"
+        )
+    alignment = source_direction.normalized().rotation_difference(
+        target_direction.normalized()
+    )
+    source_basis = bone.matrix_local.to_3x3().normalized()
+    target_basis = alignment.to_matrix() @ source_basis
+    target_matrix = target_basis.to_4x4()
+    target_matrix.translation = target_head
+    target_matrix = target_matrix @ mathutils.Matrix.Diagonal(
+        (1.0, target_length / source_length, 1.0, 1.0)
+    )
+    return target_matrix
+
+
+def pose_bone_world_tail(armature, name):
+    return armature.matrix_world @ armature.pose.bones[name].tail
+
+
+def apply_quadruped_morphotype_guide(
+    armature,
+    body,
+    profile,
+):
+    """Apply a validated short-leg/short-tail guide to the in-memory pose."""
+    semantics, records, _minimum, _maximum, extent = infer_canonical_quadruped(
+        armature, body
+    )
+    try:
+        plan = build_morphotype_guide_plan(
+            profile,
+            semantics,
+            records,
+            bbox_height=extent[2],
+        )
+    except MorphotypeGuideError as error:
+        raise SystemExit(f"quadruped morphotype guide rejected rig: {error}") from error
+    by_name = {record["name"]: record for record in records}
+    source_feet = {
+        name: mathutils.Vector(by_name[name]["head_world"])
+        for name in plan.foot_leaves
+    }
+    before_minimum, _before_maximum = evaluated_mesh_bbox([body])
+
+    ordered_names = sorted(
+        plan.targets,
+        key=lambda name: (_bone_depth(armature.data.bones[name]), name),
+    )
+    # Parent non-uniform scale would otherwise be decomposed into each child
+    # pose matrix as shear.  Render-only NONE inheritance lets every inferred
+    # segment hit its independently validated target while preserving unit
+    # cross-section scale.  The imported armature is never saved or exported.
+    for name in ordered_names:
+        bone = armature.data.bones[name]
+        if not hasattr(bone, "inherit_scale"):
+            raise SystemExit(
+                "quadruped morphotype guide requires Blender bone inherit_scale"
+            )
+        bone.inherit_scale = "NONE"
+    for name in ordered_names:
+        armature.pose.bones[name].matrix = _target_pose_matrix(
+            armature,
+            armature.data.bones[name],
+            plan.targets[name],
+        )
+        bpy.context.view_layer.update()
+
+    height = max(float(extent[2]), 1.0e-12)
+    maximum_endpoint_residual = 0.0
+    for name, target in plan.targets.items():
+        target_head = mathutils.Vector(target.head_world)
+        target_tail = mathutils.Vector(target.tail_world)
+        maximum_endpoint_residual = max(
+            maximum_endpoint_residual,
+            (pose_bone_world_head(armature, name) - target_head).length,
+            (pose_bone_world_tail(armature, name) - target_tail).length,
+        )
+    maximum_foot_residual = max(
+        (pose_bone_world_head(armature, name) - source_feet[name]).length
+        for name in plan.foot_leaves
+    )
+    maximum_foot_ground_residual = max(
+        abs(pose_bone_world_head(armature, name).z - source_feet[name].z)
+        for name in plan.foot_leaves
+    )
+    torso_scale_error = 0.0
+    for name in plan.body_bones:
+        source_head = mathutils.Vector(by_name[name]["head_world"])
+        source_tail = mathutils.Vector(by_name[name]["tail_world"])
+        source_length = (source_tail - source_head).length
+        posed_length = (
+            pose_bone_world_tail(armature, name)
+            - pose_bone_world_head(armature, name)
+        ).length
+        torso_scale_error = max(
+            torso_scale_error,
+            abs(posed_length / source_length - 1.0),
+        )
+    cross_section_scale_error = max(
+        max(
+            abs(armature.pose.bones[name].matrix.to_scale().x - 1.0),
+            abs(armature.pose.bones[name].matrix.to_scale().z - 1.0),
+        )
+        for name in plan.targets
+    )
+    source_tail_length = sum(
+        (
+            mathutils.Vector(by_name[name]["tail_world"])
+            - mathutils.Vector(by_name[name]["head_world"])
+        ).length
+        for name in plan.tail_chain
+    )
+    posed_tail_length = sum(
+        (
+            pose_bone_world_tail(armature, name)
+            - pose_bone_world_head(armature, name)
+        ).length
+        for name in plan.tail_chain
+    )
+    realized_tail_ratio = posed_tail_length / source_tail_length
+    after_minimum, _after_maximum = evaluated_mesh_bbox([body])
+    mesh_ground_residual = abs(after_minimum[2] - before_minimum[2])
+    tolerance = profile.maximum_ground_residual_height_ratio
+    measured_ratios = {
+        "maximum_endpoint_residual_height_ratio": maximum_endpoint_residual / height,
+        "maximum_foot_position_residual_height_ratio": maximum_foot_residual / height,
+        "maximum_foot_ground_residual_height_ratio": (
+            maximum_foot_ground_residual / height
+        ),
+        "mesh_ground_residual_height_ratio": mesh_ground_residual / height,
+    }
+    endpoint_ratio = measured_ratios["maximum_endpoint_residual_height_ratio"]
+    if endpoint_ratio > 1.0e-5:
+        raise SystemExit(
+            "quadruped morphotype guide missed a target bone segment: "
+            f"maximum_endpoint_residual_height_ratio={endpoint_ratio:.9f}"
+        )
+    ground_labels = (
+        "maximum_foot_position_residual_height_ratio",
+        "maximum_foot_ground_residual_height_ratio",
+        "mesh_ground_residual_height_ratio",
+    )
+    for label in ground_labels:
+        value = measured_ratios[label]
+        if value > tolerance:
+            raise SystemExit(
+                f"quadruped morphotype guide {label}={value:.9f} exceeds "
+                f"profile limit {tolerance:.9f}"
+            )
+    if torso_scale_error > 1.0e-6:
+        raise SystemExit(
+            "quadruped morphotype guide scaled the torso/head: "
+            f"maximum_segment_scale_error={torso_scale_error:.9f}"
+        )
+    if cross_section_scale_error > 1.0e-6:
+        raise SystemExit(
+            "quadruped morphotype guide scaled a bone cross-section: "
+            f"maximum_scale_error={cross_section_scale_error:.9f}"
+        )
+    if abs(realized_tail_ratio - profile.tail_length_ratio) > 1.0e-6:
+        raise SystemExit(
+            "quadruped morphotype guide tail ratio mismatch: "
+            f"realized={realized_tail_ratio:.9f} "
+            f"requested={profile.tail_length_ratio:.9f}"
+        )
+
+    diagnostics = {
+        "schema": MORPHOTYPE_GUIDE_SCHEMA,
+        "leg_length_ratio": profile.leg_length_ratio,
+        "tail_length_ratio": profile.tail_length_ratio,
+        "body_drop_height_ratio": plan.body_drop_height_ratio,
+        "effective_leg_length_ratios": dict(plan.effective_leg_length_ratios),
+        "source_foot_ground_spread_height_ratio": (
+            plan.source_foot_ground_spread_height_ratio
+        ),
+        **measured_ratios,
+        "maximum_cross_section_scale_error": cross_section_scale_error,
+        "maximum_torso_segment_scale_error": torso_scale_error,
+        "realized_tail_length_ratio": realized_tail_ratio,
+        "limb_chain_lengths": {
+            label: len(chain) for label, chain in plan.limb_chains.items()
+        },
+        "tail_chain_length": len(plan.tail_chain),
+        "bone_inherit_scale": "NONE",
+        "torso_transform": "rigid_translation",
+        "render_only": True,
+        "source_asset_unchanged": True,
+    }
+    print(
+        "[morphotype-guide] "
+        + json.dumps(diagnostics, sort_keys=True, separators=(",", ":")),
+        flush=True,
+    )
+    print("MORPHOTYPE_GUIDE_OK", flush=True)
+    return diagnostics
 
 
 def apply_quadruped_far_limb_offset(armature, body, offset_ratio):
@@ -709,6 +965,21 @@ def main():
         raise SystemExit(
             "--quadruped-far-limb-action-pose-ratio requires --rest-pose"
         )
+    if args.quadruped_morphotype_guide_profile and not args.rest_pose:
+        raise SystemExit("--quadruped-morphotype-guide-profile requires --rest-pose")
+    if (
+        args.quadruped_morphotype_guide_profile
+        and args.quadruped_far_limb_action_pose_ratio
+    ):
+        raise SystemExit(
+            "--quadruped-morphotype-guide-profile cannot be combined with "
+            "--quadruped-far-limb-action-pose-ratio"
+        )
+    if args.quadruped_morphotype_guide_profile and args.pose_template_yaw_deg:
+        raise SystemExit(
+            "--quadruped-morphotype-guide-profile requires zero "
+            "--pose-template-yaw-deg"
+        )
     if args.pose_template_clay_color and not args.rest_pose:
         raise SystemExit("--pose-template-clay-color requires --rest-pose")
     if not -30.0 <= args.pose_template_yaw_deg <= 30.0:
@@ -728,6 +999,16 @@ def main():
         raise SystemExit("--trajectory-distance-ratio must be in [0, 2]")
     if args.rest_pose and args.trajectory_distance_ratio:
         raise SystemExit("--trajectory-distance-ratio is only valid for animation actions")
+    morphotype_profile = None
+    if args.quadruped_morphotype_guide_profile:
+        try:
+            morphotype_profile = load_morphotype_guide_profile(
+                args.quadruped_morphotype_guide_profile
+            )
+        except MorphotypeGuideError as error:
+            raise SystemExit(
+                f"invalid --quadruped-morphotype-guide-profile: {error}"
+            ) from error
     os.makedirs(args.output_dir, exist_ok=True)
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -788,9 +1069,16 @@ def main():
         if (
             args.quadruped_far_limb_offset_ratio
             or args.quadruped_far_limb_action_pose_ratio
+            or morphotype_profile is not None
         ):
             armature.data.pose_position = "POSE"
             reset_pose_basis(armature)
+            if morphotype_profile is not None:
+                apply_quadruped_morphotype_guide(
+                    armature,
+                    body,
+                    morphotype_profile,
+                )
             if args.quadruped_far_limb_action_pose_ratio:
                 apply_quadruped_far_limb_action_pose(
                     armature,
@@ -799,7 +1087,7 @@ def main():
                     args.quadruped_pose_action,
                     args.quadruped_pose_samples,
                 )
-            else:
+            elif args.quadruped_far_limb_offset_ratio:
                 apply_quadruped_far_limb_offset(
                     armature, body, args.quadruped_far_limb_offset_ratio
                 )
@@ -813,6 +1101,8 @@ def main():
             if args.quadruped_far_limb_offset_ratio
             else "authored_rest_pose"
         )
+        if morphotype_profile is not None:
+            action_label += "_with_morphotype_guide"
         start = end = 1.0
     else:
         action = choose_action(args.action)
@@ -828,7 +1118,10 @@ def main():
           f"armature={armature.name} "
           f"action={action_label} frame_range=({start:.2f}, {end:.2f})", flush=True)
 
-    mn, mx = mesh_bbox(visible_meshes)
+    if morphotype_profile is not None:
+        mn, mx = evaluated_mesh_bbox(visible_meshes)
+    else:
+        mn, mx = mesh_bbox(visible_meshes)
     center = [(mn[i] + mx[i]) * 0.5 for i in range(3)]
     diag = math.sqrt(sum((mx[i] - mn[i]) ** 2 for i in range(3)))
     framing_diag = args.camera_reference_diagonal or diag
