@@ -3,13 +3,12 @@ import copy
 import hashlib
 import importlib.util
 import json
-from pathlib import Path
 import struct
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[2]
 IMPORT_ONE = ROOT / "tools/import_gate_animal_editor.py"
@@ -80,7 +79,92 @@ def _write_json(path, payload):
     )
 
 
-def _build_v2_contract(tmp_path, batch):
+def _stubbed_presentation_evidence(tmp_path, batch, animation_review):
+    presentation_root = tmp_path / "owner_review_presentation"
+    presentation_root.mkdir()
+    output_video = presentation_root / "owner_review_six_view.mp4"
+    output_video.write_bytes(b"authenticated-owner-review-video")
+    output_record = {
+        **_record(output_video),
+        "codec": "h264",
+        "width": 1536,
+        "height": 768,
+        "frame_count": 8,
+        "frame_rate": "8/1",
+        "duration_seconds": 1.0,
+        "readback": {
+            "stream_count": 1,
+            "codec_type": "video",
+            "codec_name": "h264",
+            "width": 1536,
+            "height": 768,
+            "nb_frames": 8,
+        },
+        "full_decode_passed": True,
+    }
+    receipt_path = presentation_root / "presentation_receipt.json"
+    receipt_payload = {
+        "schema": "owner_review_presentation_fixture_v1",
+        "expected_source_review_sha256": _sha256(animation_review),
+        "source_review": _record(animation_review),
+        "output": copy.deepcopy(output_record),
+    }
+    receipt_payload["receipt_sha256"] = batch._hash_without(
+        receipt_payload, "receipt_sha256"
+    )
+    _write_json(receipt_path, receipt_payload)
+    evidence = {
+        "presentation_receipt": _record(receipt_path),
+        "expected_presentation_receipt_file_sha256": _sha256(receipt_path),
+        "presentation_receipt_sha256": receipt_payload["receipt_sha256"],
+        "output_video": copy.deepcopy(output_record),
+    }
+    canonical_evidence = copy.deepcopy(evidence)
+    loader_calls = []
+
+    def load_presentation_receipt(
+        path,
+        expected_receipt_file_sha256,
+        *,
+        expected_source_review_sha256,
+    ):
+        loader_calls.append(
+            (
+                Path(path),
+                expected_receipt_file_sha256,
+                expected_source_review_sha256,
+            )
+        )
+        if (
+            Path(path) != receipt_path.resolve()
+            or expected_receipt_file_sha256
+            != canonical_evidence["expected_presentation_receipt_file_sha256"]
+            or expected_source_review_sha256 != _sha256(animation_review)
+            or _record(receipt_path) != canonical_evidence["presentation_receipt"]
+            or _record(output_video)
+            != {
+                key: canonical_evidence["output_video"][key]
+                for key in ("path", "sha256", "size_bytes")
+            }
+            or {path.name for path in presentation_root.iterdir()}
+            != {"presentation_receipt.json", "owner_review_six_view.mp4"}
+        ):
+            raise batch.contracts.ContractError(
+                "stubbed presentation bytes or binding changed"
+            )
+        return (
+            copy.deepcopy(receipt_payload),
+            copy.deepcopy(canonical_evidence["presentation_receipt"]),
+        )
+
+    batch.presentation = SimpleNamespace(
+        PresentationContractError=batch.contracts.ContractError,
+        load_presentation_receipt=load_presentation_receipt,
+    )
+    return evidence, output_video, loader_calls
+
+
+def _build_v3_contract(tmp_path, batch):
     asset_id = "animal_british_shorthair_v1"
     tag = f"pixal_{asset_id}"
     source_asset = tmp_path / "source_asset.json"
@@ -120,6 +204,9 @@ def _build_v2_contract(tmp_path, batch):
     )
     _write_json(animation_decision, decision_payload)
     _write_glb(rigged_glb)
+    presentation_evidence, presentation_video, presentation_loader_calls = (
+        _stubbed_presentation_evidence(tmp_path, batch, animation_review)
+    )
 
     authority = copy.deepcopy(batch.USER_INSTRUCTION_AUTHORITY)
     receipt_payload = {
@@ -137,6 +224,9 @@ def _build_v2_contract(tmp_path, batch):
             "decision": "approved_for_ue_apartment",
             "review_sha256": _sha256(animation_review),
             "all_six_checks_explicit": True,
+            "presentation_receipt_file_sha256": presentation_evidence[
+                "expected_presentation_receipt_file_sha256"
+            ],
         },
         "user_instruction_authority": authority,
         "authenticated_review_artifact_count": 1,
@@ -146,6 +236,7 @@ def _build_v2_contract(tmp_path, batch):
             "size_bytes": animation_decision.stat().st_size,
         },
         "decision_sha256": decision_payload["decision_sha256"],
+        "presentation_evidence": copy.deepcopy(presentation_evidence),
     }
     receipt_payload["receipt_sha256"] = batch._hash_without(
         receipt_payload, "receipt_sha256"
@@ -223,6 +314,7 @@ def _build_v2_contract(tmp_path, batch):
             freeze_receipt
         ),
         "animation_decision_freeze_receipt_sha256": receipt_payload["receipt_sha256"],
+        "presentation_evidence": copy.deepcopy(presentation_evidence),
         "user_instruction_authority": authority,
         "reviewed_animated_glb": _record(rigged_glb),
         "authenticated_review_artifact_count": 1,
@@ -246,6 +338,9 @@ def _build_v2_contract(tmp_path, batch):
         "preparation_path": preparation_path,
         "freeze_receipt": receipt_payload,
         "freeze_receipt_path": freeze_receipt,
+        "presentation_evidence": presentation_evidence,
+        "presentation_video_path": presentation_video,
+        "presentation_loader_calls": presentation_loader_calls,
     }
 
 
@@ -414,7 +509,7 @@ def test_importers_have_no_existing_content_delete_or_replace_path():
     assert ".write_text(" not in batch
 
 
-def test_formal_pixal_import_contract_is_v2_and_externally_anchored(
+def test_formal_pixal_import_contract_uses_v3_preparation_and_is_externally_anchored(
     tmp_path, monkeypatch
 ):
     batch = _load_module(
@@ -422,7 +517,7 @@ def test_formal_pixal_import_contract_is_v2_and_externally_anchored(
         "_test_import_pixal_animal_batch_contract",
         monkeypatch,
     )
-    fixture = _build_v2_contract(tmp_path, batch)
+    fixture = _build_v3_contract(tmp_path, batch)
     preparation, preparation_descriptor, manifest_descriptor = (
         batch._validate_preparation_anchor(
             fixture["preparation_path"],
@@ -446,6 +541,8 @@ def test_formal_pixal_import_contract_is_v2_and_externally_anchored(
     assert preparation_descriptor["sha256"] == _sha256(fixture["preparation_path"])
     assert preparation_descriptor["manifest_sha256"] == preparation["manifest_sha256"]
     assert manifest_descriptor["sha256"] == _sha256(fixture["manifest_path"])
+    assert preparation["presentation_evidence"] == fixture["presentation_evidence"]
+    assert fixture["presentation_loader_calls"]
 
     result_path = tmp_path / "ue_import_result.json"
     monkeypatch.setenv(
@@ -468,13 +565,142 @@ def test_formal_pixal_import_contract_is_v2_and_externally_anchored(
     assert not result_path.exists()
 
 
+def test_presentation_video_and_cross_layer_binding_mutations_fail_closed(
+    tmp_path, monkeypatch
+):
+    batch = _load_module(
+        BATCH_IMPORT,
+        "_test_import_pixal_presentation_mutations",
+        monkeypatch,
+    )
+    fixture = _build_v3_contract(tmp_path, batch)
+
+    fixture["presentation_video_path"].write_bytes(b"replaced-video")
+    with pytest.raises(RuntimeError, match="presentation evidence is invalid"):
+        batch._validate_preparation_anchor(
+            fixture["preparation_path"],
+            _sha256(fixture["preparation_path"]),
+            fixture["manifest_path"],
+            _sha256(fixture["manifest_path"]),
+        )
+
+    fresh_root = tmp_path / "fresh"
+    fresh_root.mkdir()
+    fixture = _build_v3_contract(fresh_root, batch)
+    preparation = copy.deepcopy(fixture["preparation"])
+    preparation["presentation_evidence"]["presentation_receipt_sha256"] = "0" * 64
+    preparation["manifest_sha256"] = batch._hash_without(preparation, "manifest_sha256")
+    changed_path = tmp_path / "changed_presentation_preparation.json"
+    _write_json(changed_path, preparation)
+    with pytest.raises(RuntimeError, match="presentation binding changed"):
+        batch._validate_preparation_anchor(
+            changed_path,
+            _sha256(changed_path),
+            fixture["manifest_path"],
+            _sha256(fixture["manifest_path"]),
+        )
+
+
+def test_legacy_freeze_v1_and_resealed_wrong_user_presentation_sha_fail_closed(
+    tmp_path, monkeypatch
+):
+    batch = _load_module(
+        BATCH_IMPORT,
+        "_test_import_pixal_freeze_v2_only",
+        monkeypatch,
+    )
+    fixture = _build_v3_contract(tmp_path, batch)
+
+    for index, mutate in enumerate(
+        (
+            lambda receipt: receipt.update(
+                schema=(
+                    "avengine_target_native_generated_animal_animation_"
+                    "decision_freeze_receipt_v1"
+                )
+            ),
+            lambda receipt: receipt["user_instruction_binding"].update(
+                presentation_receipt_file_sha256="0" * 64
+            ),
+        )
+    ):
+        receipt = copy.deepcopy(fixture["freeze_receipt"])
+        mutate(receipt)
+        receipt["receipt_sha256"] = batch._hash_without(receipt, "receipt_sha256")
+        receipt_path = tmp_path / f"mutated_freeze_{index}.json"
+        _write_json(receipt_path, receipt)
+        preparation = copy.deepcopy(fixture["preparation"])
+        preparation["animation_decision_freeze_receipt"] = _record(receipt_path)
+        preparation["expected_animation_decision_freeze_receipt_file_sha256"] = _sha256(
+            receipt_path
+        )
+        preparation["animation_decision_freeze_receipt_sha256"] = receipt[
+            "receipt_sha256"
+        ]
+        preparation["manifest_sha256"] = batch._hash_without(
+            preparation, "manifest_sha256"
+        )
+        preparation_path = tmp_path / f"mutated_freeze_preparation_{index}.json"
+        _write_json(preparation_path, preparation)
+        with pytest.raises(RuntimeError):
+            batch._validate_preparation_anchor(
+                preparation_path,
+                _sha256(preparation_path),
+                fixture["manifest_path"],
+                _sha256(fixture["manifest_path"]),
+            )
+
+
+def test_import_contract_is_reauthenticated_before_and_after_ue_writes(
+    monkeypatch,
+):
+    source = _function_source(BATCH_IMPORT, "main")
+    target_preflight = source.index("_assert_content_targets_absent(tags)")
+    first_reauthentication = source.index(
+        "_require_import_contract_unchanged(contract)",
+        target_preflight,
+    )
+    first_write = source.index("_run_one(", first_reauthentication)
+    success_result = source.index("success_result = _base_result", first_write)
+    final_reauthentication = source.index(
+        "_require_import_contract_unchanged(contract)",
+        success_result,
+    )
+    success_receipt = source.index(
+        '_write_result_no_replace(contract["result_path"], success_result)',
+        final_reauthentication,
+    )
+
+    assert (
+        target_preflight
+        < first_reauthentication
+        < first_write
+        < success_result
+        < final_reauthentication
+        < success_receipt
+    )
+
+    batch = _load_module(
+        BATCH_IMPORT,
+        "_test_import_pixal_contract_reauthentication",
+        monkeypatch,
+    )
+    monkeypatch.setattr(
+        batch,
+        "_authenticate_import_contract",
+        lambda: {"authority": "changed"},
+    )
+    with pytest.raises(RuntimeError, match="authority graph changed"):
+        batch._require_import_contract_unchanged({"authority": "original"})
+
+
 def test_batch_contract_mutations_fail_closed_before_ue_write(tmp_path, monkeypatch):
     batch = _load_module(
         BATCH_IMPORT,
         "_test_import_pixal_animal_batch_mutations",
         monkeypatch,
     )
-    fixture = _build_v2_contract(tmp_path, batch)
+    fixture = _build_v3_contract(tmp_path, batch)
     preparation = fixture["preparation"]
 
     def rehash(payload):
@@ -513,7 +739,7 @@ def test_preparation_and_manifest_anchor_mutations_fail_closed(tmp_path, monkeyp
         "_test_import_pixal_preparation_mutations",
         monkeypatch,
     )
-    fixture = _build_v2_contract(tmp_path, batch)
+    fixture = _build_v3_contract(tmp_path, batch)
     with pytest.raises(RuntimeError, match="external UE import preparation"):
         batch._validate_preparation_anchor(
             fixture["preparation_path"],
@@ -547,20 +773,29 @@ def test_preparation_and_manifest_anchor_mutations_fail_closed(tmp_path, monkeyp
             )
 
 
-def test_legacy_preparation_v1_is_explicitly_audit_only(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "legacy_schema",
+    [
+        "avengine_user_approved_generated_animal_ue_import_preparation_v1",
+        "avengine_user_approved_generated_animal_ue_import_preparation_v2",
+    ],
+)
+def test_legacy_preparation_v1_v2_is_explicitly_audit_only(
+    tmp_path, monkeypatch, legacy_schema
+):
     batch = _load_module(
         BATCH_IMPORT,
         "_test_import_pixal_legacy_preparation",
         monkeypatch,
     )
-    fixture = _build_v2_contract(tmp_path, batch)
+    fixture = _build_v3_contract(tmp_path, batch)
     preparation = copy.deepcopy(fixture["preparation"])
-    preparation["schema"] = batch.LEGACY_PREPARATION_SCHEMA
+    preparation["schema"] = legacy_schema
     preparation["manifest_sha256"] = batch._hash_without(preparation, "manifest_sha256")
     path = tmp_path / "legacy_preparation.json"
     _write_json(path, preparation)
 
-    with pytest.raises(RuntimeError, match="v1 is audit-only"):
+    with pytest.raises(RuntimeError, match="v1/v2 is audit-only"):
         batch._validate_preparation_anchor(
             path,
             _sha256(path),
@@ -578,7 +813,7 @@ def test_freeze_receipt_strict_json_failures_are_rejected(
         f"_test_import_pixal_receipt_strict_{invalid_value}",
         monkeypatch,
     )
-    fixture = _build_v2_contract(tmp_path, batch)
+    fixture = _build_v3_contract(tmp_path, batch)
     receipt_path = fixture["freeze_receipt_path"]
     raw = receipt_path.read_text(encoding="utf-8")
     if invalid_value == "duplicate_key":
@@ -621,7 +856,7 @@ def test_freeze_receipt_cannot_upgrade_caller_assertion_to_crypto_identity(
         "_test_import_pixal_receipt_authority_upgrade",
         monkeypatch,
     )
-    fixture = _build_v2_contract(tmp_path, batch)
+    fixture = _build_v3_contract(tmp_path, batch)
     receipt = copy.deepcopy(fixture["freeze_receipt"])
     upgraded_authority = copy.deepcopy(batch.USER_INSTRUCTION_AUTHORITY)
     upgraded_authority["cryptographic_user_identity_verified"] = True

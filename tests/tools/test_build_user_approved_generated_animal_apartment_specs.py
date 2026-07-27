@@ -3,11 +3,17 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
+import shutil
+import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.tools import (
+    test_prepare_user_approved_generated_animal_ue_imports as presentation_support,
+)
 from tools import build_user_approved_generated_animal_apartment_specs as subject
 from tools import controlled_source_asset_schema as contracts
 
@@ -57,6 +63,52 @@ def _relative_descriptor(path: Path, root: Path) -> dict:
     return descriptor
 
 
+def _write_presentation_evidence(
+    tmp_path: Path,
+    *,
+    review_path: Path,
+    runtime: Path,
+) -> dict[str, Any]:
+    media_root = tmp_path / "05_review"
+    media_root.mkdir(exist_ok=True)
+    media = {}
+    for (
+        label,
+        _action,
+        _view,
+        _yaw,
+        _title,
+        _row,
+        _column,
+    ) in subject.preparation_bridge.presentation.MEDIA_LAYOUT:
+        video = _write(
+            media_root / f"{label}.mp4",
+            f"{label}-authenticated-source-video".encode(),
+        )
+        media[label] = presentation_support._video_record(
+            video,
+            width=subject.preparation_bridge.presentation.REVIEW_MEDIA_WIDTH,
+            height=subject.preparation_bridge.presentation.REVIEW_MEDIA_HEIGHT,
+        )
+    lineage = presentation_support._build_media_lineage(
+        tmp_path,
+        input_glb=runtime,
+        media=media,
+    )
+    presentation_review = {
+        "outputs": {
+            "animated_glb": _descriptor(runtime),
+            "media": media,
+            "media_lineage": lineage,
+        }
+    }
+    return presentation_support._write_presentation_bundle(
+        tmp_path,
+        review_path=review_path,
+        review=presentation_review,
+    )
+
+
 def _repin(inputs: dict[str, Any], *path_keys: str) -> None:
     pin_keys = {
         "ue_preparation": "expected_ue_preparation_sha256",
@@ -96,6 +148,63 @@ def _write_preparation_and_rebind_result(
     result["preparation_manifest"] = descriptor
     _write(inputs["ue_result"], result)
     _repin(inputs, "ue_preparation", "ue_result")
+
+
+def _presentation_evidence(inputs: dict[str, Any]) -> dict[str, Any]:
+    return copy.deepcopy(
+        contracts.load_json(inputs["ue_preparation"])["presentation_evidence"]
+    )
+
+
+def _set_presentation_writable(inputs: dict[str, Any]) -> None:
+    evidence = _presentation_evidence(inputs)
+    receipt = Path(evidence["presentation_receipt"]["path"])
+    output = Path(evidence["output_video"]["path"])
+    receipt.parent.chmod(0o755)
+    receipt.chmod(0o644)
+    output.chmod(0o644)
+
+
+def _reseal_presentation(inputs: dict[str, Any]) -> None:
+    evidence = _presentation_evidence(inputs)
+    receipt = Path(evidence["presentation_receipt"]["path"])
+    output = Path(evidence["output_video"]["path"])
+    receipt.chmod(0o444)
+    output.chmod(0o444)
+    receipt.parent.chmod(0o555)
+
+
+def _rewrite_freeze_and_rebind_preparation(
+    inputs: dict[str, Any],
+    freeze_receipt: dict[str, Any],
+    *,
+    presentation_evidence: dict[str, Any] | None = None,
+) -> None:
+    freeze_receipt["receipt_sha256"] = _hash_without(
+        freeze_receipt,
+        "receipt_sha256",
+    )
+    _write(inputs["animation_decision_freeze_receipt"], freeze_receipt)
+    _repin(inputs, "animation_decision_freeze_receipt")
+    preparation = contracts.load_json(inputs["ue_preparation"])
+    preparation["animation_decision_freeze_receipt"] = _descriptor(
+        inputs["animation_decision_freeze_receipt"]
+    )
+    preparation["expected_animation_decision_freeze_receipt_file_sha256"] = _sha(
+        inputs["animation_decision_freeze_receipt"]
+    )
+    preparation["animation_decision_freeze_receipt_sha256"] = freeze_receipt[
+        "receipt_sha256"
+    ]
+    if presentation_evidence is not None:
+        preparation["presentation_evidence"] = copy.deepcopy(presentation_evidence)
+    _write_preparation_and_rebind_result(inputs, preparation)
+
+
+def _assert_failed_without_apartment_output(output: Path) -> None:
+    assert not output.exists()
+    assert not output.is_symlink()
+    assert not list(output.parent.glob(f".{output.name}.*.staging"))
 
 
 def _target_physical_profile() -> dict:
@@ -352,6 +461,11 @@ def _fixture(
         tmp_path / "jobs.json",
         jobs,
     )
+    presentation_evidence = _write_presentation_evidence(
+        tmp_path,
+        review_path=review,
+        runtime=runtime,
+    )
     freeze_receipt = {
         "schema": subject.DECISION_FREEZE_RECEIPT_SCHEMA,
         "status": "frozen",
@@ -367,11 +481,15 @@ def _fixture(
             "decision": "approved_for_ue_apartment",
             "review_sha256": _sha(review),
             "all_six_checks_explicit": True,
+            "presentation_receipt_file_sha256": presentation_evidence[
+                "expected_presentation_receipt_file_sha256"
+            ],
         },
         "user_instruction_authority": copy.deepcopy(subject.USER_INSTRUCTION_AUTHORITY),
         "authenticated_review_artifact_count": 1,
         "animation_decision": _relative_descriptor(decision_path, tmp_path),
         "decision_sha256": decision["decision_sha256"],
+        "presentation_evidence": copy.deepcopy(presentation_evidence),
     }
     freeze_receipt["receipt_sha256"] = _hash_without(
         freeze_receipt,
@@ -422,6 +540,7 @@ def _fixture(
             freeze_receipt_path
         ),
         "animation_decision_freeze_receipt_sha256": freeze_receipt["receipt_sha256"],
+        "presentation_evidence": copy.deepcopy(presentation_evidence),
         "user_instruction_authority": copy.deepcopy(subject.USER_INSTRUCTION_AUTHORITY),
         "reviewed_animated_glb": _descriptor(runtime),
         "authenticated_review_artifact_count": 1,
@@ -600,9 +719,17 @@ def test_builds_authenticated_walk_idle_pair(tmp_path: Path) -> None:
     assert manifest["clip_count"] == 2
     assert manifest["manifest_sha256"] == contracts.manifest_sha256(manifest)
     assert manifest["formal_registration_authorized"] is False
+    preparation = contracts.load_json(inputs["ue_preparation"])
+    assert manifest["schema"].endswith("_v2")
+    assert manifest["presentation_evidence"] == preparation["presentation_evidence"]
+    assert (
+        manifest["presentation_automatic_checks"]
+        == subject.PRESENTATION_AUTOMATIC_CHECKS
+    )
     record = manifest["records"][0]
     actions = record["actions"]
     assert set(actions) == {"Walking", "Idle"}
+    assert all(action["clip_id"].endswith("_v2") for action in actions.values())
     walking = json.loads(Path(actions["Walking"]["spec"]).read_text(encoding="utf-8"))
     idle = json.loads(Path(actions["Idle"]["spec"]).read_text(encoding="utf-8"))
     source = walking["sources"][0]
@@ -624,6 +751,15 @@ def test_builds_authenticated_walk_idle_pair(tmp_path: Path) -> None:
     assert (
         source["controlled_animal_gate"]["formal_dataset_registration_authorized"]
         is False
+    )
+    assert source["controlled_animal_gate"]["schema"] == subject.APARTMENT_GATE_SCHEMA
+    assert (
+        source["controlled_animal_gate"]["presentation_evidence"]
+        == preparation["presentation_evidence"]
+    )
+    assert (
+        source["controlled_animal_gate"]["presentation_automatic_checks"]
+        == subject.PRESENTATION_AUTOMATIC_CHECKS
     )
     assert "rig_direction_check_windows" in walking
     assert "rig_direction_check_windows" not in idle
@@ -984,15 +1120,23 @@ def test_formal_publication_requires_all_external_full_file_sha_anchors(
         subject.build_specs(**inputs, output_root=tmp_path / "output")
 
 
-def test_legacy_preparation_v1_is_never_formal(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "legacy_schema",
+    sorted(subject.LEGACY_PREPARATION_SCHEMAS),
+)
+def test_legacy_preparation_v1_v2_is_never_formal(
+    tmp_path: Path,
+    legacy_schema: str,
+) -> None:
     inputs = _fixture(tmp_path)
     inputs.pop("semantic_evidence")
     preparation = contracts.load_json(inputs["ue_preparation"])
-    preparation["schema"] = subject.LEGACY_PREPARATION_SCHEMA
+    preparation["schema"] = legacy_schema
     _write_preparation_and_rebind_result(inputs, preparation)
 
-    with pytest.raises(contracts.ContractError, match="v1 is audit-only"):
+    with pytest.raises(contracts.ContractError, match="v1/v2 is audit-only"):
         subject.build_specs(**inputs, output_root=tmp_path / "output")
+    assert not (tmp_path / "output").exists()
 
 
 def test_apartment_cannot_upgrade_caller_assertion_to_crypto_identity(
@@ -1021,6 +1165,558 @@ def test_apartment_cannot_upgrade_caller_assertion_to_crypto_identity(
 
     with pytest.raises(contracts.ContractError, match="authority contract"):
         subject.build_specs(**inputs, output_root=tmp_path / "output")
+
+
+def test_rejects_tampered_owner_review_video_without_apartment_output(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "tampered_video_output"
+    evidence = _presentation_evidence(inputs)
+    _set_presentation_writable(inputs)
+    video = Path(evidence["output_video"]["path"])
+    video.write_bytes(video.read_bytes() + b"-tampered")
+    _reseal_presentation(inputs)
+
+    with pytest.raises(contracts.ContractError, match="output video"):
+        subject.build_specs(**inputs, output_root=output)
+
+    _assert_failed_without_apartment_output(output)
+
+
+def test_rejects_presentation_evidence_cross_layer_mismatch(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "cross_layer_mismatch_output"
+    preparation = contracts.load_json(inputs["ue_preparation"])
+    preparation["presentation_evidence"]["output_video"]["sha256"] = "f" * 64
+    _write_preparation_and_rebind_result(inputs, preparation)
+
+    with pytest.raises(contracts.ContractError, match="cross-layer binding"):
+        subject.build_specs(**inputs, output_root=output)
+
+    _assert_failed_without_apartment_output(output)
+
+
+def test_rejects_unpassed_preparation_presentation_check(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "failed_presentation_check_output"
+    preparation = contracts.load_json(inputs["ue_preparation"])
+    check = next(iter(subject.PRESENTATION_AUTOMATIC_CHECKS))
+    preparation["automatic_checks"][check] = False
+    _write_preparation_and_rebind_result(inputs, preparation)
+
+    with pytest.raises(contracts.ContractError, match="preparation contract"):
+        subject.build_specs(**inputs, output_root=output)
+
+    _assert_failed_without_apartment_output(output)
+
+
+def test_rejects_tampered_presentation_receipt_raw_file(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "tampered_receipt_output"
+    evidence = _presentation_evidence(inputs)
+    _set_presentation_writable(inputs)
+    receipt = Path(evidence["presentation_receipt"]["path"])
+    receipt.write_bytes(receipt.read_bytes() + b" ")
+    _reseal_presentation(inputs)
+
+    with pytest.raises(contracts.ContractError, match="external SHA-256"):
+        subject.build_specs(**inputs, output_root=output)
+
+    _assert_failed_without_apartment_output(output)
+
+
+def test_rejects_rebound_presentation_receipt_internal_self_hash(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "internal_receipt_hash_output"
+    evidence = _presentation_evidence(inputs)
+    _set_presentation_writable(inputs)
+    receipt_path = Path(evidence["presentation_receipt"]["path"])
+    receipt = contracts.load_json(receipt_path)
+    receipt["created_at"] = "2026-07-28T00:00:03+00:00"
+    _write(receipt_path, receipt)
+    evidence["presentation_receipt"] = _descriptor(receipt_path)
+    evidence["expected_presentation_receipt_file_sha256"] = _sha(receipt_path)
+    freeze = contracts.load_json(inputs["animation_decision_freeze_receipt"])
+    freeze["presentation_evidence"] = copy.deepcopy(evidence)
+    freeze["user_instruction_binding"]["presentation_receipt_file_sha256"] = evidence[
+        "expected_presentation_receipt_file_sha256"
+    ]
+    _reseal_presentation(inputs)
+    _rewrite_freeze_and_rebind_preparation(
+        inputs,
+        freeze,
+        presentation_evidence=evidence,
+    )
+
+    with pytest.raises(contracts.ContractError, match="canonical self-hash"):
+        subject.build_specs(**inputs, output_root=output)
+
+    _assert_failed_without_apartment_output(output)
+
+
+def test_rejects_duplicate_json_in_rebound_presentation_receipt(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "duplicate_presentation_receipt_output"
+    evidence = _presentation_evidence(inputs)
+    _set_presentation_writable(inputs)
+    receipt = Path(evidence["presentation_receipt"]["path"])
+    _inject_duplicate_schema(receipt)
+    evidence["presentation_receipt"] = _descriptor(receipt)
+    evidence["expected_presentation_receipt_file_sha256"] = _sha(receipt)
+    freeze = contracts.load_json(inputs["animation_decision_freeze_receipt"])
+    freeze["presentation_evidence"] = copy.deepcopy(evidence)
+    freeze["user_instruction_binding"]["presentation_receipt_file_sha256"] = evidence[
+        "expected_presentation_receipt_file_sha256"
+    ]
+    _reseal_presentation(inputs)
+    _rewrite_freeze_and_rebind_preparation(
+        inputs,
+        freeze,
+        presentation_evidence=evidence,
+    )
+
+    with pytest.raises(contracts.ContractError, match="strict JSON"):
+        subject.build_specs(**inputs, output_root=output)
+
+    _assert_failed_without_apartment_output(output)
+
+
+def test_rejects_symlinked_owner_review_video_without_output(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "symlinked_video_output"
+    evidence = _presentation_evidence(inputs)
+    _set_presentation_writable(inputs)
+    video = Path(evidence["output_video"]["path"])
+    moved_video = tmp_path / "moved_owner_review_video.mp4"
+    video.rename(moved_video)
+    video.symlink_to(moved_video)
+    _reseal_presentation(inputs)
+
+    with pytest.raises(contracts.ContractError, match="symlink"):
+        subject.build_specs(**inputs, output_root=output)
+
+    _assert_failed_without_apartment_output(output)
+
+
+def test_rejects_wrong_user_presentation_raw_sha_binding(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "wrong_user_presentation_binding_output"
+    freeze = contracts.load_json(inputs["animation_decision_freeze_receipt"])
+    freeze["user_instruction_binding"]["presentation_receipt_file_sha256"] = "f" * 64
+    _rewrite_freeze_and_rebind_preparation(inputs, freeze)
+
+    with pytest.raises(contracts.ContractError, match="cross-layer binding"):
+        subject.build_specs(**inputs, output_root=output)
+
+    _assert_failed_without_apartment_output(output)
+
+
+def test_legacy_freeze_v1_is_audit_only_and_cannot_publish(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "legacy_freeze_output"
+    freeze = contracts.load_json(inputs["animation_decision_freeze_receipt"])
+    freeze["schema"] = next(iter(subject.LEGACY_DECISION_FREEZE_RECEIPT_SCHEMAS))
+    freeze.pop("presentation_evidence")
+    freeze["user_instruction_binding"].pop("presentation_receipt_file_sha256")
+    _rewrite_freeze_and_rebind_preparation(inputs, freeze)
+
+    with pytest.raises(contracts.ContractError, match="audit-only"):
+        subject.build_specs(**inputs, output_root=output)
+
+    _assert_failed_without_apartment_output(output)
+
+
+def test_freeze_v2_without_presentation_evidence_cannot_publish(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "missing_freeze_presentation_output"
+    freeze = contracts.load_json(inputs["animation_decision_freeze_receipt"])
+    freeze.pop("presentation_evidence")
+    _rewrite_freeze_and_rebind_preparation(inputs, freeze)
+
+    with pytest.raises(contracts.ContractError, match="authority contract"):
+        subject.build_specs(**inputs, output_root=output)
+
+    _assert_failed_without_apartment_output(output)
+
+
+def test_restore_race_before_publication_is_rejected_and_removes_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "prepublish_restore_race_output"
+    evidence = _presentation_evidence(inputs)
+    video = Path(evidence["output_video"]["path"])
+    original_bytes = video.read_bytes()
+    original_stat = video.stat()
+    original_write = subject._write_json_at
+    raced = False
+
+    def racing_write(
+        directory_fd: int,
+        name: str,
+        payload: Any,
+    ) -> dict[str, Any]:
+        nonlocal raced
+        result = original_write(directory_fd, name, payload)
+        if name == "camera_pass_table_loop_walking.json" and not raced:
+            raced = True
+            video.chmod(0o644)
+            video.write_bytes(original_bytes + b"-transient-race")
+            video.write_bytes(original_bytes)
+            os.utime(
+                video,
+                ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+            )
+            video.chmod(0o444)
+        return result
+
+    monkeypatch.setattr(subject, "_write_json_at", racing_write)
+
+    with pytest.raises(contracts.ContractError, match="authority graph changed"):
+        subject.build_specs(**inputs, output_root=output)
+
+    assert raced
+    _assert_failed_without_apartment_output(output)
+
+
+def test_restore_race_before_final_publication_is_rejected_and_output_stays_invisible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "final_auth_restore_race_output"
+    evidence = _presentation_evidence(inputs)
+    video = Path(evidence["output_video"]["path"])
+    original_bytes = video.read_bytes()
+    original_stat = video.stat()
+    original_authenticate = subject._authenticate_build_authority
+    calls = 0
+
+    def race_before_final_authentication(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            video.chmod(0o644)
+            video.write_bytes(original_bytes + b"-precommit-final-race")
+            video.write_bytes(original_bytes)
+            os.utime(
+                video,
+                ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+            )
+            video.chmod(0o444)
+        return original_authenticate(**kwargs)
+
+    monkeypatch.setattr(
+        subject,
+        "_authenticate_build_authority",
+        race_before_final_authentication,
+    )
+
+    with pytest.raises(contracts.ContractError, match="before publication"):
+        subject.build_specs(**inputs, output_root=output)
+
+    assert calls == 3
+    _assert_failed_without_apartment_output(output)
+
+
+def test_output_is_invisible_while_final_authentication_is_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "blocked_final_auth_output"
+    original_authenticate = subject._authenticate_build_authority
+    final_auth_entered = threading.Event()
+    release_final_auth = threading.Event()
+    calls = 0
+    errors: list[BaseException] = []
+    results: list[Path] = []
+
+    def blocking_authentication(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            final_auth_entered.set()
+            if not release_final_auth.wait(timeout=10):
+                raise AssertionError(
+                    "timed out waiting to release final authentication"
+                )
+        return original_authenticate(**kwargs)
+
+    def run_builder() -> None:
+        try:
+            results.append(subject.build_specs(**inputs, output_root=output))
+        except BaseException as error:
+            errors.append(error)
+
+    monkeypatch.setattr(
+        subject,
+        "_authenticate_build_authority",
+        blocking_authentication,
+    )
+    builder = threading.Thread(target=run_builder, daemon=True)
+    builder.start()
+    try:
+        assert final_auth_entered.wait(timeout=10)
+        assert not output.exists()
+        assert not output.is_symlink()
+        assert len(list(output.parent.glob(f".{output.name}.*.staging"))) == 1
+    finally:
+        release_final_auth.set()
+        builder.join(timeout=10)
+
+    assert not builder.is_alive()
+    assert not errors
+    assert calls == 3
+    assert results == [output / "spec_manifest.json"]
+    assert output.is_dir()
+
+
+def test_output_parent_swap_after_precommit_check_cannot_publish_ready_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    publication_parent = tmp_path / "publication_parent"
+    publication_parent.mkdir()
+    moved_parent = tmp_path / "publication_parent_moved"
+    output = publication_parent / "parent_swap_output"
+    original_publish = subject._atomic_publish_no_replace_at
+    swapped = False
+
+    def swap_parent_inside_publication_hook(
+        parent_fd: int,
+        staging_name: str,
+        output_name: str,
+        **kwargs: Any,
+    ) -> None:
+        nonlocal swapped
+        publication_parent.rename(moved_parent)
+        publication_parent.mkdir()
+        swapped = True
+        original_publish(
+            parent_fd,
+            staging_name,
+            output_name,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        subject,
+        "_atomic_publish_no_replace_at",
+        swap_parent_inside_publication_hook,
+    )
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="output parent no longer names the held directory",
+    ):
+        subject.build_specs(**inputs, output_root=output)
+
+    assert swapped
+    assert not output.exists()
+    assert not (moved_parent / output.name).exists()
+    assert not list(moved_parent.glob(f".{output.name}.*.staging"))
+
+
+def test_cleanup_refuses_staging_symlink_swap_and_preserves_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    publication_parent = tmp_path / "cleanup_parent"
+    publication_parent.mkdir()
+    output = publication_parent / "cleanup_symlink_swap_output"
+    victim = tmp_path / "cleanup_victim"
+    victim.mkdir()
+    marker = victim / "must_survive"
+    marker.write_text("safe", encoding="utf-8")
+    quarantined = publication_parent / "attacker_moved_staging"
+    swapped_entry: Path | None = None
+    original_authenticate = subject._authenticate_build_authority
+    calls = 0
+
+    def swap_staging_before_forced_failure(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls, swapped_entry
+        calls += 1
+        if calls == 2:
+            staging_entries = list(publication_parent.glob(f".{output.name}.*.staging"))
+            assert len(staging_entries) == 1
+            swapped_entry = staging_entries[0]
+            swapped_entry.rename(quarantined)
+            swapped_entry.symlink_to(victim, target_is_directory=True)
+            raise contracts.ContractError("forced cleanup race")
+        return original_authenticate(**kwargs)
+
+    monkeypatch.setattr(
+        subject,
+        "_authenticate_build_authority",
+        swap_staging_before_forced_failure,
+    )
+    try:
+        with pytest.raises(contracts.ContractError, match="cleanup was quarantined"):
+            subject.build_specs(**inputs, output_root=output)
+
+        assert calls == 2
+        assert not output.exists()
+        assert marker.read_text(encoding="utf-8") == "safe"
+        assert swapped_entry is not None and swapped_entry.is_symlink()
+        assert quarantined.is_dir()
+    finally:
+        if swapped_entry is not None and swapped_entry.is_symlink():
+            swapped_entry.unlink()
+        if quarantined.exists():
+            shutil.rmtree(quarantined)
+
+
+def test_atomic_no_replace_race_preserves_concurrent_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "concurrent_apartment_output"
+    marker = output / "other_writer"
+    original_publish = subject._atomic_publish_no_replace_at
+
+    def concurrent_publish(
+        parent_fd: int,
+        staging_name: str,
+        output_name: str,
+        **kwargs: Any,
+    ) -> None:
+        os.mkdir(output_name, mode=0o700, dir_fd=parent_fd)
+        output_fd = os.open(
+            output_name,
+            os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_fd,
+        )
+        try:
+            marker_fd = os.open(
+                "other_writer",
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=output_fd,
+            )
+            try:
+                os.write(marker_fd, b"concurrent")
+                os.fsync(marker_fd)
+            finally:
+                os.close(marker_fd)
+            os.fsync(output_fd)
+        finally:
+            os.close(output_fd)
+        original_publish(
+            parent_fd,
+            staging_name,
+            output_name,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        subject,
+        "_atomic_publish_no_replace_at",
+        concurrent_publish,
+    )
+
+    with pytest.raises(contracts.ContractError, match="atomic publication"):
+        subject.build_specs(**inputs, output_root=output)
+
+    assert marker.read_text(encoding="utf-8") == "concurrent"
+    assert not list(output.parent.glob(f".{output.name}.*.staging"))
+
+
+def test_staging_byte_rewrite_inside_publication_hook_never_becomes_visible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "staging_byte_rewrite_output"
+    original_publish = subject._atomic_publish_no_replace_at
+    tampered = False
+
+    def tamper_before_dirfd_rename(
+        parent_fd: int,
+        staging_name: str,
+        output_name: str,
+        **kwargs: Any,
+    ) -> None:
+        nonlocal tampered
+        tag_fd = kwargs["tag_fd"]
+        artifact_fd = os.open(
+            "camera_pass_table_loop_walking.json",
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=tag_fd,
+        )
+        try:
+            os.fchmod(artifact_fd, 0o644)
+        finally:
+            os.close(artifact_fd)
+        artifact_fd = os.open(
+            "camera_pass_table_loop_walking.json",
+            os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=tag_fd,
+        )
+        try:
+            os.write(artifact_fd, b'{"tampered":true}\n')
+            os.fsync(artifact_fd)
+        finally:
+            os.close(artifact_fd)
+        tampered = True
+        original_publish(
+            parent_fd,
+            staging_name,
+            output_name,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        subject,
+        "_atomic_publish_no_replace_at",
+        tamper_before_dirfd_rename,
+    )
+
+    with pytest.raises(contracts.ContractError, match="staging artifact"):
+        subject.build_specs(**inputs, output_root=output)
+
+    assert tampered
+    _assert_failed_without_apartment_output(output)
 
 
 @pytest.mark.parametrize(

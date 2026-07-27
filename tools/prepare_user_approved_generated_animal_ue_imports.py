@@ -10,24 +10,28 @@ from __future__ import annotations
 
 import argparse
 import copy
-from datetime import datetime, timezone
+import ctypes
+import errno
 import hashlib
+import json
 import math
 import os
-from pathlib import Path
 import re
+import secrets
+import stat
 import struct
 import subprocess
 import sys
-import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tools import compose_target_native_generated_quadruped_owner_review as presentation
 from tools import controlled_source_asset_schema as contracts
 from tools import register_controlled_animal_source_assets as source_registry
-from tools import rocketbox_native_material_canary as immutable
 from tools import run_target_native_generated_quadruped_review as generated_review
 from tools.generated_animal_forward_contract import (
     ForwardContractError,
@@ -40,13 +44,21 @@ from tools.generated_animal_tokenrig_closure import (
     validate_tokenrig_closure_manifest,
 )
 
-
-SCHEMA = "avengine_user_approved_generated_animal_ue_import_preparation_v2"
+SCHEMA = "avengine_user_approved_generated_animal_ue_import_preparation_v3"
+LEGACY_PREPARATION_SCHEMAS = frozenset(
+    {
+        "avengine_user_approved_generated_animal_ue_import_preparation_v1",
+        "avengine_user_approved_generated_animal_ue_import_preparation_v2",
+    }
+)
 IMPORT_SCHEMA = "pixal_animal_ue_import_batch_v2"
 IMPORT_JOB_TYPE = "user_approved_generated_animal"
 DECISION_SCHEMA = "avengine_controlled_animal_animation_decision_v1"
 DECISION_FREEZE_RECEIPT_SCHEMA = (
-    "avengine_target_native_generated_animal_animation_decision_freeze_receipt_v1"
+    "avengine_target_native_generated_animal_animation_decision_freeze_receipt_v2"
+)
+LEGACY_DECISION_FREEZE_RECEIPT_SCHEMAS = frozenset(
+    {"avengine_target_native_generated_animal_animation_decision_freeze_receipt_v1"}
 )
 USER_INSTRUCTION_AUTHORITY = {
     "mode": "caller_assertion_v1",
@@ -73,9 +85,24 @@ DECISION_FREEZE_RECEIPT_FIELDS = frozenset(
         "authenticated_review_artifact_count",
         "animation_decision",
         "decision_sha256",
+        "presentation_evidence",
         "receipt_sha256",
     }
 )
+PRESENTATION_EVIDENCE_FIELDS = frozenset(
+    {
+        "presentation_receipt",
+        "expected_presentation_receipt_file_sha256",
+        "presentation_receipt_sha256",
+        "output_video",
+    }
+)
+PRESENTATION_AUTOMATIC_CHECKS = {
+    "presentation_receipt_raw_file_sha256_reauthenticated": True,
+    "presentation_receipt_internal_sha256_reauthenticated": True,
+    "presentation_exact_v4_review_sha256_reauthenticated": True,
+    "presentation_output_video_bytes_and_directory_reauthenticated": True,
+}
 DECISION_CHECK_FIELDS = frozenset(
     {
         "walking_direction",
@@ -2182,6 +2209,157 @@ def load_animation_decision(
     return path, payload
 
 
+def _file_guard(path: Path, label: str) -> dict[str, Any]:
+    path = _direct_file(path, label)
+    current = os.stat(path, follow_symlinks=False)
+    return {
+        "path": str(path),
+        "device": current.st_dev,
+        "inode": current.st_ino,
+        "mode": stat.S_IMODE(current.st_mode),
+        "link_count": current.st_nlink,
+        "size_bytes": current.st_size,
+        "mtime_ns": current.st_mtime_ns,
+        "ctime_ns": current.st_ctime_ns,
+    }
+
+
+def _require_unchanged_guard(
+    expected: Mapping[str, Any], path: Path, label: str
+) -> None:
+    if _file_guard(path, label) != expected:
+        raise contracts.ContractError(f"{label} identity changed during authentication")
+
+
+def load_presentation_evidence(
+    value: Any,
+    *,
+    review_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any], Path]:
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != PRESENTATION_EVIDENCE_FIELDS
+        or not isinstance(value.get("presentation_receipt"), Mapping)
+        or set(value["presentation_receipt"]) != {"path", "sha256", "size_bytes"}
+    ):
+        raise contracts.ContractError(
+            "decision freeze receipt presentation evidence fields are invalid"
+        )
+    expected_receipt_sha256 = _require_sha256(
+        value.get("expected_presentation_receipt_file_sha256"),
+        "expected presentation receipt file sha256",
+    )
+    descriptor = value["presentation_receipt"]
+    if (
+        not isinstance(descriptor.get("path"), str)
+        or not Path(descriptor["path"]).is_absolute()
+        or descriptor.get("sha256") != expected_receipt_sha256
+    ):
+        raise contracts.ContractError(
+            "decision freeze receipt presentation descriptor is invalid"
+        )
+    receipt_path = _direct_file(
+        Path(descriptor["path"]), "owner-review presentation receipt"
+    )
+    receipt_guard = _file_guard(receipt_path, "owner-review presentation receipt")
+    review_path = _direct_file(review_path, "generated animation review")
+    review_sha256 = _sha256_file(review_path)
+    try:
+        receipt_payload, raw_record = presentation.load_presentation_receipt(
+            receipt_path,
+            expected_receipt_sha256,
+            expected_source_review_sha256=review_sha256,
+        )
+    except (
+        presentation.PresentationContractError,
+        contracts.StrictJSONError,
+        OSError,
+        ValueError,
+    ) as error:
+        raise contracts.ContractError(
+            f"owner-review presentation receipt is invalid: {error}"
+        ) from error
+    _require_unchanged_guard(
+        receipt_guard,
+        receipt_path,
+        "owner-review presentation receipt",
+    )
+    if (
+        raw_record != descriptor
+        or receipt_payload.get("source_review") != _absolute_record(review_path)
+        or receipt_payload.get("expected_source_review_sha256") != review_sha256
+        or value.get("presentation_receipt_sha256")
+        != receipt_payload.get("receipt_sha256")
+        or value.get("output_video") != receipt_payload.get("output")
+    ):
+        raise contracts.ContractError(
+            "decision freeze receipt presentation authority binding changed"
+        )
+
+    output = receipt_payload["output"]
+    output_path_value = output.get("path")
+    if (
+        not isinstance(output_path_value, str)
+        or not Path(output_path_value).is_absolute()
+    ):
+        raise contracts.ContractError(
+            "owner-review presentation output path is invalid"
+        )
+    output_path = _direct_file(
+        Path(output_path_value), "owner-review presentation output video"
+    )
+    output_guard = _file_guard(output_path, "owner-review presentation output video")
+    if (
+        receipt_path.name != presentation.RECEIPT_NAME
+        or output_path.name != presentation.OUTPUT_VIDEO_NAME
+        or receipt_path.parent != output_path.parent
+        or {path.name for path in receipt_path.parent.iterdir()}
+        != {presentation.RECEIPT_NAME, presentation.OUTPUT_VIDEO_NAME}
+        or _absolute_record(output_path)
+        != {key: output[key] for key in ("path", "sha256", "size_bytes")}
+    ):
+        raise contracts.ContractError(
+            "owner-review presentation output bytes/directory binding changed"
+        )
+    directory_stat = os.stat(receipt_path.parent, follow_symlinks=False)
+    receipt_stat = os.stat(receipt_path, follow_symlinks=False)
+    output_stat = os.stat(output_path, follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(directory_stat.st_mode)
+        or stat.S_IMODE(directory_stat.st_mode) != 0o555
+        or not stat.S_ISREG(receipt_stat.st_mode)
+        or stat.S_IMODE(receipt_stat.st_mode) != 0o444
+        or receipt_stat.st_nlink != 1
+        or not stat.S_ISREG(output_stat.st_mode)
+        or stat.S_IMODE(output_stat.st_mode) != 0o444
+        or output_stat.st_nlink != 1
+    ):
+        raise contracts.ContractError(
+            "owner-review presentation output is not a sealed publication"
+        )
+    _require_unchanged_guard(
+        output_guard,
+        output_path,
+        "owner-review presentation output video",
+    )
+    _require_unchanged_guard(
+        receipt_guard,
+        receipt_path,
+        "owner-review presentation receipt",
+    )
+    canonical_evidence = {
+        "presentation_receipt": raw_record,
+        "expected_presentation_receipt_file_sha256": expected_receipt_sha256,
+        "presentation_receipt_sha256": receipt_payload["receipt_sha256"],
+        "output_video": copy.deepcopy(receipt_payload["output"]),
+    }
+    if value != canonical_evidence:
+        raise contracts.ContractError(
+            "decision freeze receipt presentation evidence is non-canonical"
+        )
+    return canonical_evidence, receipt_payload, output_path
+
+
 def load_animation_decision_freeze_receipt(
     path: Path,
     *,
@@ -2194,7 +2372,7 @@ def load_animation_decision_freeze_receipt(
     decision_path: Path,
     decision_payload: Mapping[str, Any],
     authenticated_review_artifact_count: int,
-) -> tuple[Path, dict[str, Any]]:
+) -> tuple[Path, dict[str, Any], dict[str, Any]]:
     expected_file_sha256 = _require_sha256(
         expected_file_sha256,
         "expected animation decision freeze receipt file sha256",
@@ -2206,6 +2384,14 @@ def load_animation_decision_freeze_receipt(
             "expected SHA-256"
         )
     payload = _load_finite_json(path, "animation decision freeze receipt")
+    if (
+        isinstance(payload, Mapping)
+        and payload.get("schema") in LEGACY_DECISION_FREEZE_RECEIPT_SCHEMAS
+    ):
+        raise contracts.ContractError(
+            "legacy v1 animation decision freeze receipts are audit-only and "
+            "cannot authorize UE import preparation v3"
+        )
     instruction = payload.get("user_instruction_binding")
     authority = payload.get("user_instruction_authority")
     review_sha256 = _sha256_file(review_path)
@@ -2222,7 +2408,13 @@ def load_animation_decision_freeze_receipt(
         != source_registry_validation_mode
         or payload.get("expected_animation_review_file_sha256") != review_sha256
         or not isinstance(instruction, Mapping)
-        or set(instruction) != {"decision", "review_sha256", "all_six_checks_explicit"}
+        or set(instruction)
+        != {
+            "decision",
+            "review_sha256",
+            "all_six_checks_explicit",
+            "presentation_receipt_file_sha256",
+        }
         or instruction.get("decision") != "approved_for_ue_apartment"
         or instruction.get("review_sha256") != review_sha256
         or instruction.get("all_six_checks_explicit") is not True
@@ -2273,10 +2465,328 @@ def load_animation_decision_freeze_receipt(
         raise contracts.ContractError(
             "animation decision freeze receipt decision identity changed"
         )
-    return path, payload
+    presentation_evidence, _presentation_payload, _output_video = (
+        load_presentation_evidence(
+            payload.get("presentation_evidence"),
+            review_path=review_path,
+        )
+    )
+    if (
+        instruction.get("presentation_receipt_file_sha256")
+        != presentation_evidence["expected_presentation_receipt_file_sha256"]
+    ):
+        raise contracts.ContractError(
+            "animation decision freeze receipt presentation instruction binding changed"
+        )
+    return path, payload, presentation_evidence
 
 
-def prepare_import(
+def _directory_guard(path: Path, label: str) -> dict[str, Any]:
+    literal, _bridge_used = _uses_only_exact_tmp_bridge(path, label)
+    resolved = literal.resolve()
+    current = os.stat(resolved, follow_symlinks=False)
+    if not stat.S_ISDIR(current.st_mode):
+        raise contracts.ContractError(f"{label} is not a directory")
+    return {
+        "path": str(resolved),
+        "device": current.st_dev,
+        "inode": current.st_ino,
+        "mode": stat.S_IMODE(current.st_mode),
+        "mtime_ns": current.st_mtime_ns,
+        "ctime_ns": current.st_ctime_ns,
+    }
+
+
+def _require_owned_directory_identity(
+    path: Path,
+    expected: tuple[int, int],
+    label: str,
+) -> None:
+    try:
+        current = os.stat(path, follow_symlinks=False)
+    except FileNotFoundError as error:
+        raise contracts.ContractError(f"{label} disappeared") from error
+    if (
+        path.is_symlink()
+        or not stat.S_ISDIR(current.st_mode)
+        or (current.st_dev, current.st_ino) != expected
+    ):
+        raise contracts.ContractError(f"{label} identity changed")
+
+
+def _open_directory_no_follow(path: Path, label: str) -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise contracts.ContractError(f"cannot open stable {label}: {path}") from error
+    current = os.fstat(descriptor)
+    if not stat.S_ISDIR(current.st_mode):
+        os.close(descriptor)
+        raise contracts.ContractError(f"{label} is not a directory")
+    return descriptor
+
+
+def _require_path_matches_directory_fd(path: Path, descriptor: int, label: str) -> None:
+    try:
+        resolved = presentation.resolve_directory(path, label)
+    except presentation.PresentationContractError as error:
+        raise contracts.ContractError(
+            f"{label} no longer names the held directory or satisfies the "
+            f"path policy: {error}"
+        ) from error
+    path_stat = os.stat(resolved, follow_symlinks=False)
+    descriptor_stat = os.fstat(descriptor)
+    if (
+        resolved != path
+        or not stat.S_ISDIR(path_stat.st_mode)
+        or (path_stat.st_dev, path_stat.st_ino)
+        != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+    ):
+        raise contracts.ContractError(f"{label} no longer names the held directory")
+
+
+def _create_staging_at(
+    parent_fd: int, output_name: str
+) -> tuple[str, int, tuple[int, int]]:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    for _attempt in range(128):
+        name = f".{output_name}.{secrets.token_hex(12)}.staging"
+        try:
+            os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            continue
+        try:
+            descriptor = os.open(name, flags, dir_fd=parent_fd)
+        except Exception:
+            try:
+                os.rmdir(name, dir_fd=parent_fd)
+            except OSError:
+                pass
+            raise
+        current = os.fstat(descriptor)
+        return name, descriptor, (current.st_dev, current.st_ino)
+    raise contracts.ContractError(
+        "could not allocate a unique preparation staging name"
+    )
+
+
+def _write_json_at(directory_fd: int, name: str, value: Any) -> dict[str, Any]:
+    encoded = (
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n"
+    ).encode("utf-8")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(name, flags, 0o600, dir_fd=directory_fd)
+    except FileExistsError as error:
+        raise contracts.ContractError(
+            f"refusing to replace preparation staging artifact: {name}"
+        ) from error
+    try:
+        with os.fdopen(descriptor, "wb", closefd=False) as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        os.close(descriptor)
+    return {
+        "path": name,
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "size_bytes": len(encoded),
+    }
+
+
+def _seal_staging_at(directory_fd: int, expected_names: frozenset[str]) -> None:
+    if set(os.listdir(directory_fd)) != expected_names:
+        raise contracts.ContractError(
+            "UE import preparation staging artifact set changed"
+        )
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    for name in sorted(expected_names):
+        descriptor = os.open(name, flags, dir_fd=directory_fd)
+        try:
+            current = os.fstat(descriptor)
+            if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
+                raise contracts.ContractError(
+                    f"UE import preparation staging artifact is unsafe: {name}"
+                )
+            os.fsync(descriptor)
+            os.fchmod(descriptor, 0o444)
+        finally:
+            os.close(descriptor)
+    os.fchmod(directory_fd, 0o555)
+    os.fsync(directory_fd)
+
+
+def _require_staging_records_at(
+    directory_fd: int,
+    expected_records: Mapping[str, Mapping[str, Any]],
+) -> None:
+    if set(os.listdir(directory_fd)) != set(expected_records):
+        raise contracts.ContractError(
+            "UE import preparation staging artifact set changed before publication"
+        )
+    directory_stat = os.fstat(directory_fd)
+    if (
+        not stat.S_ISDIR(directory_stat.st_mode)
+        or stat.S_IMODE(directory_stat.st_mode) != 0o555
+    ):
+        raise contracts.ContractError(
+            "UE import preparation staging directory seal changed"
+        )
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    for name, expected in sorted(expected_records.items()):
+        descriptor = os.open(name, flags, dir_fd=directory_fd)
+        try:
+            before = os.fstat(descriptor)
+            chunks = []
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            after = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        guard_fields = (
+            "st_dev",
+            "st_ino",
+            "st_mode",
+            "st_nlink",
+            "st_size",
+            "st_mtime_ns",
+            "st_ctime_ns",
+        )
+        if (
+            any(
+                getattr(before, field) != getattr(after, field)
+                for field in guard_fields
+            )
+            or not stat.S_ISREG(after.st_mode)
+            or stat.S_IMODE(after.st_mode) != 0o444
+            or after.st_nlink != 1
+        ):
+            raise contracts.ContractError(
+                f"UE import preparation staging artifact changed: {name}"
+            )
+        encoded = b"".join(chunks)
+        observed = {
+            "path": name,
+            "sha256": hashlib.sha256(encoded).hexdigest(),
+            "size_bytes": len(encoded),
+        }
+        if observed != expected:
+            raise contracts.ContractError(
+                f"UE import preparation staging artifact bytes changed: {name}"
+            )
+
+
+def _atomic_publish_no_replace_at(
+    parent_fd: int,
+    staging_name: str,
+    output_name: str,
+    *,
+    staging_fd: int | None = None,
+    expected_records: Mapping[str, Mapping[str, Any]] | None = None,
+) -> None:
+    try:
+        renameat2 = getattr(ctypes.CDLL(None, use_errno=True), "renameat2")
+    except AttributeError as error:
+        raise contracts.ContractError(
+            "atomic no-replace UE preparation publication is unavailable"
+        ) from error
+    renameat2.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    renameat2.restype = ctypes.c_int
+    if staging_fd is not None or expected_records is not None:
+        if staging_fd is None or expected_records is None:
+            raise contracts.ContractError(
+                "staging descriptor and records must be supplied together"
+            )
+        _require_staging_records_at(staging_fd, expected_records)
+    result = renameat2(
+        parent_fd,
+        os.fsencode(staging_name),
+        parent_fd,
+        os.fsencode(output_name),
+        1,
+    )
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number == errno.EEXIST:
+        raise contracts.ContractError(
+            f"refusing to replace UE import preparation output: {output_name}"
+        )
+    if error_number in {errno.ENOSYS, errno.EINVAL, errno.ENOTSUP}:
+        raise contracts.ContractError(
+            "atomic no-replace UE preparation publication is unsupported"
+        )
+    raise OSError(error_number, os.strerror(error_number), output_name)
+
+
+def _remove_owned_staging_at(
+    parent_fd: int,
+    name: str,
+    identity: tuple[int, int],
+    allowed_names: frozenset[str],
+) -> bool:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        directory_fd = os.open(name, flags, dir_fd=parent_fd)
+    except (FileNotFoundError, NotADirectoryError, OSError):
+        return False
+    try:
+        current = os.fstat(directory_fd)
+        if (current.st_dev, current.st_ino) != identity:
+            return False
+        children = set(os.listdir(directory_fd))
+        if not children.issubset(allowed_names):
+            return False
+        os.fchmod(directory_fd, 0o700)
+        for child in sorted(children):
+            child_stat = os.stat(
+                child,
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+            if stat.S_ISDIR(child_stat.st_mode):
+                return False
+            os.unlink(child, dir_fd=directory_fd)
+    finally:
+        os.close(directory_fd)
+    try:
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return True
+    if (
+        not stat.S_ISDIR(current.st_mode)
+        or (current.st_dev, current.st_ino) != identity
+    ):
+        return False
+    os.rmdir(name, dir_fd=parent_fd)
+    return True
+
+
+def _authenticate_import_authority(
     *,
     source_registry_manifest_path: Path,
     expected_source_registry_sha256: str,
@@ -2286,16 +2796,8 @@ def prepare_import(
     expected_animation_decision_sha256: str,
     animation_decision_freeze_receipt_path: Path,
     expected_animation_decision_freeze_receipt_sha256: str,
-    output_root: Path,
-    artifact_roots: Mapping[str, Path] | None = None,
-) -> Path:
-    roots = {
-        name: _uses_only_exact_tmp_bridge(
-            Path(path),
-            f"artifact root {name}",
-        )[0]
-        for name, path in (artifact_roots or DEFAULT_ARTIFACT_ROOTS).items()
-    }
+    roots: Mapping[str, Path],
+) -> dict[str, Any]:
     (
         source_registry_path,
         source_registry_payload,
@@ -2325,8 +2827,9 @@ def prepare_import(
     )
     if review.get("schema") != BRANCHED_GENERATED_REVIEW_SCHEMA:
         raise contracts.ContractError(
-            "UE import preparation requires a v4 animation review with "
-            "branch and render/encode receipt lineage; legacy v3 is audit-only"
+            "UE import preparation v3 requires a v4 animation review with "
+            "branch, render/encode lineage, and owner-review presentation "
+            "evidence; legacy v3 is audit-only"
         )
     decision_path, decision = load_animation_decision(
         animation_decision_path,
@@ -2335,9 +2838,13 @@ def prepare_import(
         review_path=review_path,
         review_payload=review,
     )
-    freeze_receipt_path, freeze_receipt = load_animation_decision_freeze_receipt(
+    (
+        freeze_receipt_path,
+        freeze_receipt,
+        presentation_evidence,
+    ) = load_animation_decision_freeze_receipt(
         animation_decision_freeze_receipt_path,
-        expected_file_sha256=(expected_animation_decision_freeze_receipt_sha256),
+        expected_file_sha256=expected_animation_decision_freeze_receipt_sha256,
         source_registry_path=source_registry_path,
         expected_source_registry_sha256=expected_source_registry_sha256,
         source_registry_validation_mode=source_registry_validation_mode,
@@ -2347,16 +2854,140 @@ def prepare_import(
         decision_payload=decision,
         authenticated_review_artifact_count=len(review_artifacts),
     )
+    guarded_paths = {
+        source_registry_path,
+        source_path,
+        review_path,
+        decision_path,
+        freeze_receipt_path,
+        animated_glb,
+        *source_artifacts.values(),
+        *review_artifacts.values(),
+        Path(presentation_evidence["presentation_receipt"]["path"]),
+        Path(presentation_evidence["output_video"]["path"]),
+    }
+    file_guards = {
+        str(path): _file_guard(path, f"authority artifact {path.name}")
+        for path in sorted(guarded_paths, key=str)
+    }
+    presentation_root = Path(
+        presentation_evidence["presentation_receipt"]["path"]
+    ).parent
+    return {
+        "source_registry_path": source_registry_path,
+        "source_registry_payload": source_registry_payload,
+        "source_request": source_request,
+        "source_profile": source_profile,
+        "source_registry_validation_mode": source_registry_validation_mode,
+        "source_path": source_path,
+        "source_asset": source_asset,
+        "source_artifacts": source_artifacts,
+        "review_path": review_path,
+        "review": review,
+        "animated_glb": animated_glb,
+        "review_artifacts": review_artifacts,
+        "decision_path": decision_path,
+        "decision": decision,
+        "freeze_receipt_path": freeze_receipt_path,
+        "freeze_receipt": freeze_receipt,
+        "presentation_evidence": presentation_evidence,
+        "file_guards": file_guards,
+        "presentation_directory_guard": _directory_guard(
+            presentation_root,
+            "owner-review presentation directory",
+        ),
+    }
+
+
+def prepare_import(
+    *,
+    source_registry_manifest_path: Path,
+    expected_source_registry_sha256: str,
+    source_asset_path: Path,
+    animation_review_path: Path,
+    animation_decision_path: Path,
+    expected_animation_decision_sha256: str,
+    animation_decision_freeze_receipt_path: Path,
+    expected_animation_decision_freeze_receipt_sha256: str,
+    output_root: Path,
+    artifact_roots: Mapping[str, Path] | None = None,
+) -> Path:
+    roots = {
+        name: _uses_only_exact_tmp_bridge(
+            Path(path),
+            f"artifact root {name}",
+        )[0]
+        for name, path in (artifact_roots or DEFAULT_ARTIFACT_ROOTS).items()
+    }
+    authority_arguments = {
+        "source_registry_manifest_path": source_registry_manifest_path,
+        "expected_source_registry_sha256": expected_source_registry_sha256,
+        "source_asset_path": source_asset_path,
+        "animation_review_path": animation_review_path,
+        "animation_decision_path": animation_decision_path,
+        "expected_animation_decision_sha256": expected_animation_decision_sha256,
+        "animation_decision_freeze_receipt_path": (
+            animation_decision_freeze_receipt_path
+        ),
+        "expected_animation_decision_freeze_receipt_sha256": (
+            expected_animation_decision_freeze_receipt_sha256
+        ),
+        "roots": roots,
+    }
+    authority = _authenticate_import_authority(**authority_arguments)
+    source_registry_path = authority["source_registry_path"]
+    source_registry_payload = authority["source_registry_payload"]
+    source_registry_validation_mode = authority["source_registry_validation_mode"]
+    source_path = authority["source_path"]
+    source_asset = authority["source_asset"]
+    source_artifacts = authority["source_artifacts"]
+    review_path = authority["review_path"]
+    review = authority["review"]
+    animated_glb = authority["animated_glb"]
+    review_artifacts = authority["review_artifacts"]
+    decision_path = authority["decision_path"]
+    decision = authority["decision"]
+    freeze_receipt_path = authority["freeze_receipt_path"]
+    freeze_receipt = authority["freeze_receipt"]
+    presentation_evidence = authority["presentation_evidence"]
 
     output_root = _new_output_path(Path(output_root), "output")
     output_root.parent.mkdir(parents=True, exist_ok=True)
-    _new_output_path(output_root, "output")
-    staging = Path(
-        tempfile.mkdtemp(
-            prefix=f".{output_root.name}.", suffix=".staging", dir=output_root.parent
-        )
+    output_parent_literal, _bridge_used = _uses_only_exact_tmp_bridge(
+        output_root.parent,
+        "output parent",
     )
+    output_parent = output_parent_literal.resolve()
+    if not output_parent.is_dir() or output_parent.is_symlink():
+        raise contracts.ContractError("output parent is missing or unsafe")
+    output_root = output_parent / output_root.name
+    _new_output_path(output_root, "output")
+    parent_fd = _open_directory_no_follow(
+        output_parent,
+        "UE import preparation output parent",
+    )
+    staging_fd = -1
+    staging_name = ""
+    staging_identity = (0, 0)
+    expected_staging_names = frozenset(
+        {
+            "ue_import_jobs.json",
+            "ue_import_preparation_manifest.json",
+        }
+    )
+    published = False
+    publication_path_verified = False
     try:
+        _require_path_matches_directory_fd(
+            output_parent,
+            parent_fd,
+            "UE import preparation output parent",
+        )
+        staging_name, staging_fd, staging_identity = _create_staging_at(
+            parent_fd,
+            output_root.name,
+        )
+        output_parent_guard = _directory_guard(output_parent, "output parent")
         asset_id = source_asset["asset_id"]
         tag = f"pixal_{asset_id}"
         import_payload = {
@@ -2392,8 +3023,10 @@ def prepare_import(
             ),
         }
         import_payload["batch_sha256"] = _hash_without(import_payload, "batch_sha256")
-        import_path = contracts.write_json_no_replace(
-            staging / "ue_import_jobs.json", import_payload
+        import_record = _write_json_at(
+            staging_fd,
+            "ue_import_jobs.json",
+            import_payload,
         )
         manifest: dict[str, Any] = {
             "schema": SCHEMA,
@@ -2440,12 +3073,13 @@ def prepare_import(
             "animation_decision_freeze_receipt_sha256": freeze_receipt[
                 "receipt_sha256"
             ],
+            "presentation_evidence": copy.deepcopy(presentation_evidence),
             "user_instruction_authority": copy.deepcopy(
                 freeze_receipt["user_instruction_authority"]
             ),
             "reviewed_animated_glb": _absolute_record(animated_glb),
             "authenticated_review_artifact_count": len(review_artifacts),
-            "ue_import_jobs": _relative_record(import_path, staging),
+            "ue_import_jobs": import_record,
             "automatic_checks": {
                 "source_registry_and_preflight_reauthenticated": True,
                 "source_registry_matched_external_expected_sha256": True,
@@ -2461,6 +3095,7 @@ def prepare_import(
                 "all_six_animation_render_encode_receipts_reauthenticated": True,
                 "human_animation_approval_matched_external_expected_sha256": True,
                 "animation_decision_freeze_receipt_reauthenticated": True,
+                **PRESENTATION_AUTOMATIC_CHECKS,
                 "user_instruction_authority_preserved_without_cryptographic_upgrade": True,
                 "reviewed_glb_has_embedded_skin_weights_and_exact_idle_walking_actions": True,
                 "job_identity_and_attributes_copied_exactly_from_source_asset_v2": True,
@@ -2471,17 +3106,78 @@ def prepare_import(
             },
         }
         manifest["manifest_sha256"] = _hash_without(manifest, "manifest_sha256")
-        manifest_path = contracts.write_json_no_replace(
-            staging / "ue_import_preparation_manifest.json", manifest
+        manifest_record = _write_json_at(
+            staging_fd,
+            "ue_import_preparation_manifest.json",
+            manifest,
         )
-        immutable._seal_readonly_tree(staging)
-        if output_root.exists() or output_root.is_symlink():
-            raise contracts.ContractError("UE import preparation appeared concurrently")
-        os.rename(staging, output_root)
-        return output_root / manifest_path.name
+        _seal_staging_at(staging_fd, expected_staging_names)
+        staging_stat = os.fstat(staging_fd)
+        if (staging_stat.st_dev, staging_stat.st_ino) != staging_identity:
+            raise contracts.ContractError(
+                "UE import preparation staging directory identity changed"
+            )
+        final_authority = _authenticate_import_authority(**authority_arguments)
+        if final_authority != authority:
+            raise contracts.ContractError(
+                "UE import preparation authority graph changed during generation"
+            )
+        if (
+            manifest["presentation_evidence"]
+            != final_authority["presentation_evidence"]
+            or manifest["presentation_evidence"]
+            != freeze_receipt["presentation_evidence"]
+        ):
+            raise contracts.ContractError(
+                "UE import preparation presentation evidence changed during generation"
+            )
+        _require_owned_directory_identity(
+            output_parent / staging_name,
+            staging_identity,
+            "UE import preparation staging directory",
+        )
+        if _directory_guard(output_parent, "output parent") != output_parent_guard:
+            raise contracts.ContractError(
+                "UE import preparation output parent changed during generation"
+            )
+        _require_path_matches_directory_fd(
+            output_parent,
+            parent_fd,
+            "UE import preparation output parent",
+        )
+        _atomic_publish_no_replace_at(
+            parent_fd,
+            staging_name,
+            output_root.name,
+            staging_fd=staging_fd,
+            expected_records={
+                "ue_import_jobs.json": import_record,
+                "ue_import_preparation_manifest.json": manifest_record,
+            },
+        )
+        published = True
+        _require_path_matches_directory_fd(
+            output_parent,
+            parent_fd,
+            "published UE import preparation output parent",
+        )
+        publication_path_verified = True
+        os.fsync(parent_fd)
+        return output_root / "ue_import_preparation_manifest.json"
     except Exception:
-        immutable._remove_staging_tree(staging)
+        cleanup_name = output_root.name if published else staging_name
+        if staging_name and (not published or not publication_path_verified):
+            _remove_owned_staging_at(
+                parent_fd,
+                cleanup_name,
+                staging_identity,
+                expected_staging_names,
+            )
         raise
+    finally:
+        if staging_fd >= 0:
+            os.close(staging_fd)
+        os.close(parent_fd)
 
 
 def build_argument_parser() -> argparse.ArgumentParser:

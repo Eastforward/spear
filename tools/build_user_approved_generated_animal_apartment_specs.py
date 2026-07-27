@@ -5,14 +5,13 @@ from __future__ import annotations
 
 import argparse
 import copy
-from datetime import datetime, timezone
 import hashlib
 import math
 import os
-from pathlib import Path
 import re
-import shutil
-import tempfile
+import stat
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 if __package__ in (None, ""):
@@ -28,9 +27,11 @@ from tools import register_controlled_animal_source_assets as source_registry
 from tools import run_target_native_generated_quadruped_review as generated_review
 from tools.spike_rlr.animal_audio import bind_pinned_animal_audio_contract
 
-
 CONFIG_SCHEMA = "user_approved_generated_animal_apartment_config_v1"
-OUTPUT_SCHEMA = "controlled_animal_walk_idle_apartment_specs_v1"
+OUTPUT_SCHEMA = "controlled_animal_walk_idle_apartment_specs_v2"
+LEGACY_OUTPUT_SCHEMAS = frozenset({"controlled_animal_walk_idle_apartment_specs_v1"})
+APARTMENT_GATE_SCHEMA = "controlled_animal_apartment_gate_v2"
+LEGACY_APARTMENT_GATE_SCHEMAS = frozenset({"controlled_animal_apartment_gate_v1"})
 PHYSICAL_MEASUREMENT = "shoulder_height_cm"
 RIG_SEMANTIC_EVIDENCE_SCHEMA = "controlled_animal_rig_semantic_evidence_v1"
 LEGACY_UNGATED_GENERATED_REVIEW_SCHEMA = (
@@ -60,11 +61,19 @@ PREPARATION_SCHEMA = preparation_bridge.SCHEMA
 LEGACY_PREPARATION_SCHEMA = (
     "avengine_user_approved_generated_animal_ue_import_preparation_v1"
 )
+LEGACY_PREPARATION_SCHEMAS = preparation_bridge.LEGACY_PREPARATION_SCHEMAS
 DECISION_FREEZE_RECEIPT_SCHEMA = preparation_bridge.DECISION_FREEZE_RECEIPT_SCHEMA
+LEGACY_DECISION_FREEZE_RECEIPT_SCHEMAS = (
+    preparation_bridge.LEGACY_DECISION_FREEZE_RECEIPT_SCHEMAS
+)
 USER_INSTRUCTION_AUTHORITY = copy.deepcopy(
     preparation_bridge.USER_INSTRUCTION_AUTHORITY
 )
 DECISION_FREEZE_RECEIPT_FIELDS = preparation_bridge.DECISION_FREEZE_RECEIPT_FIELDS
+PRESENTATION_EVIDENCE_FIELDS = preparation_bridge.PRESENTATION_EVIDENCE_FIELDS
+PRESENTATION_AUTOMATIC_CHECKS = copy.deepcopy(
+    preparation_bridge.PRESENTATION_AUTOMATIC_CHECKS
+)
 SOURCE_REGISTRY_VALIDATION_MODES = frozenset(
     {"frozen_historical_preflight_v1", "current_exact_rebuild"}
 )
@@ -196,6 +205,7 @@ PREPARATION_FIELDS = frozenset(
         "animation_decision_freeze_receipt",
         "expected_animation_decision_freeze_receipt_file_sha256",
         "animation_decision_freeze_receipt_sha256",
+        "presentation_evidence",
         "user_instruction_authority",
         "reviewed_animated_glb",
         "authenticated_review_artifact_count",
@@ -220,6 +230,7 @@ PREPARATION_AUTOMATIC_CHECK_FIELDS = frozenset(
         "all_six_animation_render_encode_receipts_reauthenticated",
         "human_animation_approval_matched_external_expected_sha256",
         "animation_decision_freeze_receipt_reauthenticated",
+        *PRESENTATION_AUTOMATIC_CHECKS,
         "user_instruction_authority_preserved_without_cryptographic_upgrade",
         "reviewed_glb_has_embedded_skin_weights_and_exact_idle_walking_actions",
         "job_identity_and_attributes_copied_exactly_from_source_asset_v2",
@@ -261,6 +272,18 @@ TARGET_PHYSICAL_PROFILE_FIELDS = frozenset(
         "scale_ratio",
         "tolerance_cm",
         "target_value_cm",
+    }
+)
+APARTMENT_SPEC_FILE_NAMES = frozenset(
+    {
+        "camera_pass_table_loop_walking.json",
+        "camera_pass_table_loop_idle.json",
+    }
+)
+APARTMENT_STAGING_ROOT_NAMES = frozenset(
+    {
+        "specs",
+        "spec_manifest.json",
     }
 )
 
@@ -367,6 +390,566 @@ def _authenticate_external_file(
     if _sha256(path) != expected_sha256:
         raise contracts.ContractError(f"external {label} SHA-256 pin mismatched")
     return path
+
+
+def _file_guard(path: Path, label: str) -> dict[str, Any]:
+    path = _direct_file(path, label)
+    current = os.stat(path, follow_symlinks=False)
+    return {
+        "path": str(path),
+        "device": current.st_dev,
+        "inode": current.st_ino,
+        "mode": stat.S_IMODE(current.st_mode),
+        "link_count": current.st_nlink,
+        "size_bytes": current.st_size,
+        "mtime_ns": current.st_mtime_ns,
+        "ctime_ns": current.st_ctime_ns,
+    }
+
+
+def _directory_guard(path: Path, label: str) -> dict[str, Any]:
+    literal, _bridge_used = _uses_only_exact_tmp_bridge(path, label)
+    resolved = literal.resolve()
+    current = os.stat(resolved, follow_symlinks=False)
+    if not stat.S_ISDIR(current.st_mode):
+        raise contracts.ContractError(f"{label} is not a directory")
+    return {
+        "path": str(resolved),
+        "device": current.st_dev,
+        "inode": current.st_ino,
+        "mode": stat.S_IMODE(current.st_mode),
+        "mtime_ns": current.st_mtime_ns,
+        "ctime_ns": current.st_ctime_ns,
+    }
+
+
+def _open_output_parent(
+    output_root: Path,
+) -> tuple[Path, Path, int, tuple[int, int]]:
+    output_root = _new_output_path(Path(output_root), "output")
+    output_root.parent.mkdir(parents=True, exist_ok=True)
+    output_root = _new_output_path(output_root, "output")
+    lexical_parent, _bridge_used = _uses_only_exact_tmp_bridge(
+        output_root.parent,
+        "Apartment output parent",
+    )
+    try:
+        physical_parent = lexical_parent.resolve(strict=True)
+    except OSError as error:
+        raise contracts.ContractError("Apartment output parent is missing") from error
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        parent_fd = os.open(physical_parent, flags)
+    except OSError as error:
+        raise contracts.ContractError("cannot hold Apartment output parent") from error
+    current = os.fstat(parent_fd)
+    if not stat.S_ISDIR(current.st_mode):
+        os.close(parent_fd)
+        raise contracts.ContractError("Apartment output parent is not a directory")
+    identity = (current.st_dev, current.st_ino)
+    try:
+        _require_parent_path_matches_fd(
+            lexical_parent,
+            physical_parent,
+            parent_fd,
+            identity,
+        )
+        try:
+            os.stat(
+                output_root.name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            pass
+        else:
+            raise contracts.ContractError(f"refusing to replace output: {output_root}")
+    except Exception:
+        os.close(parent_fd)
+        raise
+    return physical_parent / output_root.name, lexical_parent, parent_fd, identity
+
+
+def _require_parent_path_matches_fd(
+    lexical_parent: Path,
+    physical_parent: Path,
+    parent_fd: int,
+    expected_identity: tuple[int, int],
+) -> None:
+    current_literal, _bridge_used = _uses_only_exact_tmp_bridge(
+        lexical_parent,
+        "Apartment output parent",
+    )
+    try:
+        current_physical = current_literal.resolve(strict=True)
+        path_stat = os.stat(current_physical, follow_symlinks=False)
+    except OSError as error:
+        raise contracts.ContractError("Apartment output parent disappeared") from error
+    held = os.fstat(parent_fd)
+    if (
+        current_physical != physical_parent
+        or not stat.S_ISDIR(path_stat.st_mode)
+        or (path_stat.st_dev, path_stat.st_ino) != expected_identity
+        or (held.st_dev, held.st_ino) != expected_identity
+    ):
+        raise contracts.ContractError(
+            "Apartment output parent no longer names the held directory"
+        )
+
+
+def _create_staging_at(
+    parent_fd: int,
+    output_name: str,
+) -> tuple[str, int, tuple[int, int]]:
+    return preparation_bridge._create_staging_at(parent_fd, output_name)
+
+
+def _create_directory_at(
+    parent_fd: int,
+    name: str,
+    label: str,
+) -> tuple[int, tuple[int, int]]:
+    if Path(name).name != name or name in {"", ".", ".."}:
+        raise contracts.ContractError(f"{label} name is unsafe")
+    try:
+        os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+    except FileExistsError as error:
+        raise contracts.ContractError(f"refusing to replace {label}: {name}") from error
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_fd)
+    except Exception:
+        try:
+            os.rmdir(name, dir_fd=parent_fd)
+        except OSError:
+            pass
+        raise
+    current = os.fstat(descriptor)
+    if not stat.S_ISDIR(current.st_mode):
+        os.close(descriptor)
+        raise contracts.ContractError(f"{label} is not a directory")
+    return descriptor, (current.st_dev, current.st_ino)
+
+
+def _write_json_at(
+    directory_fd: int,
+    name: str,
+    value: Any,
+) -> dict[str, Any]:
+    return preparation_bridge._write_json_at(directory_fd, name, value)
+
+
+def _require_directory_entry_identity(
+    parent_fd: int,
+    name: str,
+    directory_fd: int,
+    identity: tuple[int, int],
+    label: str,
+) -> None:
+    try:
+        entry = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError as error:
+        raise contracts.ContractError(f"{label} disappeared") from error
+    held = os.fstat(directory_fd)
+    if (
+        not stat.S_ISDIR(entry.st_mode)
+        or (entry.st_dev, entry.st_ino) != identity
+        or (held.st_dev, held.st_ino) != identity
+    ):
+        raise contracts.ContractError(f"{label} identity changed")
+
+
+def _read_regular_file_record_at(
+    directory_fd: int,
+    name: str,
+    label: str,
+) -> tuple[dict[str, Any], os.stat_result]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(name, flags, dir_fd=directory_fd)
+    except OSError as error:
+        raise contracts.ContractError(
+            f"{label} artifact cannot be opened safely: {name}"
+        ) from error
+    try:
+        before = os.fstat(descriptor)
+        chunks = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(descriptor)
+        guarded_fields = (
+            "st_dev",
+            "st_ino",
+            "st_mode",
+            "st_nlink",
+            "st_size",
+            "st_mtime_ns",
+            "st_ctime_ns",
+        )
+        if (
+            any(
+                getattr(before, field) != getattr(after, field)
+                for field in guarded_fields
+            )
+            or not stat.S_ISREG(after.st_mode)
+            or after.st_nlink != 1
+        ):
+            raise contracts.ContractError(
+                f"{label} artifact is unsafe or changed: {name}"
+            )
+        encoded = b"".join(chunks)
+        return (
+            {
+                "path": name,
+                "sha256": hashlib.sha256(encoded).hexdigest(),
+                "size_bytes": len(encoded),
+            },
+            after,
+        )
+    finally:
+        os.close(descriptor)
+
+
+def _seal_known_files_at(
+    directory_fd: int,
+    expected_records: Mapping[str, Mapping[str, Any]],
+    label: str,
+) -> None:
+    if set(os.listdir(directory_fd)) != set(expected_records):
+        raise contracts.ContractError(f"{label} artifact set changed")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    for name, expected_record in sorted(expected_records.items()):
+        observed, _current = _read_regular_file_record_at(
+            directory_fd,
+            name,
+            label,
+        )
+        if observed != expected_record:
+            raise contracts.ContractError(f"{label} artifact bytes changed: {name}")
+        descriptor = os.open(name, flags, dir_fd=directory_fd)
+        try:
+            os.fsync(descriptor)
+            os.fchmod(descriptor, 0o444)
+        finally:
+            os.close(descriptor)
+    os.fchmod(directory_fd, 0o555)
+    os.fsync(directory_fd)
+
+
+def _seal_apartment_staging_at(
+    staging_fd: int,
+    specs_fd: int,
+    specs_identity: tuple[int, int],
+    tag: str,
+    tag_fd: int,
+    tag_identity: tuple[int, int],
+    spec_records: Mapping[str, Mapping[str, Any]],
+    manifest_record: Mapping[str, Any],
+) -> None:
+    _require_directory_entry_identity(
+        staging_fd,
+        "specs",
+        specs_fd,
+        specs_identity,
+        "Apartment specs staging directory",
+    )
+    _require_directory_entry_identity(
+        specs_fd,
+        tag,
+        tag_fd,
+        tag_identity,
+        "Apartment tag staging directory",
+    )
+    _seal_known_files_at(
+        tag_fd,
+        spec_records,
+        "Apartment spec staging",
+    )
+    if set(os.listdir(specs_fd)) != {tag}:
+        raise contracts.ContractError("Apartment specs staging directory set changed")
+    os.fchmod(specs_fd, 0o555)
+    os.fsync(specs_fd)
+    if set(os.listdir(staging_fd)) != APARTMENT_STAGING_ROOT_NAMES:
+        raise contracts.ContractError("Apartment staging root artifact set changed")
+    observed_manifest, _manifest_stat = _read_regular_file_record_at(
+        staging_fd,
+        "spec_manifest.json",
+        "Apartment manifest staging",
+    )
+    if observed_manifest != manifest_record:
+        raise contracts.ContractError(
+            "Apartment manifest staging artifact bytes changed"
+        )
+    manifest_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    manifest_flags |= getattr(os, "O_NOFOLLOW", 0)
+    manifest_fd = os.open(
+        "spec_manifest.json",
+        manifest_flags,
+        dir_fd=staging_fd,
+    )
+    try:
+        os.fsync(manifest_fd)
+        os.fchmod(manifest_fd, 0o444)
+    finally:
+        os.close(manifest_fd)
+    os.fchmod(staging_fd, 0o555)
+    os.fsync(staging_fd)
+
+
+def _require_apartment_staging_at(
+    *,
+    staging_fd: int,
+    specs_fd: int,
+    specs_identity: tuple[int, int],
+    tag: str,
+    tag_fd: int,
+    tag_identity: tuple[int, int],
+    spec_records: Mapping[str, Mapping[str, Any]],
+    manifest_record: Mapping[str, Any],
+) -> None:
+    _require_directory_entry_identity(
+        staging_fd,
+        "specs",
+        specs_fd,
+        specs_identity,
+        "Apartment specs staging directory",
+    )
+    _require_directory_entry_identity(
+        specs_fd,
+        tag,
+        tag_fd,
+        tag_identity,
+        "Apartment tag staging directory",
+    )
+    for directory_fd, expected_mode, label in (
+        (staging_fd, 0o555, "Apartment staging root"),
+        (specs_fd, 0o555, "Apartment specs staging"),
+        (tag_fd, 0o555, "Apartment tag staging"),
+    ):
+        current = os.fstat(directory_fd)
+        if (
+            not stat.S_ISDIR(current.st_mode)
+            or stat.S_IMODE(current.st_mode) != expected_mode
+        ):
+            raise contracts.ContractError(f"{label} seal changed")
+    if set(os.listdir(staging_fd)) != APARTMENT_STAGING_ROOT_NAMES:
+        raise contracts.ContractError(
+            "Apartment staging root artifact set changed before publication"
+        )
+    if set(os.listdir(specs_fd)) != {tag}:
+        raise contracts.ContractError(
+            "Apartment specs staging directory set changed before publication"
+        )
+    if set(os.listdir(tag_fd)) != set(spec_records):
+        raise contracts.ContractError(
+            "Apartment spec staging artifact set changed before publication"
+        )
+    for name, expected_record in sorted(spec_records.items()):
+        observed, current = _read_regular_file_record_at(
+            tag_fd,
+            name,
+            "Apartment spec staging",
+        )
+        if observed != expected_record or stat.S_IMODE(current.st_mode) != 0o444:
+            raise contracts.ContractError(
+                f"Apartment spec staging artifact changed: {name}"
+            )
+    observed_manifest, manifest_stat = _read_regular_file_record_at(
+        staging_fd,
+        "spec_manifest.json",
+        "Apartment manifest staging",
+    )
+    if (
+        observed_manifest != manifest_record
+        or stat.S_IMODE(manifest_stat.st_mode) != 0o444
+    ):
+        raise contracts.ContractError(
+            "Apartment manifest staging artifact changed before publication"
+        )
+
+
+def _atomic_publish_no_replace_at(
+    parent_fd: int,
+    staging_name: str,
+    output_name: str,
+    *,
+    lexical_parent: Path,
+    physical_parent: Path,
+    parent_identity: tuple[int, int],
+    staging_fd: int,
+    staging_identity: tuple[int, int],
+    specs_fd: int,
+    specs_identity: tuple[int, int],
+    tag: str,
+    tag_fd: int,
+    tag_identity: tuple[int, int],
+    spec_records: Mapping[str, Mapping[str, Any]],
+    manifest_record: Mapping[str, Any],
+) -> None:
+    _require_parent_path_matches_fd(
+        lexical_parent,
+        physical_parent,
+        parent_fd,
+        parent_identity,
+    )
+    _require_directory_entry_identity(
+        parent_fd,
+        staging_name,
+        staging_fd,
+        staging_identity,
+        "Apartment staging directory",
+    )
+    _require_apartment_staging_at(
+        staging_fd=staging_fd,
+        specs_fd=specs_fd,
+        specs_identity=specs_identity,
+        tag=tag,
+        tag_fd=tag_fd,
+        tag_identity=tag_identity,
+        spec_records=spec_records,
+        manifest_record=manifest_record,
+    )
+    try:
+        os.stat(
+            output_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        pass
+    else:
+        raise contracts.ContractError(
+            f"refusing to replace Apartment output: {output_name}"
+        )
+    preparation_bridge._atomic_publish_no_replace_at(
+        parent_fd,
+        staging_name,
+        output_name,
+    )
+
+
+def _remove_owned_apartment_staging_at(
+    *,
+    parent_fd: int,
+    staging_fd: int,
+    staging_name: str,
+    staging_identity: tuple[int, int],
+    specs_fd: int,
+    specs_identity: tuple[int, int],
+    tag: str,
+    tag_fd: int,
+    tag_identity: tuple[int, int],
+) -> bool:
+    held_staging = os.fstat(staging_fd)
+    try:
+        staging_entry = os.stat(
+            staging_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return False
+    if (
+        not stat.S_ISDIR(staging_entry.st_mode)
+        or (staging_entry.st_dev, staging_entry.st_ino) != staging_identity
+        or (held_staging.st_dev, held_staging.st_ino) != staging_identity
+    ):
+        return False
+
+    root_children = set(os.listdir(staging_fd))
+    if not root_children.issubset(APARTMENT_STAGING_ROOT_NAMES):
+        return False
+    specs_children: set[str] = set()
+    tag_children: set[str] = set()
+    if "specs" in root_children:
+        if specs_fd < 0:
+            return False
+        try:
+            _require_directory_entry_identity(
+                staging_fd,
+                "specs",
+                specs_fd,
+                specs_identity,
+                "Apartment specs cleanup directory",
+            )
+        except contracts.ContractError:
+            return False
+        specs_children = set(os.listdir(specs_fd))
+        if not specs_children.issubset({tag}):
+            return False
+    if tag in specs_children:
+        if tag_fd < 0:
+            return False
+        try:
+            _require_directory_entry_identity(
+                specs_fd,
+                tag,
+                tag_fd,
+                tag_identity,
+                "Apartment tag cleanup directory",
+            )
+        except contracts.ContractError:
+            return False
+        tag_children = set(os.listdir(tag_fd))
+        if not tag_children.issubset(APARTMENT_SPEC_FILE_NAMES):
+            return False
+        if any(
+            stat.S_ISDIR(
+                os.stat(
+                    name,
+                    dir_fd=tag_fd,
+                    follow_symlinks=False,
+                ).st_mode
+            )
+            for name in tag_children
+        ):
+            return False
+    if "spec_manifest.json" in root_children:
+        manifest_stat = os.stat(
+            "spec_manifest.json",
+            dir_fd=staging_fd,
+            follow_symlinks=False,
+        )
+        if stat.S_ISDIR(manifest_stat.st_mode):
+            return False
+
+    os.fchmod(staging_fd, 0o700)
+    if "specs" in root_children:
+        os.fchmod(specs_fd, 0o700)
+    if tag in specs_children:
+        os.fchmod(tag_fd, 0o700)
+        for name in sorted(tag_children):
+            os.unlink(name, dir_fd=tag_fd)
+        os.fsync(tag_fd)
+        os.rmdir(tag, dir_fd=specs_fd)
+    if "specs" in root_children:
+        os.fsync(specs_fd)
+        os.rmdir("specs", dir_fd=staging_fd)
+    if "spec_manifest.json" in root_children:
+        os.unlink("spec_manifest.json", dir_fd=staging_fd)
+    os.fsync(staging_fd)
+    if os.listdir(staging_fd):
+        return False
+    current = os.stat(
+        staging_name,
+        dir_fd=parent_fd,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISDIR(current.st_mode)
+        or (current.st_dev, current.st_ino) != staging_identity
+    ):
+        return False
+    os.rmdir(staging_name, dir_fd=parent_fd)
+    os.fsync(parent_fd)
+    return True
 
 
 def _artifact(path: Path, *, published_path: Path | None = None) -> dict[str, Any]:
@@ -1102,7 +1685,7 @@ def _validate_decision_freeze_receipt(
     review_descriptor: Mapping[str, Any],
     decision_descriptor: Mapping[str, Any],
     decision: Mapping[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     _, receipt_descriptor = _validate_absolute_descriptor(
         preparation.get("animation_decision_freeze_receipt"),
         "UE import preparation animation decision freeze receipt",
@@ -1117,6 +1700,11 @@ def _validate_decision_freeze_receipt(
             "UE import preparation freeze receipt external anchor changed"
         )
     receipt = _load(receipt_path)
+    if receipt.get("schema") in LEGACY_DECISION_FREEZE_RECEIPT_SCHEMAS:
+        raise contracts.ContractError(
+            "legacy animation decision freeze receipt v1 is audit-only and "
+            "cannot authorize Apartment output"
+        )
     instruction = receipt.get("user_instruction_binding")
     authority = receipt.get("user_instruction_authority")
     if (
@@ -1132,7 +1720,13 @@ def _validate_decision_freeze_receipt(
         or authority != USER_INSTRUCTION_AUTHORITY
         or preparation.get("user_instruction_authority") != USER_INSTRUCTION_AUTHORITY
         or not isinstance(instruction, Mapping)
-        or set(instruction) != {"decision", "review_sha256", "all_six_checks_explicit"}
+        or set(instruction)
+        != {
+            "decision",
+            "review_sha256",
+            "all_six_checks_explicit",
+            "presentation_receipt_file_sha256",
+        }
         or instruction.get("decision") != "approved_for_ue_apartment"
         or instruction.get("review_sha256") != review_descriptor["sha256"]
         or instruction.get("all_six_checks_explicit") is not True
@@ -1171,7 +1765,22 @@ def _validate_decision_freeze_receipt(
         raise contracts.ContractError(
             "animation decision freeze receipt decision identity changed"
         )
-    return receipt_descriptor, receipt
+    presentation_evidence, _presentation_receipt, _output_video = (
+        preparation_bridge.load_presentation_evidence(
+            receipt.get("presentation_evidence"),
+            review_path=Path(str(review_descriptor["path"])),
+        )
+    )
+    if (
+        preparation.get("presentation_evidence") != receipt["presentation_evidence"]
+        or preparation.get("presentation_evidence") != presentation_evidence
+        or instruction.get("presentation_receipt_file_sha256")
+        != presentation_evidence["expected_presentation_receipt_file_sha256"]
+    ):
+        raise contracts.ContractError(
+            "Apartment presentation evidence cross-layer binding changed"
+        )
+    return receipt_descriptor, receipt, presentation_evidence
 
 
 def _validate_preparation_anchor(
@@ -1188,7 +1797,7 @@ def _validate_preparation_anchor(
     config: Mapping[str, Any],
     job: Mapping[str, Any],
     runtime: Path,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     preparation_path, descriptor = _validate_absolute_descriptor(
         value,
         "UE import preparation",
@@ -1204,10 +1813,10 @@ def _validate_preparation_anchor(
         "UE import preparation descriptor manifest hash",
     )
     preparation = _load(preparation_path)
-    if preparation.get("schema") == LEGACY_PREPARATION_SCHEMA:
+    if preparation.get("schema") in LEGACY_PREPARATION_SCHEMAS:
         raise contracts.ContractError(
-            "legacy UE import preparation v1 is audit-only; regenerate v2 "
-            "with an authenticated decision-freeze receipt"
+            "legacy UE import preparation v1/v2 is audit-only; regenerate v3 "
+            "with authenticated owner-review presentation evidence"
         )
     automatic_checks = preparation.get("automatic_checks")
     canonical_identity = preparation.get("canonical_identity")
@@ -1354,7 +1963,11 @@ def _validate_preparation_anchor(
         config=config,
         job=job,
     )
-    _validate_decision_freeze_receipt(
+    (
+        _receipt_descriptor,
+        freeze_receipt,
+        presentation_evidence,
+    ) = _validate_decision_freeze_receipt(
         preparation,
         receipt_path=receipt_path,
         expected_receipt_file_sha256=expected_receipt_file_sha256,
@@ -1364,7 +1977,7 @@ def _validate_preparation_anchor(
         decision_descriptor=decision_descriptor,
         decision=decision,
     )
-    return preparation
+    return preparation, freeze_receipt, presentation_evidence
 
 
 def _authenticate_formal_v2(
@@ -1380,7 +1993,13 @@ def _authenticate_formal_v2(
     expected_preparation_file_sha256: str,
     receipt_path: Path,
     expected_receipt_file_sha256: str,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+]:
     del result_path
     job_list = jobs.get("jobs")
     if (
@@ -1442,7 +2061,11 @@ def _authenticate_formal_v2(
         job=job,
         runtime=runtime,
     )
-    preparation = _validate_preparation_anchor(
+    (
+        preparation,
+        freeze_receipt,
+        presentation_evidence,
+    ) = _validate_preparation_anchor(
         result.get("preparation_manifest"),
         expected_preparation_path=preparation_path,
         expected_preparation_file_sha256=expected_preparation_file_sha256,
@@ -1553,7 +2176,13 @@ def _authenticate_formal_v2(
         raise contracts.ContractError("formal UE object readback identity changed")
     if preparation.get("animation_decision_sha256") != decision["decision_sha256"]:
         raise contracts.ContractError("formal UE preparation decision identity changed")
-    return dict(job), dict(decision)
+    return (
+        dict(job),
+        dict(decision),
+        preparation,
+        freeze_receipt,
+        presentation_evidence,
+    )
 
 
 def _authenticate_legacy_audit(
@@ -1644,7 +2273,14 @@ def _authenticate(
     receipt_path: Path | None = None,
     expected_receipt_file_sha256: str | None = None,
     allow_legacy_audit: bool = False,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+]:
     config = _load(config_path)
     jobs = _load(jobs_path)
     result = _load(result_path)
@@ -1735,7 +2371,13 @@ def _authenticate(
                 "formal v4/v2 authentication requires external preparation "
                 "and freeze-receipt anchors"
             )
-        job, decision = _authenticate_formal_v2(
+        (
+            job,
+            decision,
+            preparation,
+            freeze_receipt,
+            presentation_evidence,
+        ) = _authenticate_formal_v2(
             config=config,
             jobs=jobs,
             result=result,
@@ -1761,11 +2403,21 @@ def _authenticate(
                 "legacy UE v1 and generated review v1-v3 are audit-only; "
                 "regenerate an authenticated v4 review and v2 UE import result"
             )
+        preparation = None
+        freeze_receipt = None
+        presentation_evidence = None
     else:
         raise contracts.ContractError(
             "UE import batch/result schemas are mixed, unsupported, or downgraded"
         )
-    return config, job, decision
+    return (
+        config,
+        job,
+        decision,
+        preparation,
+        freeze_receipt,
+        presentation_evidence,
+    )
 
 
 def _build_pair(
@@ -1929,7 +2581,14 @@ def audit_inputs(
         )
     for path in (config_path, ue_jobs, ue_result, animation_decision):
         _artifact(path)
-    config, job, decision = _authenticate(
+    (
+        config,
+        job,
+        decision,
+        _preparation,
+        _freeze_receipt,
+        presentation_evidence,
+    ) = _authenticate(
         config_path=config_path.resolve(),
         jobs_path=ue_jobs.resolve(),
         result_path=ue_result.resolve(),
@@ -1951,6 +2610,7 @@ def audit_inputs(
         and result.get("schema") == FORMAL_RESULT_SCHEMA
         and review.get("schema") == FORMAL_GENERATED_REVIEW_SCHEMA
         and rig_semantic_evidence is not None
+        and presentation_evidence is not None
     )
     return {
         "status": "authenticated",
@@ -1969,7 +2629,7 @@ def audit_inputs(
     }
 
 
-def build_specs(
+def _authenticate_build_authority(
     *,
     config_path: Path,
     ue_jobs: Path,
@@ -1983,8 +2643,7 @@ def build_specs(
     animation_decision_freeze_receipt: Path,
     expected_animation_decision_freeze_receipt_sha256: str,
     template: Path,
-    output_root: Path,
-) -> Path:
+) -> dict[str, Any]:
     ue_preparation = _authenticate_external_file(
         ue_preparation,
         expected_ue_preparation_sha256,
@@ -2010,10 +2669,17 @@ def build_specs(
         expected_animation_decision_freeze_receipt_sha256,
         "animation decision freeze receipt",
     )
-    for path in (config_path, template):
-        _artifact(path)
-    config, job, decision = _authenticate(
-        config_path=config_path.resolve(),
+    config_path = _direct_file(config_path, "Apartment config")
+    template = _direct_file(template, "Apartment template")
+    (
+        config,
+        job,
+        decision,
+        preparation,
+        freeze_receipt,
+        presentation_evidence,
+    ) = _authenticate(
+        config_path=config_path,
         jobs_path=ue_jobs,
         result_path=ue_result,
         decision_path=animation_decision,
@@ -2024,20 +2690,148 @@ def build_specs(
             expected_animation_decision_freeze_receipt_sha256
         ),
     )
+    if preparation is None or freeze_receipt is None or presentation_evidence is None:
+        raise contracts.ContractError(
+            "Apartment publication requires preparation v3 and freeze receipt v2"
+        )
     rig_semantic_evidence = _authenticated_rig_semantic_evidence(decision, job)
-    preparation = _load(ue_preparation)
-    freeze_receipt = _load(animation_decision_freeze_receipt)
     template_payload = _load(template)
     _validate_template_numeric_contract(template_payload)
-    output_root = _new_output_path(output_root, "output")
-    output_root.parent.mkdir(parents=True, exist_ok=True)
-    _new_output_path(output_root, "output")
-    staging = Path(
-        tempfile.mkdtemp(
-            prefix=f".{output_root.name}.", suffix=".staging", dir=output_root.parent
-        )
-    )
+
+    guarded_paths = {
+        config_path,
+        ue_jobs,
+        ue_result,
+        animation_decision,
+        ue_preparation,
+        animation_decision_freeze_receipt,
+        template,
+        Path(str(preparation["source_asset"]["path"])),
+        Path(str(preparation["source_asset_registry"]["path"])),
+        Path(str(preparation["animation_review"]["path"])),
+        Path(str(preparation["reviewed_animated_glb"]["path"])),
+        Path(str(presentation_evidence["presentation_receipt"]["path"])),
+        Path(str(presentation_evidence["output_video"]["path"])),
+    }
+    if rig_semantic_evidence is not None:
+        guarded_paths.add(Path(str(rig_semantic_evidence["artifact"]["path"])))
+    file_guards = {
+        str(path.resolve()): _file_guard(path, f"Apartment authority {path.name}")
+        for path in sorted(guarded_paths, key=str)
+    }
+    presentation_root = Path(
+        str(presentation_evidence["presentation_receipt"]["path"])
+    ).parent
+    return {
+        "config_path": config_path,
+        "ue_jobs": ue_jobs,
+        "ue_result": ue_result,
+        "animation_decision": animation_decision,
+        "ue_preparation": ue_preparation,
+        "animation_decision_freeze_receipt": (animation_decision_freeze_receipt),
+        "template": template,
+        "config": config,
+        "job": job,
+        "decision": decision,
+        "preparation": preparation,
+        "freeze_receipt": freeze_receipt,
+        "presentation_evidence": presentation_evidence,
+        "rig_semantic_evidence": rig_semantic_evidence,
+        "template_payload": template_payload,
+        "file_guards": file_guards,
+        "presentation_directory_guard": _directory_guard(
+            presentation_root,
+            "owner-review presentation directory",
+        ),
+    }
+
+
+def build_specs(
+    *,
+    config_path: Path,
+    ue_jobs: Path,
+    ue_result: Path,
+    animation_decision: Path,
+    ue_preparation: Path,
+    expected_ue_preparation_sha256: str,
+    expected_ue_jobs_sha256: str,
+    expected_ue_result_sha256: str,
+    expected_animation_decision_sha256: str,
+    animation_decision_freeze_receipt: Path,
+    expected_animation_decision_freeze_receipt_sha256: str,
+    template: Path,
+    output_root: Path,
+) -> Path:
+    authority_arguments = {
+        "config_path": config_path,
+        "ue_jobs": ue_jobs,
+        "ue_result": ue_result,
+        "animation_decision": animation_decision,
+        "ue_preparation": ue_preparation,
+        "expected_ue_preparation_sha256": expected_ue_preparation_sha256,
+        "expected_ue_jobs_sha256": expected_ue_jobs_sha256,
+        "expected_ue_result_sha256": expected_ue_result_sha256,
+        "expected_animation_decision_sha256": (expected_animation_decision_sha256),
+        "animation_decision_freeze_receipt": (animation_decision_freeze_receipt),
+        "expected_animation_decision_freeze_receipt_sha256": (
+            expected_animation_decision_freeze_receipt_sha256
+        ),
+        "template": template,
+    }
+    authority = _authenticate_build_authority(**authority_arguments)
+    config_path = authority["config_path"]
+    ue_jobs = authority["ue_jobs"]
+    ue_result = authority["ue_result"]
+    animation_decision = authority["animation_decision"]
+    ue_preparation = authority["ue_preparation"]
+    animation_decision_freeze_receipt = authority["animation_decision_freeze_receipt"]
+    template = authority["template"]
+    config = authority["config"]
+    job = authority["job"]
+    decision = authority["decision"]
+    preparation = authority["preparation"]
+    freeze_receipt = authority["freeze_receipt"]
+    presentation_evidence = authority["presentation_evidence"]
+    rig_semantic_evidence = authority["rig_semantic_evidence"]
+    template_payload = authority["template_payload"]
+    (
+        output_root,
+        lexical_output_parent,
+        parent_fd,
+        parent_identity,
+    ) = _open_output_parent(output_root)
+    output_parent = output_root.parent
+    staging_name = ""
+    staging_fd = -1
+    staging_identity = (-1, -1)
+    specs_fd = -1
+    specs_identity = (-1, -1)
+    tag_fd = -1
+    tag_identity = (-1, -1)
+    tag = str(config["tag"])
+    published = False
     try:
+        _require_parent_path_matches_fd(
+            lexical_output_parent,
+            output_parent,
+            parent_fd,
+            parent_identity,
+        )
+        (
+            staging_name,
+            staging_fd,
+            staging_identity,
+        ) = _create_staging_at(parent_fd, output_root.name)
+        specs_fd, specs_identity = _create_directory_at(
+            staging_fd,
+            "specs",
+            "Apartment specs staging directory",
+        )
+        tag_fd, tag_identity = _create_directory_at(
+            specs_fd,
+            tag,
+            "Apartment tag staging directory",
+        )
         decision_artifact = _artifact(animation_decision)
         decision_artifact["decision_sha256"] = decision["decision_sha256"]
         preparation_artifact = _artifact(ue_preparation)
@@ -2045,7 +2839,7 @@ def build_specs(
         receipt_artifact = _artifact(animation_decision_freeze_receipt)
         receipt_artifact["receipt_sha256"] = freeze_receipt["receipt_sha256"]
         gate = {
-            "schema": "controlled_animal_apartment_gate_v1",
+            "schema": APARTMENT_GATE_SCHEMA,
             "status": "approved_for_research_candidate_apartment",
             "asset_id": config["asset_id"],
             "tag": config["tag"],
@@ -2055,29 +2849,41 @@ def build_specs(
             "ue_import_result": _artifact(ue_result),
             "ue_source_sha256": job["rigged_glb_sha256"],
             "user_instruction_authority": copy.deepcopy(USER_INSTRUCTION_AUTHORITY),
+            "presentation_evidence": copy.deepcopy(presentation_evidence),
+            "presentation_automatic_checks": copy.deepcopy(
+                PRESENTATION_AUTOMATIC_CHECKS
+            ),
             "formal_dataset_registration_authorized": False,
         }
         actions: dict[str, Any] = {}
+        spec_records: dict[str, dict[str, Any]] = {}
         for action, spec in _build_pair(
             template_payload, config=config, gate=gate
         ).items():
             motion = action.lower()
             clip_name = f"camera_pass_table_loop_{motion}"
-            relative_spec = Path("specs") / config["tag"] / f"{clip_name}.json"
-            staged_spec = staging / relative_spec
-            contracts.write_json_no_replace(staged_spec, spec)
+            spec_name = f"{clip_name}.json"
+            if spec_name not in APARTMENT_SPEC_FILE_NAMES:
+                raise contracts.ContractError(
+                    f"Apartment generated an unexpected spec name: {spec_name}"
+                )
+            spec_record = _write_json_at(tag_fd, spec_name, spec)
+            spec_records[spec_name] = spec_record
+            relative_spec = Path("specs") / tag / spec_name
             published_spec = output_root / relative_spec
+            published_spec_record = dict(spec_record)
+            published_spec_record["path"] = str(published_spec)
             actions[action] = {
                 "motion": motion,
                 "spec": str(published_spec),
-                "spec_evidence": _artifact(staged_spec, published_path=published_spec),
-                "output_dir": str(output_root / "clips" / config["tag"] / clip_name),
-                "clip_id": f"{config['tag']}_{clip_name}_v1",
+                "spec_evidence": published_spec_record,
+                "output_dir": str(output_root / "clips" / tag / clip_name),
+                "clip_id": f"{tag}_{clip_name}_v2",
             }
         record: dict[str, Any] = {
             "base_avatar_id": config["asset_id"],
             "asset_id": config["asset_id"],
-            "tag": config["tag"],
+            "tag": tag,
             "profile_schema_id": config["profile_schema_id"],
             "species": config["species"],
             "breed": config["breed"],
@@ -2100,6 +2906,10 @@ def build_specs(
             "audio_policy": "species-matched short calls are segmented and repeated with silent gaps",
             "avatar_count": 1,
             "clip_count": 2,
+            "presentation_evidence": copy.deepcopy(presentation_evidence),
+            "presentation_automatic_checks": copy.deepcopy(
+                PRESENTATION_AUTOMATIC_CHECKS
+            ),
             "inputs": {
                 "config": _artifact(config_path),
                 "ue_import_jobs": _artifact(ue_jobs),
@@ -2112,12 +2922,159 @@ def build_specs(
             "records": [record],
         }
         manifest["manifest_sha256"] = contracts.manifest_sha256(manifest)
-        contracts.write_json_no_replace(staging / "spec_manifest.json", manifest)
-        os.rename(staging, output_root)
+        manifest_record = _write_json_at(
+            staging_fd,
+            "spec_manifest.json",
+            manifest,
+        )
+
+        middle_authority = _authenticate_build_authority(**authority_arguments)
+        if middle_authority != authority:
+            raise contracts.ContractError(
+                "Apartment input authority graph changed during generation"
+            )
+        if (
+            manifest["presentation_evidence"]
+            != middle_authority["presentation_evidence"]
+            or manifest["presentation_evidence"] != preparation["presentation_evidence"]
+            or manifest["presentation_evidence"]
+            != freeze_receipt["presentation_evidence"]
+        ):
+            raise contracts.ContractError(
+                "Apartment presentation evidence changed during generation"
+            )
+
+        _seal_apartment_staging_at(
+            staging_fd,
+            specs_fd,
+            specs_identity,
+            tag,
+            tag_fd,
+            tag_identity,
+            spec_records,
+            manifest_record,
+        )
+        staging_stat = os.fstat(staging_fd)
+        if (staging_stat.st_dev, staging_stat.st_ino) != staging_identity:
+            raise contracts.ContractError(
+                "Apartment staging directory identity changed"
+            )
+        _require_directory_entry_identity(
+            parent_fd,
+            staging_name,
+            staging_fd,
+            staging_identity,
+            "Apartment staging directory",
+        )
+
+        final_authority = _authenticate_build_authority(**authority_arguments)
+        if final_authority != authority:
+            raise contracts.ContractError(
+                "Apartment input authority graph changed before publication"
+            )
+        if (
+            manifest["presentation_evidence"]
+            != final_authority["presentation_evidence"]
+            or manifest["presentation_evidence"] != preparation["presentation_evidence"]
+            or manifest["presentation_evidence"]
+            != freeze_receipt["presentation_evidence"]
+        ):
+            raise contracts.ContractError(
+                "Apartment presentation evidence changed before publication"
+            )
+        _require_parent_path_matches_fd(
+            lexical_output_parent,
+            output_parent,
+            parent_fd,
+            parent_identity,
+        )
+        _require_directory_entry_identity(
+            parent_fd,
+            staging_name,
+            staging_fd,
+            staging_identity,
+            "Apartment staging directory",
+        )
+        _require_apartment_staging_at(
+            staging_fd=staging_fd,
+            specs_fd=specs_fd,
+            specs_identity=specs_identity,
+            tag=tag,
+            tag_fd=tag_fd,
+            tag_identity=tag_identity,
+            spec_records=spec_records,
+            manifest_record=manifest_record,
+        )
+        try:
+            os.stat(
+                output_root.name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            pass
+        else:
+            raise contracts.ContractError(
+                f"refusing to replace Apartment output: {output_root.name}"
+            )
+        try:
+            _atomic_publish_no_replace_at(
+                parent_fd,
+                staging_name,
+                output_root.name,
+                lexical_parent=lexical_output_parent,
+                physical_parent=output_parent,
+                parent_identity=parent_identity,
+                staging_fd=staging_fd,
+                staging_identity=staging_identity,
+                specs_fd=specs_fd,
+                specs_identity=specs_identity,
+                tag=tag,
+                tag_fd=tag_fd,
+                tag_identity=tag_identity,
+                spec_records=spec_records,
+                manifest_record=manifest_record,
+            )
+        except (contracts.ContractError, OSError) as error:
+            raise contracts.ContractError(
+                f"Apartment atomic publication failed: {error}"
+            ) from error
+        published = True
+        os.fsync(parent_fd)
         return output_root / "spec_manifest.json"
-    except Exception:
-        shutil.rmtree(staging, ignore_errors=True)
+    except Exception as error:
+        if not published and staging_fd >= 0 and staging_name:
+            try:
+                removed = _remove_owned_apartment_staging_at(
+                    parent_fd=parent_fd,
+                    staging_fd=staging_fd,
+                    staging_name=staging_name,
+                    staging_identity=staging_identity,
+                    specs_fd=specs_fd,
+                    specs_identity=specs_identity,
+                    tag=tag,
+                    tag_fd=tag_fd,
+                    tag_identity=tag_identity,
+                )
+            except Exception as cleanup_error:
+                raise contracts.ContractError(
+                    "Apartment generation failed and owned staging cleanup "
+                    "was quarantined"
+                ) from cleanup_error
+            if not removed:
+                raise contracts.ContractError(
+                    "Apartment generation failed and owned staging cleanup "
+                    "was quarantined"
+                ) from error
         raise
+    finally:
+        if tag_fd >= 0:
+            os.close(tag_fd)
+        if specs_fd >= 0:
+            os.close(specs_fd)
+        if staging_fd >= 0:
+            os.close(staging_fd)
+        os.close(parent_fd)
 
 
 def build_parser() -> argparse.ArgumentParser:

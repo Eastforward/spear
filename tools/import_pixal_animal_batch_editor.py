@@ -32,8 +32,8 @@ import unreal
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tools import compose_target_native_generated_quadruped_owner_review as presentation
 from tools import controlled_source_asset_schema as contracts
-
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SPEAR_ROOT = SCRIPT_DIR.parent
@@ -41,12 +41,18 @@ SPEAR_TMP_BRIDGE = (SPEAR_ROOT / "tmp").absolute()
 IMPORT_ONE = SCRIPT_DIR / "import_gate_animal_editor.py"
 BATCH_SCHEMA = "pixal_animal_ue_import_batch_v2"
 LEGACY_BATCH_SCHEMA = "pixal_animal_ue_import_batch_v1"
-PREPARATION_SCHEMA = "avengine_user_approved_generated_animal_ue_import_preparation_v2"
-LEGACY_PREPARATION_SCHEMA = (
-    "avengine_user_approved_generated_animal_ue_import_preparation_v1"
+PREPARATION_SCHEMA = "avengine_user_approved_generated_animal_ue_import_preparation_v3"
+LEGACY_PREPARATION_SCHEMAS = frozenset(
+    {
+        "avengine_user_approved_generated_animal_ue_import_preparation_v1",
+        "avengine_user_approved_generated_animal_ue_import_preparation_v2",
+    }
 )
 DECISION_FREEZE_RECEIPT_SCHEMA = (
-    "avengine_target_native_generated_animal_animation_decision_freeze_receipt_v1"
+    "avengine_target_native_generated_animal_animation_decision_freeze_receipt_v2"
+)
+LEGACY_DECISION_FREEZE_RECEIPT_SCHEMAS = frozenset(
+    {"avengine_target_native_generated_animal_animation_decision_freeze_receipt_v1"}
 )
 USER_INSTRUCTION_AUTHORITY = {
     "mode": "caller_assertion_v1",
@@ -116,6 +122,7 @@ PREPARATION_FIELDS = {
     "animation_decision_freeze_receipt",
     "expected_animation_decision_freeze_receipt_file_sha256",
     "animation_decision_freeze_receipt_sha256",
+    "presentation_evidence",
     "user_instruction_authority",
     "reviewed_animated_glb",
     "authenticated_review_artifact_count",
@@ -138,6 +145,10 @@ PREPARATION_AUTOMATIC_CHECK_FIELDS = {
     "all_six_animation_render_encode_receipts_reauthenticated",
     "human_animation_approval_matched_external_expected_sha256",
     "animation_decision_freeze_receipt_reauthenticated",
+    "presentation_receipt_raw_file_sha256_reauthenticated",
+    "presentation_receipt_internal_sha256_reauthenticated",
+    "presentation_exact_v4_review_sha256_reauthenticated",
+    "presentation_output_video_bytes_and_directory_reauthenticated",
     "user_instruction_authority_preserved_without_cryptographic_upgrade",
     "reviewed_glb_has_embedded_skin_weights_and_exact_idle_walking_actions",
     "job_identity_and_attributes_copied_exactly_from_source_asset_v2",
@@ -162,7 +173,14 @@ DECISION_FREEZE_RECEIPT_FIELDS = {
     "authenticated_review_artifact_count",
     "animation_decision",
     "decision_sha256",
+    "presentation_evidence",
     "receipt_sha256",
+}
+PRESENTATION_EVIDENCE_FIELDS = {
+    "presentation_receipt",
+    "expected_presentation_receipt_file_sha256",
+    "presentation_receipt_sha256",
+    "output_video",
 }
 CANONICAL_IDENTITY_FIELDS = {
     "asset_id",
@@ -489,6 +507,11 @@ def _validate_decision_freeze_receipt(
         "animation decision freeze receipt",
         expected_sha256=expected_receipt_file_sha256,
     )
+    if payload.get("schema") in LEGACY_DECISION_FREEZE_RECEIPT_SCHEMAS:
+        raise RuntimeError(
+            "legacy animation decision freeze receipt v1 is audit-only; "
+            "regenerate a v2 receipt bound to an authenticated presentation"
+        )
     instruction = payload.get("user_instruction_binding")
     authority = payload.get("user_instruction_authority")
     if (
@@ -504,7 +527,13 @@ def _validate_decision_freeze_receipt(
         or payload.get("source_asset_registry_validation_mode")
         not in SOURCE_REGISTRY_VALIDATION_MODES
         or not isinstance(instruction, dict)
-        or set(instruction) != {"decision", "review_sha256", "all_six_checks_explicit"}
+        or set(instruction)
+        != {
+            "decision",
+            "review_sha256",
+            "all_six_checks_explicit",
+            "presentation_receipt_file_sha256",
+        }
         or instruction.get("decision") != "approved_for_ue_apartment"
         or instruction.get("all_six_checks_explicit") is not True
         or isinstance(payload.get("authenticated_review_artifact_count"), bool)
@@ -553,6 +582,54 @@ def _validate_decision_freeze_receipt(
         != preparation.get("animation_decision_sha256")
     ):
         raise RuntimeError("animation decision freeze receipt artifact lineage changed")
+    presentation_evidence = payload.get("presentation_evidence")
+    if (
+        not isinstance(presentation_evidence, dict)
+        or set(presentation_evidence) != PRESENTATION_EVIDENCE_FIELDS
+        or presentation_evidence != preparation.get("presentation_evidence")
+        or instruction.get("presentation_receipt_file_sha256")
+        != presentation_evidence.get("expected_presentation_receipt_file_sha256")
+    ):
+        raise RuntimeError(
+            "animation decision freeze receipt presentation binding changed"
+        )
+    presentation_receipt = _validate_file_descriptor(
+        presentation_evidence.get("presentation_receipt"),
+        "owner-review presentation receipt",
+    )
+    expected_presentation_receipt_sha256 = _require_sha256(
+        presentation_evidence.get("expected_presentation_receipt_file_sha256"),
+        "external owner-review presentation receipt hash",
+    )
+    if presentation_receipt["sha256"] != expected_presentation_receipt_sha256:
+        raise RuntimeError("owner-review presentation receipt external anchor changed")
+    try:
+        presentation_payload, raw_presentation_record = (
+            presentation.load_presentation_receipt(
+                Path(presentation_receipt["path"]),
+                expected_presentation_receipt_sha256,
+                expected_source_review_sha256=review["sha256"],
+            )
+        )
+    except (
+        presentation.PresentationContractError,
+        contracts.StrictJSONError,
+        OSError,
+        ValueError,
+    ) as error:
+        raise RuntimeError(
+            f"animation decision presentation evidence is invalid: {error}"
+        ) from error
+    canonical_presentation = {
+        "presentation_receipt": raw_presentation_record,
+        "expected_presentation_receipt_file_sha256": (
+            expected_presentation_receipt_sha256
+        ),
+        "presentation_receipt_sha256": presentation_payload["receipt_sha256"],
+        "output_video": presentation_payload["output"],
+    }
+    if canonical_presentation != presentation_evidence:
+        raise RuntimeError("animation decision presentation evidence is non-canonical")
     decision_path, decision_relative = _resolve_relative_descriptor(
         receipt_path.parent,
         payload.get("animation_decision"),
@@ -589,10 +666,10 @@ def _validate_preparation_anchor(
         "UE import preparation",
         expected_sha256=expected_preparation_sha256,
     )
-    if preparation.get("schema") == LEGACY_PREPARATION_SCHEMA:
+    if preparation.get("schema") in LEGACY_PREPARATION_SCHEMAS:
         raise RuntimeError(
-            "legacy UE import preparation v1 is audit-only; regenerate v2 "
-            "with an authenticated decision-freeze receipt"
+            "legacy UE import preparation v1/v2 is audit-only; regenerate v3 "
+            "with an authenticated presentation-bound decision-freeze receipt"
         )
     if (
         set(preparation) != PREPARATION_FIELDS
@@ -827,6 +904,14 @@ def _authenticate_import_contract() -> dict[str, Any]:
     }
 
 
+def _require_import_contract_unchanged(contract: dict[str, Any]) -> None:
+    observed = _authenticate_import_contract()
+    if observed != contract:
+        raise RuntimeError(
+            "authenticated UE import authority graph changed during execution"
+        )
+
+
 def _content_targets(tag: str) -> tuple[str, str, str]:
     mesh_dir = f"/Game/MyAssets/Audioset/Meshes/gate_{tag}"
     bp_dir = f"/Game/MyAssets/Audioset/Blueprints/gate_{tag}"
@@ -1052,6 +1137,7 @@ def main() -> None:
     # identity, hash, policy, action contract, and destination is authenticated
     # before the per-asset importer can create either content directory.
     _assert_content_targets_absent(tags)
+    _require_import_contract_unchanged(contract)
 
     results = []
     write_started = False
@@ -1067,6 +1153,7 @@ def main() -> None:
             )
             results.append(_readback_import(validated_job, receipt))
         success_result = _base_result(contract)
+        _require_import_contract_unchanged(contract)
         success_result.update(
             {
                 "status": "passed",

@@ -1,10 +1,12 @@
 import copy
 import hashlib
 import json
-from pathlib import Path
+import os
 import shutil
+import stat
 import struct
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -13,7 +15,6 @@ from tools import controlled_source_asset_schema as contracts
 from tools import prepare_controlled_source_asset_execution as execution_preparation
 from tools import prepare_user_approved_generated_animal_ue_imports as preparation
 from tools import register_controlled_animal_source_assets as source_registry
-
 
 PROFILE = (
     Path(__file__).resolve().parents[2]
@@ -320,6 +321,376 @@ def _build_media_lineage(root, *, input_glb, media):
             "encode_manifest": _record(paths["encode_manifest"]),
         }
     return lineage
+
+
+def _guard(path):
+    current = os.stat(path, follow_symlinks=False)
+    return {
+        "path": str(path.resolve()),
+        "device": current.st_dev,
+        "inode": current.st_ino,
+        "mode": stat.S_IMODE(current.st_mode),
+        "link_count": current.st_nlink,
+        "size_bytes": current.st_size,
+        "mtime_ns": current.st_mtime_ns,
+        "ctime_ns": current.st_ctime_ns,
+    }
+
+
+def _video_record(path, *, width, height):
+    return {
+        **_record(path),
+        "codec": "h264",
+        "width": width,
+        "height": height,
+        "frame_count": preparation.REQUIRED_REVIEW_FRAMES,
+        "frame_rate": "8/1",
+        "duration_seconds": 1.0,
+    }
+
+
+def _video_readback(*, width, height):
+    return {
+        "stream_count": 1,
+        "stream_index": 0,
+        "codec_type": "video",
+        "codec_name": "h264",
+        "pix_fmt": "yuv420p",
+        "sample_aspect_ratio": "1:1",
+        "width": width,
+        "height": height,
+        "r_frame_rate": "8/1",
+        "avg_frame_rate": "8/1",
+        "nb_frames": preparation.REQUIRED_REVIEW_FRAMES,
+        "nb_read_frames": preparation.REQUIRED_REVIEW_FRAMES,
+        "duration_seconds": 1.0,
+    }
+
+
+def _probe_evidence(path, *, width, height, ffmpeg, ffprobe):
+    return {
+        "readback": _video_readback(width=width, height=height),
+        "ffprobe_argv": preparation.presentation.build_ffprobe_argv(ffprobe, path),
+        "full_decode": {
+            "argv": preparation.presentation.build_decode_argv(ffmpeg, path),
+            "passed": True,
+        },
+    }
+
+
+def _write_presentation_bundle(
+    tmp_path,
+    *,
+    review_path,
+    review,
+    bundle_name="owner_review_presentation",
+):
+    presentation_root = tmp_path / bundle_name
+    presentation_root.mkdir()
+    output_video = presentation_root / preparation.presentation.OUTPUT_VIDEO_NAME
+    output_video.write_bytes(b"authenticated-owner-review-video")
+    output_record = {
+        **_video_record(
+            output_video,
+            width=preparation.presentation.OUTPUT_WIDTH,
+            height=preparation.presentation.OUTPUT_HEIGHT,
+        ),
+        "readback": _video_readback(
+            width=preparation.presentation.OUTPUT_WIDTH,
+            height=preparation.presentation.OUTPUT_HEIGHT,
+        ),
+        "full_decode_passed": True,
+    }
+
+    ffmpeg = Path(shutil.which("ffmpeg")).resolve()
+    ffprobe = Path(shutil.which("ffprobe")).resolve()
+    font = preparation.presentation.FONT_PATH.resolve()
+    snapshots = []
+    authenticated_inputs = {}
+    private_inputs = []
+    source_order = []
+    source_set = []
+    for ordinal, (
+        label,
+        _action,
+        _view,
+        _yaw,
+        title,
+        row,
+        column,
+    ) in enumerate(preparation.presentation.MEDIA_LAYOUT):
+        source_video = copy.deepcopy(review["outputs"]["media"][label])
+        lineage = review["outputs"]["media_lineage"][label]
+        render_payload = contracts.load_json(Path(lineage["render_manifest"]["path"]))
+        encode_payload = contracts.load_json(Path(lineage["encode_manifest"]["path"]))
+        source_probe = _probe_evidence(
+            Path(source_video["path"]),
+            width=preparation.presentation.REVIEW_MEDIA_WIDTH,
+            height=preparation.presentation.REVIEW_MEDIA_HEIGHT,
+            ffmpeg=ffmpeg,
+            ffprobe=ffprobe,
+        )
+        entry = {
+            "title": title,
+            "row": row,
+            "column": column,
+            "video": source_video,
+            "render_manifest": copy.deepcopy(lineage["render_manifest"]),
+            "encode_manifest": copy.deepcopy(lineage["encode_manifest"]),
+            "frame_set": preparation.generated_review.render_frame_set(render_payload),
+            "source_encode_ffmpeg": encode_payload["ffmpeg"],
+            "video_probe": source_probe,
+        }
+        authenticated_inputs[label] = entry
+        source_order.append(
+            {
+                "ordinal": ordinal,
+                "label": label,
+                "video": source_video,
+            }
+        )
+        source_set.append(
+            {
+                "ordinal": ordinal,
+                "label": label,
+                "video": source_video,
+                "render_manifest": entry["render_manifest"],
+                "encode_manifest": entry["encode_manifest"],
+                "frame_set": entry["frame_set"],
+            }
+        )
+        snapshot_path = (
+            tmp_path / ".removed_private_snapshots" / f"{ordinal:02d}_{label}.mp4"
+        ).resolve()
+        snapshots.append(snapshot_path)
+        snapshot_video = copy.deepcopy(source_video)
+        snapshot_video["path"] = str(snapshot_path)
+        snapshot_guard = {
+            "path": str(snapshot_path),
+            "device": 1,
+            "inode": ordinal + 1,
+            "mode": 0o400,
+            "link_count": 1,
+            "size_bytes": snapshot_video["size_bytes"],
+            "mtime_ns": ordinal + 1,
+            "ctime_ns": ordinal + 1,
+        }
+        private_inputs.append(
+            {
+                "ordinal": ordinal,
+                "label": label,
+                "source": source_video,
+                "source_probe": source_probe,
+                "private_snapshot": snapshot_video,
+                "private_snapshot_probe": _probe_evidence(
+                    snapshot_path,
+                    width=preparation.presentation.REVIEW_MEDIA_WIDTH,
+                    height=preparation.presentation.REVIEW_MEDIA_HEIGHT,
+                    ffmpeg=ffmpeg,
+                    ffprobe=ffprobe,
+                ),
+                "private_snapshot_file_guard": snapshot_guard,
+            }
+        )
+
+    staged_output = (
+        tmp_path
+        / ".owner_review_presentation.staging"
+        / preparation.presentation.OUTPUT_VIDEO_NAME
+    ).resolve()
+    ffmpeg_argv = preparation.presentation.build_ffmpeg_argv(
+        ffmpeg=ffmpeg,
+        font=font,
+        videos=snapshots,
+        output=staged_output,
+    )
+    reference_argv = preparation.presentation.build_reference_rawvideo_argv(
+        ffmpeg=ffmpeg,
+        font=font,
+        videos=snapshots,
+    )
+    observed_argv = preparation.presentation.build_observed_rawvideo_argv(
+        ffmpeg=ffmpeg,
+        video=staged_output,
+    )
+    content = {
+        "schema": preparation.presentation.CONTENT_READBACK_SCHEMA,
+        "method": preparation.presentation.content_readback_method(),
+        "reference_argv": reference_argv,
+        "observed_argv": observed_argv,
+        "reference_gray_frames_sha256": "1" * 64,
+        "observed_gray_frames_sha256": "2" * 64,
+        "cells": [
+            {
+                "label": label,
+                "title": title,
+                "row": row,
+                "column": column,
+                "frames": [
+                    {
+                        "frame_index": frame_index,
+                        "reference_gray_sha256": "3" * 64,
+                        "observed_gray_sha256": "4" * 64,
+                        "mean_absolute_error": 0.0,
+                        "root_mean_square_error": 0.0,
+                        "max_absolute_error": 0,
+                        "passed": True,
+                    }
+                    for frame_index in range(preparation.REQUIRED_REVIEW_FRAMES)
+                ],
+                "all_frames_passed": True,
+            }
+            for (
+                label,
+                _action,
+                _view,
+                _yaw,
+                title,
+                row,
+                column,
+            ) in preparation.presentation.MEDIA_LAYOUT
+        ],
+        "all_cells_all_frames_passed": True,
+        "content_readback_sha256": None,
+    }
+    content["content_readback_sha256"] = preparation.presentation.hash_without(
+        content, "content_readback_sha256"
+    )
+    tool_path = Path(preparation.presentation.__file__).resolve()
+    authority_guards = {"review_run": _guard(review_path)}
+    receipt = {
+        "schema": preparation.presentation.PRESENTATION_SCHEMA,
+        "created_at": "2026-07-28T00:00:00+00:00",
+        "status": preparation.presentation.PRESENTATION_STATUS,
+        "authority": {
+            "purpose": "owner_animation_review_presentation_only",
+            "decision_authority": "none",
+            "user_decision_recorded": False,
+            "source_review_modified": False,
+            "formal_dataset_registration_authorized": False,
+        },
+        "expected_source_review_sha256": _sha256(review_path),
+        "source_review": _record(review_path),
+        "reviewed_animation": copy.deepcopy(review["outputs"]["animated_glb"]),
+        "authenticated_inputs": authenticated_inputs,
+        "source_authority_guards": authority_guards,
+        "source_authority_guard_sha256": (
+            preparation.presentation.canonical_json_sha256(authority_guards)
+        ),
+        "source_order": source_order,
+        "source_order_sha256": preparation.presentation.canonical_json_sha256(
+            source_order
+        ),
+        "source_set": source_set,
+        "source_set_sha256": preparation.presentation.canonical_json_sha256(source_set),
+        "private_composition_inputs": private_inputs,
+        "frame_cell_content_readback": content,
+        "presentation_contract": preparation.presentation.presentation_contract(),
+        "automatic_checks": {
+            name: True for name in preparation.presentation.AUTOMATIC_CHECK_FIELDS
+        },
+        "toolchain": {
+            "presentation_tool": {
+                "version": preparation.presentation.PRESENTATION_TOOL_VERSION,
+                "file": _record(tool_path),
+                "file_guard": _guard(tool_path),
+            },
+            "python": {"implementation": "CPython", "version": "3.9.test"},
+            "ffmpeg": {
+                "executable": _record(ffmpeg),
+                "file_guard": _guard(ffmpeg),
+                "version_argv": [str(ffmpeg), "-version"],
+                "version_first_line": "ffmpeg version test",
+                "version_output_sha256": "5" * 64,
+            },
+            "ffprobe": {
+                "executable": _record(ffprobe),
+                "file_guard": _guard(ffprobe),
+                "version_argv": [str(ffprobe), "-version"],
+                "version_first_line": "ffprobe version test",
+                "version_output_sha256": "6" * 64,
+            },
+            "font": {
+                "file": _record(font),
+                "file_guard": _guard(font),
+                "sfnt_version_hex": "00010000",
+                "family": "DejaVu Sans",
+                "subfamily": "Bold",
+                "version": "Version test",
+                "postscript_name": "DejaVuSans-Bold",
+            },
+        },
+        "command": {
+            "cwd": str(preparation.presentation.SPEAR_ROOT),
+            "ffmpeg_argv": ffmpeg_argv,
+            "output_probe_argv": preparation.presentation.build_ffprobe_argv(
+                ffprobe, staged_output
+            ),
+            "output_full_decode_argv": (
+                preparation.presentation.build_decode_argv(ffmpeg, staged_output)
+            ),
+        },
+        "output": output_record,
+        "receipt_sha256": None,
+    }
+    receipt["receipt_sha256"] = preparation.presentation.hash_without(
+        receipt, "receipt_sha256"
+    )
+    receipt_path = presentation_root / preparation.presentation.RECEIPT_NAME
+    _write_json(receipt_path, receipt)
+    output_video.chmod(0o444)
+    receipt_path.chmod(0o444)
+    presentation_root.chmod(0o555)
+    preparation.presentation.load_presentation_receipt(
+        receipt_path,
+        _sha256(receipt_path),
+        expected_source_review_sha256=_sha256(review_path),
+    )
+    return {
+        "presentation_receipt": _record(receipt_path),
+        "expected_presentation_receipt_file_sha256": _sha256(receipt_path),
+        "presentation_receipt_sha256": receipt["receipt_sha256"],
+        "output_video": output_record,
+    }
+
+
+def _set_presentation_writable(fixture):
+    evidence = fixture["presentation_evidence"]
+    receipt = Path(evidence["presentation_receipt"]["path"])
+    output = Path(evidence["output_video"]["path"])
+    receipt.parent.chmod(0o755)
+    receipt.chmod(0o644)
+    output.chmod(0o644)
+
+
+def _reseal_presentation(fixture):
+    evidence = fixture["presentation_evidence"]
+    receipt = Path(evidence["presentation_receipt"]["path"])
+    output = Path(evidence["output_video"]["path"])
+    receipt.chmod(0o444)
+    output.chmod(0o444)
+    receipt.parent.chmod(0o555)
+
+
+def _rebind_presentation_receipt_file(fixture):
+    evidence = fixture["presentation_evidence"]
+    receipt = Path(evidence["presentation_receipt"]["path"])
+    evidence["presentation_receipt"] = _record(receipt)
+    evidence["expected_presentation_receipt_file_sha256"] = _sha256(receipt)
+
+
+def _refresh_presentation_evidence(fixture, review):
+    bundle_name = f"owner_review_presentation_{_sha256(fixture['review_path'])[:12]}"
+    try:
+        evidence = _write_presentation_bundle(
+            fixture["receipt_path"].parent,
+            review_path=fixture["review_path"],
+            review=review,
+            bundle_name=bundle_name,
+        )
+    except (KeyError, TypeError, contracts.ContractError):
+        return
+    fixture["presentation_evidence"] = evidence
 
 
 def _fake_tokenrig_lineage(root, *, raw_pixal_glb, target_rig_glb):
@@ -655,6 +1026,11 @@ def approved_generated_animal(tmp_path, monkeypatch):
         "receipt_path": tmp_path / "decision_freeze_receipt.json",
         "media_path": Path(next(iter(media.values()))["path"]),
     }
+    fixture["presentation_evidence"] = _write_presentation_bundle(
+        tmp_path,
+        review_path=review_path,
+        review=review,
+    )
     _rewrite_freeze_receipt(fixture)
     return fixture
 
@@ -694,6 +1070,7 @@ def _rewrite_review_and_rebind_decision(fixture, review):
     decision["review_sha256"] = decision["review"]["sha256"]
     decision["decision_sha256"] = preparation._hash_without(decision, "decision_sha256")
     _write_json(fixture["decision_path"], decision)
+    _refresh_presentation_evidence(fixture, review)
     _rewrite_freeze_receipt(fixture, review=review)
 
 
@@ -742,6 +1119,9 @@ def _rewrite_freeze_receipt(fixture, *, review=None):
             "decision": "approved_for_ue_apartment",
             "review_sha256": _sha256(fixture["review_path"]),
             "all_six_checks_explicit": True,
+            "presentation_receipt_file_sha256": fixture["presentation_evidence"][
+                "expected_presentation_receipt_file_sha256"
+            ],
         },
         "user_instruction_authority": copy.deepcopy(
             preparation.USER_INSTRUCTION_AUTHORITY
@@ -752,12 +1132,19 @@ def _rewrite_freeze_receipt(fixture, *, review=None):
             fixture["receipt_path"].parent,
         ),
         "decision_sha256": decision["decision_sha256"],
+        "presentation_evidence": copy.deepcopy(fixture["presentation_evidence"]),
     }
     receipt["receipt_sha256"] = preparation._hash_without(
         receipt,
         "receipt_sha256",
     )
     _write_json(fixture["receipt_path"], receipt)
+
+
+def _assert_failed_without_preparation_output(output):
+    assert not output.exists()
+    assert not output.is_symlink()
+    assert not list(output.parent.glob(f".{output.name}.*.staging"))
 
 
 def _reauthenticate_registry_source(fixture):
@@ -1037,6 +1424,13 @@ def test_prepares_fresh_canonical_job_and_does_not_rewrite_old_job(
         "human_animation_approval_matched_external_expected_sha256"
     ]
     assert manifest["schema"] == preparation.SCHEMA
+    assert manifest["schema"].endswith("_v3")
+    assert (
+        manifest["presentation_evidence"]
+        == approved_generated_animal["presentation_evidence"]
+    )
+    for check, expected in preparation.PRESENTATION_AUTOMATIC_CHECKS.items():
+        assert manifest["automatic_checks"][check] is expected
     assert manifest["animation_decision_freeze_receipt"] == _record(
         approved_generated_animal["receipt_path"]
     )
@@ -1592,6 +1986,441 @@ def test_cannot_upgrade_caller_assertion_to_cryptographic_identity(
             approved_generated_animal,
             tmp_path / "rejected_crypto_upgrade",
         )
+
+
+def test_rejects_tampered_owner_review_video_bytes_without_output(
+    approved_generated_animal,
+    tmp_path,
+):
+    output = tmp_path / "rejected_tampered_presentation_video"
+    _set_presentation_writable(approved_generated_animal)
+    video = Path(
+        approved_generated_animal["presentation_evidence"]["output_video"]["path"]
+    )
+    video.write_bytes(video.read_bytes() + b"-tampered")
+    _reseal_presentation(approved_generated_animal)
+
+    with pytest.raises(contracts.ContractError, match="output video"):
+        _prepare(approved_generated_animal, output)
+
+    _assert_failed_without_preparation_output(output)
+
+
+def test_rejects_tampered_presentation_receipt_raw_file_without_output(
+    approved_generated_animal,
+    tmp_path,
+):
+    output = tmp_path / "rejected_tampered_presentation_receipt"
+    _set_presentation_writable(approved_generated_animal)
+    receipt = Path(
+        approved_generated_animal["presentation_evidence"]["presentation_receipt"][
+            "path"
+        ]
+    )
+    receipt.write_bytes(receipt.read_bytes() + b" ")
+    _reseal_presentation(approved_generated_animal)
+
+    with pytest.raises(contracts.ContractError, match="external SHA-256"):
+        _prepare(approved_generated_animal, output)
+
+    _assert_failed_without_preparation_output(output)
+
+
+def test_rejects_rebound_presentation_receipt_with_invalid_internal_self_hash(
+    approved_generated_animal,
+    tmp_path,
+):
+    output = tmp_path / "rejected_presentation_internal_hash"
+    _set_presentation_writable(approved_generated_animal)
+    receipt_path = Path(
+        approved_generated_animal["presentation_evidence"]["presentation_receipt"][
+            "path"
+        ]
+    )
+    receipt = contracts.load_json(receipt_path)
+    receipt["created_at"] = "2026-07-28T00:00:01+00:00"
+    _write_json(receipt_path, receipt)
+    _rebind_presentation_receipt_file(approved_generated_animal)
+    _reseal_presentation(approved_generated_animal)
+    _rewrite_freeze_receipt(approved_generated_animal)
+
+    with pytest.raises(contracts.ContractError, match="canonical self-hash"):
+        _prepare(approved_generated_animal, output)
+
+    _assert_failed_without_preparation_output(output)
+
+
+def test_rejects_presentation_receipt_bound_to_prior_v4_review(
+    approved_generated_animal,
+    tmp_path,
+):
+    output = tmp_path / "rejected_stale_presentation_review_binding"
+    review = contracts.load_json(approved_generated_animal["review_path"])
+    review["created_at"] = "2026-07-28T00:00:02+00:00"
+    _write_json(approved_generated_animal["review_path"], review)
+    decision = contracts.load_json(approved_generated_animal["decision_path"])
+    decision["review"] = _record(approved_generated_animal["review_path"])
+    decision["review_sha256"] = decision["review"]["sha256"]
+    decision["decision_sha256"] = preparation._hash_without(
+        decision,
+        "decision_sha256",
+    )
+    _write_json(approved_generated_animal["decision_path"], decision)
+    _rewrite_freeze_receipt(approved_generated_animal, review=review)
+
+    with pytest.raises(contracts.ContractError, match="source-review authority"):
+        _prepare(approved_generated_animal, output)
+
+    _assert_failed_without_preparation_output(output)
+
+
+def test_rejects_freeze_presentation_output_path_mismatch_without_output(
+    approved_generated_animal,
+    tmp_path,
+):
+    output = tmp_path / "rejected_presentation_path_mismatch"
+    evidence = approved_generated_animal["presentation_evidence"]
+    evidence["output_video"]["path"] = f"{evidence['output_video']['path']}.substituted"
+    _rewrite_freeze_receipt(approved_generated_animal)
+
+    with pytest.raises(contracts.ContractError, match="authority binding changed"):
+        _prepare(approved_generated_animal, output)
+
+    _assert_failed_without_preparation_output(output)
+
+
+def test_rejects_symlinked_presentation_video_without_output(
+    approved_generated_animal,
+    tmp_path,
+):
+    output = tmp_path / "rejected_symlinked_presentation_video"
+    _set_presentation_writable(approved_generated_animal)
+    video = Path(
+        approved_generated_animal["presentation_evidence"]["output_video"]["path"]
+    )
+    moved_video = tmp_path / "moved_owner_review_six_view.mp4"
+    video.rename(moved_video)
+    video.symlink_to(moved_video)
+    _reseal_presentation(approved_generated_animal)
+
+    with pytest.raises(contracts.ContractError, match="symlink"):
+        _prepare(approved_generated_animal, output)
+
+    _assert_failed_without_preparation_output(output)
+
+
+def test_rejects_duplicate_json_key_in_rebound_presentation_receipt(
+    approved_generated_animal,
+    tmp_path,
+):
+    output = tmp_path / "rejected_duplicate_presentation_receipt"
+    _set_presentation_writable(approved_generated_animal)
+    receipt = Path(
+        approved_generated_animal["presentation_evidence"]["presentation_receipt"][
+            "path"
+        ]
+    )
+    _inject_duplicate_schema(receipt)
+    _rebind_presentation_receipt_file(approved_generated_animal)
+    _reseal_presentation(approved_generated_animal)
+    _rewrite_freeze_receipt(approved_generated_animal)
+
+    with pytest.raises(contracts.ContractError, match="strict JSON"):
+        _prepare(approved_generated_animal, output)
+
+    _assert_failed_without_preparation_output(output)
+
+
+def test_rejects_legacy_v1_freeze_receipt_without_presentation_evidence(
+    approved_generated_animal,
+    tmp_path,
+):
+    output = tmp_path / "rejected_legacy_v1_freeze"
+    receipt = contracts.load_json(approved_generated_animal["receipt_path"])
+    receipt["schema"] = next(iter(preparation.LEGACY_DECISION_FREEZE_RECEIPT_SCHEMAS))
+    receipt.pop("presentation_evidence")
+    receipt["user_instruction_binding"].pop("presentation_receipt_file_sha256")
+    receipt["receipt_sha256"] = preparation._hash_without(
+        receipt,
+        "receipt_sha256",
+    )
+    _write_json(approved_generated_animal["receipt_path"], receipt)
+
+    with pytest.raises(contracts.ContractError, match="audit-only"):
+        _prepare(approved_generated_animal, output)
+
+    _assert_failed_without_preparation_output(output)
+
+
+def test_rejects_v2_freeze_receipt_missing_presentation_evidence(
+    approved_generated_animal,
+    tmp_path,
+):
+    output = tmp_path / "rejected_missing_presentation_evidence"
+    receipt = contracts.load_json(approved_generated_animal["receipt_path"])
+    receipt.pop("presentation_evidence")
+    receipt["receipt_sha256"] = preparation._hash_without(
+        receipt,
+        "receipt_sha256",
+    )
+    _write_json(approved_generated_animal["receipt_path"], receipt)
+
+    with pytest.raises(contracts.ContractError, match="authority contract"):
+        _prepare(approved_generated_animal, output)
+
+    _assert_failed_without_preparation_output(output)
+
+
+def test_rejects_restore_race_on_presentation_video_and_removes_staging(
+    approved_generated_animal,
+    tmp_path,
+    monkeypatch,
+):
+    output = tmp_path / "rejected_presentation_restore_race"
+    video = Path(
+        approved_generated_animal["presentation_evidence"]["output_video"]["path"]
+    )
+    original_bytes = video.read_bytes()
+    original_stat = video.stat()
+    original_write = preparation._write_json_at
+    raced = False
+
+    def racing_write(directory_fd, name, payload):
+        nonlocal raced
+        result = original_write(directory_fd, name, payload)
+        if name == "ue_import_jobs.json" and not raced:
+            raced = True
+            video.chmod(0o644)
+            video.write_bytes(original_bytes + b"-transient-race")
+            video.write_bytes(original_bytes)
+            os.utime(
+                video,
+                ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+            )
+            video.chmod(0o444)
+        return result
+
+    monkeypatch.setattr(preparation, "_write_json_at", racing_write)
+
+    with pytest.raises(contracts.ContractError, match="authority graph changed"):
+        _prepare(approved_generated_animal, output)
+
+    assert raced
+    _assert_failed_without_preparation_output(output)
+
+
+def test_atomic_publication_race_preserves_concurrent_output_and_removes_staging(
+    approved_generated_animal,
+    tmp_path,
+    monkeypatch,
+):
+    output = tmp_path / "concurrent_preparation"
+    marker = output / "other_writer"
+    original_publish = preparation._atomic_publish_no_replace_at
+
+    def concurrent_publish(parent_fd, staging_name, output_name, **kwargs):
+        os.mkdir(output_name, dir_fd=parent_fd)
+        marker_fd = os.open(
+            f"{output_name}/other_writer",
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+            dir_fd=parent_fd,
+        )
+        try:
+            os.write(marker_fd, b"concurrent")
+        finally:
+            os.close(marker_fd)
+        original_publish(parent_fd, staging_name, output_name, **kwargs)
+
+    monkeypatch.setattr(
+        preparation,
+        "_atomic_publish_no_replace_at",
+        concurrent_publish,
+    )
+
+    with pytest.raises(contracts.ContractError, match="refusing to replace"):
+        _prepare(approved_generated_animal, output)
+
+    assert marker.read_text(encoding="utf-8") == "concurrent"
+    assert not list(output.parent.glob(f".{output.name}.*.staging"))
+
+
+def test_dirfd_publication_preserves_the_authenticated_staging_inode(
+    approved_generated_animal,
+    tmp_path,
+    monkeypatch,
+):
+    output = tmp_path / "dirfd_published_preparation"
+    observed = {}
+    original_publish = preparation._atomic_publish_no_replace_at
+
+    def recording_publish(parent_fd, staging_name, output_name, **kwargs):
+        before = os.stat(
+            staging_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        original_publish(parent_fd, staging_name, output_name, **kwargs)
+        after = os.stat(
+            output_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        observed["before"] = (before.st_dev, before.st_ino)
+        observed["after"] = (after.st_dev, after.st_ino)
+
+    monkeypatch.setattr(
+        preparation,
+        "_atomic_publish_no_replace_at",
+        recording_publish,
+    )
+
+    result = _prepare(approved_generated_animal, output)
+
+    assert result == output / "ue_import_preparation_manifest.json"
+    assert observed["before"] == observed["after"]
+    assert not list(output.parent.glob(f".{output.name}.*.staging"))
+
+
+def test_staging_byte_swap_inside_publication_hook_fails_before_ready(
+    approved_generated_animal,
+    tmp_path,
+    monkeypatch,
+):
+    output = tmp_path / "staging_byte_swap_preparation"
+    original_publish = preparation._atomic_publish_no_replace_at
+    tampered = False
+
+    def tampering_publish(parent_fd, staging_name, output_name, **kwargs):
+        nonlocal tampered
+        staging_fd = kwargs["staging_fd"]
+        artifact_fd = os.open(
+            "ue_import_jobs.json",
+            os.O_RDONLY,
+            dir_fd=staging_fd,
+        )
+        try:
+            os.fchmod(artifact_fd, 0o644)
+        finally:
+            os.close(artifact_fd)
+        artifact_fd = os.open(
+            "ue_import_jobs.json",
+            os.O_WRONLY | os.O_TRUNC,
+            dir_fd=staging_fd,
+        )
+        try:
+            os.write(artifact_fd, b"tampered")
+            os.fsync(artifact_fd)
+        finally:
+            os.close(artifact_fd)
+        tampered = True
+        original_publish(
+            parent_fd,
+            staging_name,
+            output_name,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        preparation,
+        "_atomic_publish_no_replace_at",
+        tampering_publish,
+    )
+
+    with pytest.raises(contracts.ContractError, match="staging artifact"):
+        _prepare(approved_generated_animal, output)
+
+    assert tampered
+    assert not output.exists()
+    assert not list(output.parent.glob(f".{output.name}.*.staging"))
+
+
+def test_parent_swap_after_precommit_check_cannot_publish_a_ready_output(
+    approved_generated_animal,
+    tmp_path,
+    monkeypatch,
+):
+    output = tmp_path / "parent_swap_preparation"
+    moved_parent = tmp_path.with_name(f"{tmp_path.name}_moved")
+    original_publish = preparation._atomic_publish_no_replace_at
+    swapped = False
+
+    def parent_swapping_publish(parent_fd, staging_name, output_name, **kwargs):
+        nonlocal swapped
+        tmp_path.rename(moved_parent)
+        tmp_path.symlink_to(moved_parent, target_is_directory=True)
+        swapped = True
+        original_publish(parent_fd, staging_name, output_name, **kwargs)
+
+    monkeypatch.setattr(
+        preparation,
+        "_atomic_publish_no_replace_at",
+        parent_swapping_publish,
+    )
+    try:
+        with pytest.raises(contracts.ContractError, match="held directory"):
+            _prepare(approved_generated_animal, output)
+
+        assert swapped
+        assert not (moved_parent / output.name).exists()
+    finally:
+        if tmp_path.is_symlink():
+            tmp_path.unlink()
+        if moved_parent.exists():
+            moved_parent.rename(tmp_path)
+
+
+def test_fd_cleanup_root_swap_never_touches_an_external_tree(
+    tmp_path,
+    monkeypatch,
+):
+    parent_fd = preparation._open_directory_no_follow(tmp_path, "test parent")
+    staging_name = ".owned.staging"
+    staging = tmp_path / staging_name
+    staging.mkdir()
+    (staging / "ue_import_jobs.json").write_text("owned", encoding="utf-8")
+    identity_stat = staging.stat()
+    identity = (identity_stat.st_dev, identity_stat.st_ino)
+    moved = tmp_path / ".owned.moved"
+    external = tmp_path / "external"
+    external.mkdir()
+    sentinel = external / "sentinel"
+    sentinel.write_text("keep", encoding="utf-8")
+    external.chmod(0o755)
+    original_listdir = os.listdir
+    swapped = False
+
+    def swapping_listdir(path):
+        nonlocal swapped
+        if isinstance(path, int) and not swapped:
+            staging.rename(moved)
+            staging.symlink_to(external, target_is_directory=True)
+            swapped = True
+        return original_listdir(path)
+
+    monkeypatch.setattr(os, "listdir", swapping_listdir)
+    try:
+        removed = preparation._remove_owned_staging_at(
+            parent_fd,
+            staging_name,
+            identity,
+            frozenset(
+                {
+                    "ue_import_jobs.json",
+                    "ue_import_preparation_manifest.json",
+                }
+            ),
+        )
+    finally:
+        os.close(parent_fd)
+
+    assert swapped
+    assert removed is False
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert stat.S_IMODE(external.stat().st_mode) == 0o755
+
+    staging.unlink()
+    moved.rmdir()
 
 
 @pytest.mark.parametrize(

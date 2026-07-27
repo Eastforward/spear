@@ -10,24 +10,31 @@ lineage before publishing a new, immutable decision record.
 from __future__ import annotations
 
 import argparse
+import copy
+import ctypes
+import errno
+import hashlib
+import json
 import os
 from pathlib import Path
+import secrets
+import stat
 import sys
-import tempfile
 from typing import Any, Mapping, Sequence
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import controlled_source_asset_schema as contracts
+from tools import compose_target_native_generated_quadruped_owner_review as presentation
 from tools import prepare_user_approved_generated_animal_ue_imports as bridge
-from tools import rocketbox_native_material_canary as immutable
 
 
 RECEIPT_SCHEMA = bridge.DECISION_FREEZE_RECEIPT_SCHEMA
 APPROVED = "approved_for_ue_apartment"
 REJECTED = "rejected"
 DECISIONS = (APPROVED, REJECTED)
+PRESENTATION_EVIDENCE_FIELDS = bridge.PRESENTATION_EVIDENCE_FIELDS
 CHECK_ARGUMENTS = {
     "walking_direction": "--walking-direction",
     "walking_limb_deformation": "--walking-limb-deformation",
@@ -36,6 +43,9 @@ CHECK_ARGUMENTS = {
     "body_stability": "--body-stability",
     "detached_geometry_absent": "--detached-geometry-absent",
 }
+PUBLISHED_FILE_NAMES = frozenset(
+    {"animation_decision.json", "decision_freeze_receipt.json"}
+)
 
 
 def _explicit_bool(value: str) -> bool:
@@ -46,6 +56,667 @@ def _explicit_bool(value: str) -> bool:
     raise argparse.ArgumentTypeError("expected the literal true or false")
 
 
+def _stat_guard(path: Path, current: os.stat_result) -> dict[str, Any]:
+    return {
+        "path": str(path),
+        "device": current.st_dev,
+        "inode": current.st_ino,
+        "mode": stat.S_IMODE(current.st_mode),
+        "link_count": current.st_nlink,
+        "size_bytes": current.st_size,
+        "mtime_ns": current.st_mtime_ns,
+        "ctime_ns": current.st_ctime_ns,
+    }
+
+
+def _stable_file_snapshot(path: Path, label: str) -> dict[str, Any]:
+    """Read one direct file through a stable descriptor and recheck its path."""
+
+    path = bridge._direct_file(path, label)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        path_before = os.stat(path, follow_symlinks=False)
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise contracts.ContractError(f"cannot open stable {label}: {path}") from error
+    try:
+        opened = os.fstat(descriptor)
+        opened_guard = _stat_guard(path, opened)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_size <= 0
+            or _stat_guard(path, path_before) != opened_guard
+        ):
+            raise contracts.ContractError(f"{label} changed before stable open")
+        digest = hashlib.sha256()
+        size_bytes = 0
+        while True:
+            block = os.read(descriptor, 1024 * 1024)
+            if not block:
+                break
+            digest.update(block)
+            size_bytes += len(block)
+        closed_guard = _stat_guard(path, os.fstat(descriptor))
+        if closed_guard != opened_guard or size_bytes != opened.st_size:
+            raise contracts.ContractError(f"{label} changed during stable read")
+    finally:
+        os.close(descriptor)
+    try:
+        path_after = os.stat(path, follow_symlinks=False)
+    except OSError as error:
+        raise contracts.ContractError(
+            f"{label} disappeared after stable read"
+        ) from error
+    if _stat_guard(path, path_after) != opened_guard:
+        raise contracts.ContractError(
+            f"{label} path identity changed during stable read"
+        )
+    return {
+        "record": {
+            "path": str(path),
+            "sha256": digest.hexdigest(),
+            "size_bytes": size_bytes,
+        },
+        "guard": opened_guard,
+    }
+
+
+def _snapshot_paths(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
+    return {
+        name: _stable_file_snapshot(path, f"authority artifact {name}")
+        for name, path in sorted(paths.items())
+    }
+
+
+def _directory_guard_from_fd(
+    descriptor: int,
+    physical_path: Path,
+) -> dict[str, Any]:
+    current = os.fstat(descriptor)
+    if not stat.S_ISDIR(current.st_mode):
+        raise contracts.ContractError("held output parent is not a directory")
+    return {
+        "path": str(physical_path),
+        "device": current.st_dev,
+        "inode": current.st_ino,
+        "mode": stat.S_IMODE(current.st_mode),
+        "mtime_ns": current.st_mtime_ns,
+        "ctime_ns": current.st_ctime_ns,
+    }
+
+
+def _open_output_parent(output_root: Path) -> tuple[Path, Path, int, dict[str, Any]]:
+    output_root = bridge._new_output_path(Path(output_root), "output")
+    output_root.parent.mkdir(parents=True, exist_ok=True)
+    output_root = bridge._new_output_path(output_root, "output")
+    lexical_parent, _bridge_used = bridge._uses_only_exact_tmp_bridge(
+        output_root.parent,
+        "animation decision output parent",
+    )
+    try:
+        physical_parent = lexical_parent.resolve(strict=True)
+    except OSError as error:
+        raise contracts.ContractError(
+            "animation decision output parent is missing"
+        ) from error
+    current = os.stat(physical_parent, follow_symlinks=False)
+    if not stat.S_ISDIR(current.st_mode):
+        raise contracts.ContractError(
+            "animation decision output parent is not a directory"
+        )
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        parent_fd = os.open(physical_parent, flags)
+    except OSError as error:
+        raise contracts.ContractError(
+            "cannot hold animation decision output parent"
+        ) from error
+    try:
+        guard = _directory_guard_from_fd(parent_fd, physical_parent)
+        _require_parent_path_matches_fd(
+            lexical_parent,
+            physical_parent,
+            parent_fd,
+            guard,
+        )
+    except Exception:
+        os.close(parent_fd)
+        raise
+    return physical_parent / output_root.name, lexical_parent, parent_fd, guard
+
+
+def _require_parent_path_matches_fd(
+    lexical_parent: Path,
+    physical_parent: Path,
+    parent_fd: int,
+    expected_guard: Mapping[str, Any],
+) -> None:
+    current_literal, _bridge_used = bridge._uses_only_exact_tmp_bridge(
+        lexical_parent,
+        "animation decision output parent",
+    )
+    try:
+        current_physical = current_literal.resolve(strict=True)
+        current_stat = os.stat(current_physical, follow_symlinks=False)
+    except OSError as error:
+        raise contracts.ContractError(
+            "animation decision output parent disappeared"
+        ) from error
+    observed_guard = _directory_guard_from_fd(parent_fd, physical_parent)
+    if (
+        current_physical != physical_parent
+        or not stat.S_ISDIR(current_stat.st_mode)
+        or (current_stat.st_dev, current_stat.st_ino)
+        != (observed_guard["device"], observed_guard["inode"])
+        or observed_guard["device"] != expected_guard["device"]
+        or observed_guard["inode"] != expected_guard["inode"]
+        or observed_guard["mode"] != expected_guard["mode"]
+    ):
+        raise contracts.ContractError(
+            "animation decision output parent no longer names the held directory"
+        )
+
+
+def _create_staging_at(
+    parent_fd: int, output_name: str
+) -> tuple[str, int, tuple[int, int]]:
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    for _attempt in range(128):
+        name = f".{output_name}.{secrets.token_hex(12)}.staging"
+        try:
+            os.mkdir(name, 0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            continue
+        try:
+            descriptor = os.open(name, flags, dir_fd=parent_fd)
+        except Exception:
+            try:
+                os.rmdir(name, dir_fd=parent_fd)
+            except OSError:
+                pass
+            raise
+        current = os.fstat(descriptor)
+        if not stat.S_ISDIR(current.st_mode):
+            os.close(descriptor)
+            raise contracts.ContractError(
+                "animation decision staging entry is not a directory"
+            )
+        return name, descriptor, (current.st_dev, current.st_ino)
+    raise contracts.ContractError(
+        "could not allocate a unique animation decision staging directory"
+    )
+
+
+def _write_json_at(
+    directory_fd: int,
+    name: str,
+    value: Any,
+) -> dict[str, Any]:
+    encoded = (
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n"
+    ).encode("utf-8")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(name, flags, 0o600, dir_fd=directory_fd)
+    except FileExistsError as error:
+        raise contracts.ContractError(
+            f"refusing to replace animation decision staging artifact: {name}"
+        ) from error
+    try:
+        offset = 0
+        while offset < len(encoded):
+            offset += os.write(descriptor, encoded[offset:])
+        os.fsync(descriptor)
+        current = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(current.st_mode)
+            or current.st_nlink != 1
+            or current.st_size != len(encoded)
+        ):
+            raise contracts.ContractError(
+                f"animation decision staging artifact is unsafe: {name}"
+            )
+    finally:
+        os.close(descriptor)
+    return {
+        "path": name,
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "size_bytes": len(encoded),
+    }
+
+
+def _seal_staging_at(directory_fd: int) -> None:
+    if set(os.listdir(directory_fd)) != PUBLISHED_FILE_NAMES:
+        raise contracts.ContractError("animation decision staging artifact set changed")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    for name in sorted(PUBLISHED_FILE_NAMES):
+        descriptor = os.open(name, flags, dir_fd=directory_fd)
+        try:
+            current = os.fstat(descriptor)
+            if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
+                raise contracts.ContractError(
+                    f"animation decision staging artifact is unsafe: {name}"
+                )
+            os.fsync(descriptor)
+            os.fchmod(descriptor, 0o444)
+        finally:
+            os.close(descriptor)
+    os.fchmod(directory_fd, 0o555)
+    os.fsync(directory_fd)
+
+
+def _require_sealed_staging_records(
+    parent_fd: int,
+    staging_fd: int,
+    staging_name: str,
+    staging_identity: tuple[int, int],
+    expected_records: Mapping[str, Mapping[str, Any]],
+) -> None:
+    if set(expected_records) != PUBLISHED_FILE_NAMES or any(
+        not isinstance(record, Mapping)
+        or set(record) != {"path", "sha256", "size_bytes"}
+        or record.get("path") != name
+        for name, record in expected_records.items()
+    ):
+        raise contracts.ContractError(
+            "animation decision expected staging records are invalid"
+        )
+    directory_before = os.fstat(staging_fd)
+    parent_entry_before = os.stat(
+        staging_name,
+        dir_fd=parent_fd,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISDIR(directory_before.st_mode)
+        or stat.S_IMODE(directory_before.st_mode) != 0o555
+        or (directory_before.st_dev, directory_before.st_ino) != staging_identity
+        or not stat.S_ISDIR(parent_entry_before.st_mode)
+        or (parent_entry_before.st_dev, parent_entry_before.st_ino) != staging_identity
+        or set(os.listdir(staging_fd)) != PUBLISHED_FILE_NAMES
+    ):
+        raise contracts.ContractError(
+            "animation decision sealed staging directory changed before publication"
+        )
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    for name in sorted(PUBLISHED_FILE_NAMES):
+        path_before = os.stat(
+            name,
+            dir_fd=staging_fd,
+            follow_symlinks=False,
+        )
+        descriptor = os.open(name, flags, dir_fd=staging_fd)
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or stat.S_IMODE(opened.st_mode) != 0o444
+                or opened.st_nlink != 1
+                or _stat_guard(Path(name), path_before)
+                != _stat_guard(Path(name), opened)
+            ):
+                raise contracts.ContractError(
+                    f"animation decision sealed staging artifact changed: {name}"
+                )
+            digest = hashlib.sha256()
+            size_bytes = 0
+            while True:
+                block = os.read(descriptor, 1024 * 1024)
+                if not block:
+                    break
+                digest.update(block)
+                size_bytes += len(block)
+            if _stat_guard(Path(name), os.fstat(descriptor)) != _stat_guard(
+                Path(name),
+                opened,
+            ):
+                raise contracts.ContractError(
+                    f"animation decision sealed staging artifact raced: {name}"
+                )
+        finally:
+            os.close(descriptor)
+        path_after = os.stat(
+            name,
+            dir_fd=staging_fd,
+            follow_symlinks=False,
+        )
+        observed = {
+            "path": name,
+            "sha256": digest.hexdigest(),
+            "size_bytes": size_bytes,
+        }
+        if (
+            _stat_guard(Path(name), path_after) != _stat_guard(Path(name), opened)
+            or observed != expected_records[name]
+        ):
+            raise contracts.ContractError(
+                f"animation decision sealed staging raw bytes changed: {name}"
+            )
+    directory_after = os.fstat(staging_fd)
+    parent_entry_after = os.stat(
+        staging_name,
+        dir_fd=parent_fd,
+        follow_symlinks=False,
+    )
+    if (
+        _stat_guard(Path(staging_name), directory_after)
+        != _stat_guard(Path(staging_name), directory_before)
+        or not stat.S_ISDIR(parent_entry_after.st_mode)
+        or (parent_entry_after.st_dev, parent_entry_after.st_ino) != staging_identity
+    ):
+        raise contracts.ContractError(
+            "animation decision sealed staging identity raced before publication"
+        )
+
+
+def _atomic_publish_no_replace(
+    parent_fd: int,
+    staging_name: str,
+    output_name: str,
+    *,
+    staging_fd: int,
+    staging_identity: tuple[int, int],
+    expected_records: Mapping[str, Mapping[str, Any]],
+    lexical_parent: Path,
+    physical_parent: Path,
+    expected_parent_guard: Mapping[str, Any],
+) -> None:
+    _require_parent_path_matches_fd(
+        lexical_parent,
+        physical_parent,
+        parent_fd,
+        expected_parent_guard,
+    )
+    _require_sealed_staging_records(
+        parent_fd,
+        staging_fd,
+        staging_name,
+        staging_identity,
+        expected_records,
+    )
+    try:
+        renameat2 = getattr(ctypes.CDLL(None, use_errno=True), "renameat2")
+    except AttributeError as error:
+        raise contracts.ContractError(
+            "atomic no-replace animation decision publication is unavailable"
+        ) from error
+    renameat2.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    renameat2.restype = ctypes.c_int
+    result = renameat2(
+        parent_fd,
+        os.fsencode(staging_name),
+        parent_fd,
+        os.fsencode(output_name),
+        1,
+    )
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number == errno.EEXIST:
+        raise contracts.ContractError(
+            f"refusing to replace animation decision output: {output_name}"
+        )
+    if error_number in {errno.ENOSYS, errno.EINVAL, errno.ENOTSUP}:
+        raise contracts.ContractError(
+            "atomic no-replace animation decision publication is unsupported"
+        )
+    raise OSError(error_number, os.strerror(error_number), output_name)
+
+
+def _remove_owned_staging_at(
+    parent_fd: int,
+    staging_fd: int,
+    staging_name: str,
+    identity: tuple[int, int],
+) -> None:
+    """Remove only our two known files through held descriptors.
+
+    Any unknown child, directory child, or identity mismatch is quarantined in
+    place and reported.  This function never traverses a path or follows a link.
+    """
+
+    held = os.fstat(staging_fd)
+    try:
+        parent_entry = os.stat(
+            staging_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError as error:
+        raise contracts.ContractError(
+            "animation decision staging directory disappeared; quarantined"
+        ) from error
+    if (
+        not stat.S_ISDIR(held.st_mode)
+        or not stat.S_ISDIR(parent_entry.st_mode)
+        or (held.st_dev, held.st_ino) != identity
+        or (parent_entry.st_dev, parent_entry.st_ino) != identity
+    ):
+        raise contracts.ContractError(
+            "animation decision staging identity changed; quarantined"
+        )
+    children = set(os.listdir(staging_fd))
+    unknown = children - PUBLISHED_FILE_NAMES
+    if unknown:
+        raise contracts.ContractError(
+            "animation decision staging contains unknown artifacts; quarantined: "
+            + ", ".join(sorted(unknown))
+        )
+    child_stats: dict[str, os.stat_result] = {}
+    for child in sorted(children):
+        current = os.stat(child, dir_fd=staging_fd, follow_symlinks=False)
+        if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
+            raise contracts.ContractError(
+                f"animation decision staging artifact is unsafe; quarantined: {child}"
+            )
+        child_stats[child] = current
+    os.fchmod(staging_fd, 0o700)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    for child in sorted(child_stats):
+        descriptor = os.open(child, flags, dir_fd=staging_fd)
+        try:
+            opened = os.fstat(descriptor)
+            expected = child_stats[child]
+            if (opened.st_dev, opened.st_ino) != (
+                expected.st_dev,
+                expected.st_ino,
+            ):
+                raise contracts.ContractError(
+                    f"animation decision staging artifact changed; quarantined: {child}"
+                )
+            os.fchmod(descriptor, 0o600)
+        finally:
+            os.close(descriptor)
+        os.unlink(child, dir_fd=staging_fd)
+    os.fsync(staging_fd)
+    if os.listdir(staging_fd):
+        raise contracts.ContractError(
+            "animation decision staging was repopulated; quarantined"
+        )
+    current = os.stat(staging_name, dir_fd=parent_fd, follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(current.st_mode)
+        or (current.st_dev, current.st_ino) != identity
+    ):
+        raise contracts.ContractError(
+            "animation decision staging parent entry changed; quarantined"
+        )
+    os.rmdir(staging_name, dir_fd=parent_fd)
+    os.fsync(parent_fd)
+
+
+def authenticate_presentation(
+    *,
+    presentation_receipt_path: Path,
+    expected_presentation_receipt_sha256: str,
+    animation_review_path: Path,
+    expected_animation_review_sha256: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    expected_receipt_sha256 = bridge._require_sha256(
+        expected_presentation_receipt_sha256,
+        "expected presentation receipt file sha256",
+    )
+    expected_review_sha256 = bridge._require_sha256(
+        expected_animation_review_sha256,
+        "expected animation review file sha256",
+    )
+    review_snapshot = _stable_file_snapshot(
+        animation_review_path,
+        "target-native animation review",
+    )
+    expected_review_record = review_snapshot["record"]
+    review_path = Path(expected_review_record["path"])
+    if expected_review_record["sha256"] != expected_review_sha256:
+        raise contracts.ContractError(
+            "animation review changed before presentation authentication"
+        )
+    try:
+        payload, receipt_record = presentation.load_presentation_receipt(
+            Path(presentation_receipt_path),
+            expected_receipt_sha256,
+            expected_source_review_sha256=expected_review_sha256,
+        )
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema") != presentation.PRESENTATION_SCHEMA
+            or payload.get("expected_source_review_sha256") != expected_review_sha256
+            or payload.get("source_review") != expected_review_record
+            or not isinstance(receipt_record, dict)
+            or set(receipt_record) != {"path", "sha256", "size_bytes"}
+            or receipt_record.get("sha256") != expected_receipt_sha256
+        ):
+            raise presentation.PresentationContractError(
+                "presentation receipt is not bound to the exact v4 review"
+            )
+        internal_receipt_sha256 = presentation.require_sha256(
+            payload.get("receipt_sha256"),
+            "presentation receipt canonical self-hash",
+        )
+        if internal_receipt_sha256 != presentation.hash_without(
+            payload,
+            "receipt_sha256",
+        ):
+            raise presentation.PresentationContractError(
+                "presentation receipt canonical self-hash failed"
+            )
+
+        receipt_path = presentation.resolve_regular_file(
+            Path(receipt_record["path"]),
+            "presentation receipt",
+        )
+        presentation.require_readonly_publication(receipt_path.parent)
+        receipt_bytes, receipt_guard = presentation.read_stable_bytes(
+            receipt_path,
+            "presentation receipt",
+        )
+        if (
+            str(receipt_path) != receipt_record["path"]
+            or presentation.sha256_bytes(receipt_bytes) != expected_receipt_sha256
+            or len(receipt_bytes) != receipt_record["size_bytes"]
+        ):
+            raise presentation.PresentationContractError(
+                "presentation receipt changed after authentication"
+            )
+
+        output = payload.get("output")
+        if not isinstance(output, dict):
+            raise presentation.PresentationContractError(
+                "presentation output object is missing"
+            )
+        output_path = presentation.resolve_regular_file(
+            Path(output.get("path", "")),
+            "presentation output video",
+        )
+        if (
+            output_path.parent != receipt_path.parent
+            or output_path.name != presentation.OUTPUT_VIDEO_NAME
+        ):
+            raise presentation.PresentationContractError(
+                "presentation output video must be next to its receipt"
+            )
+        output_bytes, output_guard = presentation.read_stable_bytes(
+            output_path,
+            "presentation output video",
+        )
+        if {
+            "path": str(output_path),
+            "sha256": presentation.sha256_bytes(output_bytes),
+            "size_bytes": len(output_bytes),
+        } != {key: output.get(key) for key in ("path", "sha256", "size_bytes")}:
+            raise presentation.PresentationContractError(
+                "presentation output video failed real-byte authentication"
+            )
+        presentation.require_same_guard(
+            receipt_guard,
+            receipt_path,
+            "presentation receipt",
+        )
+        presentation.require_same_guard(
+            output_guard,
+            output_path,
+            "presentation output video",
+        )
+        if (
+            _stable_file_snapshot(
+                review_path,
+                "target-native animation review",
+            )
+            != review_snapshot
+        ):
+            raise presentation.PresentationContractError(
+                "animation review changed during presentation authentication"
+            )
+        presentation.require_readonly_publication(receipt_path.parent)
+        publication = os.stat(receipt_path.parent, follow_symlinks=False)
+        authority_guards = {
+            "publication_directory": {
+                "path": str(receipt_path.parent),
+                "device": publication.st_dev,
+                "inode": publication.st_ino,
+                "mode": stat.S_IMODE(publication.st_mode),
+                "mtime_ns": publication.st_mtime_ns,
+                "ctime_ns": publication.st_ctime_ns,
+            },
+            "animation_review": review_snapshot["guard"],
+            "presentation_receipt": receipt_guard,
+            "output_video": output_guard,
+        }
+    except (presentation.PresentationContractError, OSError) as error:
+        raise contracts.ContractError(
+            f"presentation evidence authentication failed: {error}"
+        ) from error
+
+    evidence = {
+        "presentation_receipt": copy.deepcopy(receipt_record),
+        "expected_presentation_receipt_file_sha256": expected_receipt_sha256,
+        "presentation_receipt_sha256": internal_receipt_sha256,
+        "output_video": copy.deepcopy(output),
+    }
+    if set(evidence) != PRESENTATION_EVIDENCE_FIELDS:
+        raise contracts.ContractError("presentation evidence fields changed")
+    return evidence, authority_guards
+
+
 def authenticate_review(
     *,
     source_registry_manifest_path: Path,
@@ -54,18 +725,30 @@ def authenticate_review(
     animation_review_path: Path,
     expected_animation_review_sha256: str,
     artifact_roots: Mapping[str, Path] | None = None,
-) -> tuple[Path, str, Path, dict[str, Any], Path, dict[str, Any]]:
+) -> dict[str, Any]:
+    expected_source_registry_sha256 = bridge._require_sha256(
+        expected_source_registry_sha256,
+        "expected source registry file sha256",
+    )
     expected_animation_review_sha256 = bridge._require_sha256(
         expected_animation_review_sha256,
         "expected animation review file sha256",
     )
-    review_path = bridge._direct_file(
-        animation_review_path, "target-native animation review"
-    )
-    if bridge._sha256_file(review_path) != expected_animation_review_sha256:
-        raise contracts.ContractError(
-            "animation review does not match the external expected SHA-256"
-        )
+    primary_before = {
+        "source_asset_registry": _stable_file_snapshot(
+            source_registry_manifest_path,
+            "source asset registry",
+        ),
+        "source_asset": _stable_file_snapshot(
+            source_asset_path,
+            "source asset",
+        ),
+        "animation_review": _stable_file_snapshot(
+            animation_review_path,
+            "target-native animation review",
+        ),
+    }
+    review_path = Path(primary_before["animation_review"]["record"]["path"])
     roots = {
         name: bridge._uses_only_exact_tmp_bridge(
             Path(path),
@@ -75,7 +758,7 @@ def authenticate_review(
     }
     (
         registry_path,
-        _registry,
+        registry,
         source_request,
         source_profile,
         registry_mode,
@@ -93,7 +776,7 @@ def authenticate_review(
     (
         authenticated_review_path,
         review,
-        _animated_glb,
+        animated_glb,
         review_artifacts,
     ) = bridge.load_animation_review(
         review_path,
@@ -111,14 +794,55 @@ def authenticate_review(
         raise contracts.ContractError(
             "only a fully authenticated target-native v4 review can be decided"
         )
-    return (
-        registry_path,
-        registry_mode,
-        source_path,
-        source_asset,
-        review_path,
-        review_artifacts,
-    )
+    graph_paths = {
+        "source_asset_registry": registry_path,
+        "source_asset": source_path,
+        "animation_review": review_path,
+        "reviewed_animated_glb": animated_glb,
+        **{
+            f"source_artifact:{name}": path
+            for name, path in sorted(source_artifacts.items())
+        },
+        **{
+            f"review_artifact:{name}": path
+            for name, path in sorted(review_artifacts.items())
+        },
+    }
+    authority_graph = _snapshot_paths(graph_paths)
+    for name in ("source_asset_registry", "source_asset", "animation_review"):
+        if authority_graph[name] != primary_before[name]:
+            raise contracts.ContractError(
+                f"{name.replace('_', ' ')} changed during complete authentication"
+            )
+    if (
+        authority_graph["source_asset_registry"]["record"]["sha256"]
+        != expected_source_registry_sha256
+    ):
+        raise contracts.ContractError(
+            "source asset registry does not match the external expected SHA-256"
+        )
+    if (
+        authority_graph["animation_review"]["record"]["sha256"]
+        != expected_animation_review_sha256
+    ):
+        raise contracts.ContractError(
+            "animation review does not match the external expected SHA-256"
+        )
+    return {
+        "registry_path": registry_path,
+        "registry": registry,
+        "registry_mode": registry_mode,
+        "source_request": source_request,
+        "source_profile": source_profile,
+        "source_path": source_path,
+        "source_asset": source_asset,
+        "source_artifacts": source_artifacts,
+        "review_path": review_path,
+        "review": review,
+        "animated_glb": animated_glb,
+        "review_artifacts": review_artifacts,
+        "authority_graph": authority_graph,
+    }
 
 
 def freeze_decision(
@@ -128,12 +852,15 @@ def freeze_decision(
     source_asset_path: Path,
     animation_review_path: Path,
     expected_animation_review_sha256: str,
+    presentation_receipt_path: Path,
+    expected_presentation_receipt_sha256: str,
     decision: str,
     checks: Mapping[str, bool],
     caveats: Sequence[str],
     notes: str,
     user_explicit_decision: str,
     user_explicit_review_sha256: str,
+    user_explicit_presentation_receipt_sha256: str,
     output_root: Path,
     artifact_roots: Mapping[str, Path] | None = None,
 ) -> Path:
@@ -148,6 +875,22 @@ def freeze_decision(
     if user_explicit_review_sha256 != expected_animation_review_sha256:
         raise contracts.ContractError(
             "the user's explicit instruction is not bound to the expected review"
+        )
+    expected_presentation_receipt_sha256 = bridge._require_sha256(
+        expected_presentation_receipt_sha256,
+        "expected presentation receipt file sha256",
+    )
+    bridge._require_sha256(
+        user_explicit_presentation_receipt_sha256,
+        "user-explicit presentation receipt file sha256",
+    )
+    if (
+        user_explicit_presentation_receipt_sha256
+        != expected_presentation_receipt_sha256
+    ):
+        raise contracts.ContractError(
+            "the user's explicit instruction is not bound to the expected "
+            "presentation receipt"
         )
     if (
         not isinstance(checks, Mapping)
@@ -169,32 +912,61 @@ def freeze_decision(
     ):
         raise contracts.ContractError("decision notes/caveats are invalid")
 
-    (
-        registry_path,
-        registry_mode,
-        source_path,
-        source_asset,
-        review_path,
-        review_artifacts,
-    ) = authenticate_review(
-        source_registry_manifest_path=source_registry_manifest_path,
-        expected_source_registry_sha256=expected_source_registry_sha256,
-        source_asset_path=source_asset_path,
-        animation_review_path=animation_review_path,
+    authority_arguments = {
+        "source_registry_manifest_path": source_registry_manifest_path,
+        "expected_source_registry_sha256": expected_source_registry_sha256,
+        "source_asset_path": source_asset_path,
+        "animation_review_path": animation_review_path,
+        "expected_animation_review_sha256": expected_animation_review_sha256,
+        "artifact_roots": artifact_roots,
+    }
+    authority = authenticate_review(
+        **authority_arguments,
+    )
+    registry_mode = authority["registry_mode"]
+    source_asset = authority["source_asset"]
+    review_path = authority["review_path"]
+    review_artifacts = authority["review_artifacts"]
+    authority_graph = authority["authority_graph"]
+    presentation_evidence, presentation_guards = authenticate_presentation(
+        presentation_receipt_path=presentation_receipt_path,
+        expected_presentation_receipt_sha256=(expected_presentation_receipt_sha256),
+        animation_review_path=review_path,
         expected_animation_review_sha256=expected_animation_review_sha256,
-        artifact_roots=artifact_roots,
     )
-    output_root = bridge._new_output_path(Path(output_root), "output")
-    output_root.parent.mkdir(parents=True, exist_ok=True)
-    bridge._new_output_path(output_root, "output")
-    staging = Path(
-        tempfile.mkdtemp(
-            prefix=f".{output_root.name}.",
-            suffix=".staging",
-            dir=output_root.parent,
+    if (
+        presentation_guards["animation_review"]
+        != authority_graph["animation_review"]["guard"]
+    ):
+        raise contracts.ContractError(
+            "animation review authority changed between review and presentation "
+            "authentication"
         )
-    )
+    (
+        output_root,
+        lexical_output_parent,
+        parent_fd,
+        output_parent_guard,
+    ) = _open_output_parent(Path(output_root))
+    staging_fd = -1
+    staging_name = ""
+    staging_identity = (0, 0)
+    published = False
     try:
+        _require_parent_path_matches_fd(
+            lexical_output_parent,
+            output_root.parent,
+            parent_fd,
+            output_parent_guard,
+        )
+        staging_name, staging_fd, staging_identity = _create_staging_at(
+            parent_fd,
+            output_root.name,
+        )
+        output_parent_guard = _directory_guard_from_fd(
+            parent_fd,
+            output_root.parent,
+        )
         state = "research_candidate" if decision == APPROVED else "rejected"
         next_gate = (
             "ue_import_metric_trajectory_audio_and_apartment_media"
@@ -211,52 +983,151 @@ def freeze_decision(
             },
             "caveats": list(caveats),
             "notes": notes,
-            "review": bridge._absolute_record(review_path),
+            "review": copy.deepcopy(authority_graph["animation_review"]["record"]),
             "state_classification": state,
             "formal_dataset_registration_authorized": False,
             "next_gate": next_gate,
         }
         record["decision_sha256"] = bridge._hash_without(record, "decision_sha256")
-        decision_path = contracts.write_json_no_replace(
-            staging / "animation_decision.json", record
+        decision_record = _write_json_at(
+            staging_fd,
+            "animation_decision.json",
+            record,
         )
         receipt: dict[str, Any] = {
             "schema": RECEIPT_SCHEMA,
             "status": "frozen",
             "state_classification": state,
             "formal_dataset_registration_authorized": False,
-            "source_asset_registry": bridge._absolute_record(registry_path),
+            "source_asset_registry": copy.deepcopy(
+                authority_graph["source_asset_registry"]["record"]
+            ),
             "expected_source_asset_registry_file_sha256": (
                 expected_source_registry_sha256
             ),
             "source_asset_registry_validation_mode": registry_mode,
-            "source_asset": bridge._absolute_record(source_path),
-            "animation_review": bridge._absolute_record(review_path),
+            "source_asset": copy.deepcopy(authority_graph["source_asset"]["record"]),
+            "animation_review": copy.deepcopy(
+                authority_graph["animation_review"]["record"]
+            ),
             "expected_animation_review_file_sha256": (expected_animation_review_sha256),
+            "presentation_evidence": presentation_evidence,
             "user_instruction_binding": {
                 "decision": decision,
                 "review_sha256": user_explicit_review_sha256,
+                "presentation_receipt_file_sha256": (
+                    user_explicit_presentation_receipt_sha256
+                ),
                 "all_six_checks_explicit": True,
             },
             "user_instruction_authority": dict(bridge.USER_INSTRUCTION_AUTHORITY),
             "authenticated_review_artifact_count": len(review_artifacts),
-            "animation_decision": bridge._relative_record(decision_path, staging),
+            "animation_decision": decision_record,
             "decision_sha256": record["decision_sha256"],
         }
         receipt["receipt_sha256"] = bridge._hash_without(receipt, "receipt_sha256")
-        contracts.write_json_no_replace(
-            staging / "decision_freeze_receipt.json", receipt
+        receipt_file_record = _write_json_at(
+            staging_fd,
+            "decision_freeze_receipt.json",
+            receipt,
         )
-        immutable._seal_readonly_tree(staging)
-        if output_root.exists() or output_root.is_symlink():
+        _seal_staging_at(staging_fd)
+        staging_stat = os.fstat(staging_fd)
+        if (
+            not stat.S_ISDIR(staging_stat.st_mode)
+            or (staging_stat.st_dev, staging_stat.st_ino) != staging_identity
+        ):
+            raise contracts.ContractError(
+                "animation decision staging directory identity changed"
+            )
+
+        final_authority = authenticate_review(**authority_arguments)
+        if final_authority != authority:
+            raise contracts.ContractError(
+                "complete source and review authority graph changed before "
+                "decision publication"
+            )
+        final_presentation, final_presentation_guards = authenticate_presentation(
+            presentation_receipt_path=presentation_receipt_path,
+            expected_presentation_receipt_sha256=(expected_presentation_receipt_sha256),
+            animation_review_path=final_authority["review_path"],
+            expected_animation_review_sha256=expected_animation_review_sha256,
+        )
+        if (
+            final_presentation != presentation_evidence
+            or final_presentation_guards != presentation_guards
+            or final_presentation_guards["animation_review"]
+            != final_authority["authority_graph"]["animation_review"]["guard"]
+        ):
+            raise contracts.ContractError(
+                "presentation evidence changed before decision publication"
+            )
+        _require_parent_path_matches_fd(
+            lexical_output_parent,
+            output_root.parent,
+            parent_fd,
+            output_parent_guard,
+        )
+        staging_entry = os.stat(
+            staging_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISDIR(staging_entry.st_mode)
+            or (staging_entry.st_dev, staging_entry.st_ino) != staging_identity
+        ):
+            raise contracts.ContractError(
+                "animation decision staging parent entry changed"
+            )
+        try:
+            os.stat(
+                output_root.name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            pass
+        else:
             raise contracts.ContractError(
                 "animation decision output appeared concurrently"
             )
-        os.rename(staging, output_root)
-        return output_root / decision_path.name
-    except Exception:
-        immutable._remove_staging_tree(staging)
+        _atomic_publish_no_replace(
+            parent_fd,
+            staging_name,
+            output_root.name,
+            staging_fd=staging_fd,
+            staging_identity=staging_identity,
+            expected_records={
+                decision_record["path"]: decision_record,
+                receipt_file_record["path"]: receipt_file_record,
+            },
+            lexical_parent=lexical_output_parent,
+            physical_parent=output_root.parent,
+            expected_parent_guard=output_parent_guard,
+        )
+        published = True
+        os.fsync(parent_fd)
+        return output_root / "animation_decision.json"
+    except Exception as error:
+        if not published and staging_fd >= 0 and staging_name:
+            try:
+                _remove_owned_staging_at(
+                    parent_fd,
+                    staging_fd,
+                    staging_name,
+                    staging_identity,
+                )
+            except Exception as cleanup_error:
+                raise contracts.ContractError(
+                    f"{error}; animation decision staging was quarantined: "
+                    f"{cleanup_error}"
+                ) from error
         raise
+    finally:
+        if staging_fd >= 0:
+            os.close(staging_fd)
+        os.close(parent_fd)
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -266,6 +1137,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-asset", required=True, type=Path)
     parser.add_argument("--animation-review", required=True, type=Path)
     parser.add_argument("--expected-animation-review-sha256", required=True)
+    parser.add_argument("--presentation-receipt", required=True, type=Path)
+    parser.add_argument("--expected-presentation-receipt-sha256", required=True)
     parser.add_argument("--decision", choices=DECISIONS, required=True)
     parser.add_argument(
         "--user-explicit-decision",
@@ -282,6 +1155,15 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=(
             "SHA-256 of the exact review covered by the user's instruction; "
             "it must equal --expected-animation-review-sha256."
+        ),
+    )
+    parser.add_argument(
+        "--user-explicit-presentation-receipt-sha256",
+        required=True,
+        help=(
+            "Raw file SHA-256 of the exact sealed presentation receipt covered "
+            "by the user's instruction; it must equal "
+            "--expected-presentation-receipt-sha256."
         ),
     )
     for name, flag in CHECK_ARGUMENTS.items():
@@ -313,12 +1195,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             source_asset_path=args.source_asset,
             animation_review_path=args.animation_review,
             expected_animation_review_sha256=(args.expected_animation_review_sha256),
+            presentation_receipt_path=args.presentation_receipt,
+            expected_presentation_receipt_sha256=(
+                args.expected_presentation_receipt_sha256
+            ),
             decision=args.decision,
             checks={name: getattr(args, name) for name in CHECK_ARGUMENTS},
             caveats=args.caveat,
             notes=args.notes,
             user_explicit_decision=args.user_explicit_decision,
             user_explicit_review_sha256=args.user_explicit_review_sha256,
+            user_explicit_presentation_receipt_sha256=(
+                args.user_explicit_presentation_receipt_sha256
+            ),
             output_root=args.output_root,
             artifact_roots=bridge.parse_artifact_roots(args.artifact_root),
         )
