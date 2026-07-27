@@ -13,10 +13,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.generated_animal_forward_contract import (
     CANONICAL_TARGET_FRONT_AXIS,
     ForwardContractError,
+    MOTION_DONOR_ARTIFACTS,
     assert_declared_motion_basis,
+    assert_declared_motion_donor_artifact,
     build_forward_declaration,
     expected_motion_basis,
     load_forward_declaration,
+    sha256_file,
 )
 
 
@@ -72,6 +75,22 @@ def test_tampered_declaration_fails_authentication(workspace):
         load_forward_declaration(path)
 
 
+def test_missing_original_head_end_evidence_fails_closed(workspace):
+    tmp_path, glb, evidence = workspace
+    declaration = build_forward_declaration(
+        asset_workspace="test_asset_v1",
+        input_glb=glb,
+        reviewed_source_front_yaw_deg=0.0,
+        head_end_decision_source="human_review",
+        head_end_evidence=evidence,
+        motion_donor_tag=DONOR,
+    )
+    path = write_declaration(tmp_path, declaration)
+    evidence.unlink()
+    with pytest.raises(ForwardContractError, match="evidence is missing"):
+        load_forward_declaration(path)
+
+
 def test_non_canonical_target_axis_is_rejected(workspace):
     tmp_path, glb, evidence = workspace
     declaration = build_forward_declaration(
@@ -108,3 +127,20 @@ def test_motion_basis_deviation_is_a_contract_error():
         assert_declared_motion_basis(DONOR, 180, "matched")
     with pytest.raises(ForwardContractError):
         assert_declared_motion_basis(DONOR, 0, "swapped")
+
+
+def test_motion_donor_tag_authenticates_the_supplied_bytes(tmp_path, monkeypatch):
+    donor = tmp_path / "Dog.glb"
+    donor.write_bytes(b"approved-motion-donor")
+    monkeypatch.setitem(
+        MOTION_DONOR_ARTIFACTS,
+        DONOR,
+        {
+            "sha256": sha256_file(donor),
+            "size_bytes": donor.stat().st_size,
+        },
+    )
+    assert_declared_motion_donor_artifact(DONOR, donor)
+    donor.write_bytes(b"different-motion-donor")
+    with pytest.raises(ForwardContractError, match="does not match"):
+        assert_declared_motion_donor_artifact(DONOR, donor)

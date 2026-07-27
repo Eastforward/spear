@@ -18,25 +18,32 @@ vision-answers-attribute), competitors mapped 2026-07-26 (JAEGER, Hear You
 Are, SAVVY, DAVE, AV-SpeakerBench).  The pipeline hardening below is the
 prerequisite: instance diversity needs new assets to ship stably.
 
-## Branch state (all unpushed, unmerged; owner reviews before merge)
+## Branch state
 
 - SPEAR `/data/jzy/code/AVEngine/external/SPEAR` branch
-  `cc-asset-pipeline-hardening` — 15 commits from `41267bac`, latest
-  `984fcbd6`.  Forward contract suite + review pages + warm services +
-  leveling/repair + all decision records + runbook.
+  `cc-asset-pipeline-hardening` tracks
+  `eastforward/cc-asset-pipeline-hardening`.  The baseline before this
+  admission-runner milestone is `97469e3e`; use `git rev-parse HEAD` for the
+  current reviewed tip.  The admitted route is per-invocation and includes
+  the forward contract, fail-closed v3 runner, mesh-foot leveling,
+  conditional gentle repair, automatic post-repair gates and runbook.
 - habitat-native `/data/jzy/code/AVEngine-habitat-native` branch
-  `cc-instance-attr-generalization` — 3 commits from `f9f4021`
-  (`54c08db` coat registration + provenance split + fail-closed registry
-  validator, `674ecd0` checkpoint/debt docs, `24db77b` Shiba coat).
-  Full fast-unit suite green (1,610 pass).
+  `cc-instance-attr-generalization` currently resolves to `b45c23a`.
+  Coat registration, provenance separation and the fail-closed registry
+  validator are covered by the full fast-unit suite (1,610 pass, 1 skip).
+- Native integration target `feature/habitat-native-avengine` currently
+  resolves to `1fd3537`.  Validate the merge on an isolated integration
+  branch/worktree before changing that target branch.
 - A separate session produced worktree
   `/data/jzy/code/AVEngine-habitat-native-acoustic-fix` (branch
   `cc-acoustic-material-fidelity`) — not mine; do not touch.
 
 ## Live resident services (survive sessions)
 
-- TokenRig warm bpy server: `tools/dev_warm_services.sh status|start|stop`,
-  port 47652, GPU 3; cold start ~390 s CPU-serial, hence resident.
+- No TokenRig resident is admitted.  The old `0.0.0.0:47652` process was
+  stopped on 2026-07-27.  The experimental helper authenticates generations
+  and binds loopback, but upstream `demo.py` has no real reuse mode and the
+  pickle API has no client authentication; keep TokenRig per-invocation.
 - Review HTTP server: `python3 -m http.server 8765 --bind 127.0.0.1` from
   `tmp/new_animal_assets/` (serves all review pages/media; VSCode forwards).
 
@@ -90,8 +97,8 @@ W1 2D wave COMPLETE, all decisions QUEUED at the owner gate (03:30):
 - Once owner accepts statics: Pixal3D batch (no rigging) -> watertight ->
   emitter-anchor measurement (grille/bell/speaker semantics — needs a
   static variant of the emitter tool, muzzle-quantile does not apply) ->
-  registry rows. Once a 2D animal passes: TokenRig warm server chain as
-  per runbook, Shiba live-readback bundle batched with it.
+  registry rows. Once a 2D animal passes: run the isolated TokenRig chain as
+  per the corrected runbook, then batch the Shiba live-readback bundle with it.
 
 ## Backlog — detailed (dependency order)
 
@@ -126,10 +133,18 @@ W1 2D wave COMPLETE, all decisions QUEUED at the owner gate (03:30):
 
 ### 管线待办（发现了但未做）
 
-5. 权重修复内置进 runner — 现为链外手动；给
-   run_target_native_generated_quadruped_review.py 加 weight_repair 阶段
-   （温和参数：threshold 0.02, component-parent-lock, rings 4），置于
-   deformation 审计前、失败才触发或恒跑后复审。
+5. **已完成（后续接力）**：权重修复已内置进
+   `run_target_native_generated_quadruped_review.py`。默认 `auto` 在首次
+   deformation 未通过时触发温和参数（threshold 0.02,
+   component-parent-lock, rings 4），认证 repair authority 后重跑 gait
+   与 deformation；复审未通过会在渲染前 fail closed。runner v3 还会
+   逐段认证 heading/rig/support/retarget/gait/deformation/repair 的输入、
+   参数与语义证据；legacy 自由参数模式只能 `--validate-only`，不能产出
+   结果。2026-07-27 先对柴犬既有全链产物重放所有 v3 gate，随后又在
+   `review_run_v3_runner_auto_replay_20260727_codex1/` 用当前 v3 runner
+   完整重跑：初始 deformation=rejected，自动修复后 gait=pass、
+   deformation=passed，六个 H.264 视图均通过回读；最终结果仍明确保持
+   `research_candidate_pending_human_review` 与 formal registration=false。
 6. VLM 审片 triage 实跑校准 — 收集器
    `tools/build_vlm_review_calibration_set.py` 已就绪；扩大扫描根到动画
    决策批次目录，跑 VLM 盲判 vs 人工决定一致率，达标才可上岗（治理：
@@ -164,7 +179,7 @@ W1 2D wave COMPLETE, all decisions QUEUED at the owner gate (03:30):
 2) SPEAR/docs/generated_animal_hardened_route_runbook.md（操作手册，环境表+踩坑）
 3) /data/jzy/code/AVEngine-habitat-native/docs/planning/INDOOR_SOUND_SOURCE_ASSET_CANDIDATES_20260727.md（声源候选）
 硬约束：一切方案必须泛化（注册表/契约驱动，禁 per-asset 特例）；人工触点只有三个设计门；fail-closed；冻结产物不动；每条 git 命令显式 cd；SPEAR git status 用 -uno。
-当前接力点：柴犬标准5（查 UAT cook 是否完成→orbit 实测 z→注册表条目→回读门 dry-run），然后 Corgi+英短批量开跑。常驻服务：dev_warm_services.sh status（TokenRig 47652）、审核服务器 8765。
+当前接力点：柴犬标准5（查 UAT cook 是否完成→orbit 实测 z→注册表条目→回读门 dry-run），然后 Corgi+英短批量开跑。TokenRig 禁止常驻复用，按单次隔离流程运行；审核服务器为 8765。
 ```
 
 ## Key environment facts

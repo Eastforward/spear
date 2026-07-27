@@ -28,3 +28,11 @@ def test_support_plane_leveling_is_semantic_rigid_and_pre_animation():
     assert '"skeleton_hierarchy_changed": False' in text
     assert '"skin_weights_changed": False' in text
     assert "refusing to replace" in text
+
+
+def test_mesh_foot_authority_rejects_sparse_contact_instead_of_falling_back():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert "mesh-foot-bottoms captured fewer than 10 vertices" in text
+    assert "return np.asarray(anchor, dtype=np.float64), 0" not in text
+    assert '"mesh_foot_contact_band_sizes": foot_point_band_sizes' in text

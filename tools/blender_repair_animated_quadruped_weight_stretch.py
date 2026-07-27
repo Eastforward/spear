@@ -116,7 +116,7 @@ def parse_argv():
     parser.add_argument(
         "--extension-threshold",
         type=float,
-        default=0.006,
+        default=0.02,
         help="Maximum positive edge extension divided by rest bbox diagonal.",
     )
     parser.add_argument("--minimum-stretch-ratio", type=float, default=1.8)
@@ -130,7 +130,7 @@ def parse_argv():
     parser.add_argument(
         "--component-rings",
         type=int,
-        default=0,
+        default=4,
         help=(
             "Graph-ring falloff used only by component-parent-lock. A nonzero "
             "value prevents a rigid repaired patch from creating a new seam."
@@ -139,7 +139,7 @@ def parse_argv():
     parser.add_argument(
         "--repair-mode",
         choices=("edge-average", "component-lock", "component-parent-lock"),
-        default="edge-average",
+        default="component-parent-lock",
         help=(
             "edge-average is the conservative first pass. component-lock "
             "assigns one shared transform mixture to every connected residual "
@@ -1228,7 +1228,8 @@ def main():
     maximum_rest_geometry_delta = float(
         np.linalg.norm(final_vertices - rest_vertices, axis=1).max(initial=0.0)
     )
-    if maximum_rest_geometry_delta > max(rest_diagonal * 1.0e-6, 1.0e-8):
+    maximum_allowed_rest_geometry_delta = max(rest_diagonal * 1.0e-6, 1.0e-8)
+    if maximum_rest_geometry_delta > maximum_allowed_rest_geometry_delta:
         raise RuntimeError(
             "weight repair changed rest geometry: "
             f"maximum_delta={maximum_rest_geometry_delta}"
@@ -1273,6 +1274,9 @@ def main():
             "rest_geometry_topology_fingerprint_before": topology_before,
             "rest_geometry_topology_fingerprint_after": topology_after,
             "maximum_rest_geometry_delta": maximum_rest_geometry_delta,
+            "maximum_allowed_rest_geometry_delta": (
+                maximum_allowed_rest_geometry_delta
+            ),
         },
         "front_axis": args.front_axis,
         "semantic_rig": {

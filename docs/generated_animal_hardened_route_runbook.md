@@ -109,17 +109,21 @@ blender -b --python-exit-code 2 --python tools/blender_create_watertight_texture
 Render a turntable (`tools/blender_render_forward_turntable.py`), encode
 mp4s, owner takes a static look.
 
-## 5. TokenRig via the resident warm server
+## 5. TokenRig (isolated per invocation)
 
-```
-tools/dev_warm_services.sh start    # bpy import is CPU-serial, ~390 s; not parallelizable
-tools/dev_warm_services.sh status   # wait for READY; server survives the session and serves every asset
-```
-Then the demo (scripted precedent: the Shiba run script; seed 42, GPU
-pinned, hygiene sitecustomize on PYTHONPATH, `--use_transfer` WITHOUT
-`--use_skeleton`, checkpoint `grpo_1400.ckpt`).  Success = `[OK] Exported`
-in run.log + non-empty `tokenrig_native.glb` + runtime markers; the load
-audit lives with the resident server under `tmp/dev_warm_services/`.
+Use the scripted Shiba precedent with seed 42, a dedicated free port, GPU
+pinned, hygiene `sitecustomize` on `PYTHONPATH`, `--use_transfer` WITHOUT
+`--use_skeleton`, and checkpoint `grpo_1400.ckpt`.  The runtime patch forces
+the child service to `127.0.0.1` and writes a per-process generation into its
+marker/load audit.  Success = `[OK] Exported` in `run.log`, a non-empty
+`tokenrig_native.glb`, and matching runtime markers.
+
+Do not use or advertise the experimental resident helper as batch reuse.
+The tracked upstream `demo.py` still starts its own bpy child unconditionally,
+and the pickle-based local API has no client authentication.  A resident
+process would extend that exposure without eliminating the child start.
+Warm reuse is deferred until there is an explicit authenticated consumer
+launcher with per-job audit binding.
 
 ## 6. Forward contract chain (single-point forward truth)
 
@@ -140,29 +144,50 @@ tools/build_generated_animal_forward_declaration.py --asset-workspace <ws> \
 ```
 Motion basis is a DONOR CONSTANT (`quaternius_universal_quadruped_v1` =
 yaw0/matched).  Needing anything else means the declaration is wrong; fix
-it there, never at retarget.
+it there, never at retarget.  Declaration-mode execution authenticates both
+the declared target GLB (path, size and SHA-256) and the donor tag's registered
+GLB bytes before creating an output directory.  The old free-parameter mode
+is retained only for `--validate-only` plan inspection and cannot execute or
+publish a hardened-route result.
 
-## 7. Review runner (heading -> leveling -> retarget -> gait -> deformation -> renders)
+## 7. Review runner (heading -> leveling -> retarget -> gait -> deformation -> repair/re-audit -> renders)
 
 ```
 /data/jzy/miniconda3/envs/spear-env/bin/python tools/run_target_native_generated_quadruped_review.py \
   --target-rig-glb <tokenrig_native.glb> \
   --forward-declaration $WS/forward_contract_v1/forward_declaration.json \
   --source-motion-glb /data/jzy/code/AVEngine/assets/mesh_library/quaternius_animalpack/Dog.glb \
-  --support-plane-source mesh-foot-bottoms \
   --output-root $WS/review_run_v1 --blender /data/jzy/.local/bin/blender
 ```
 `mesh-foot-bottoms` (commit `4e4fbf34`) is the correct plane source for
 generated rigs: bone tails protrude unevenly below the mesh and bone-tip
-leveling leaves the asset floating and pitched.  `--preview-only` exists
-for cheap triage.  Gait audit fails closed on backward/sideways walks.
+leveling leaves the asset floating and pitched.  It is now the runner
+default, and a missing mesh contact band fails closed instead of silently
+falling back to a bone endpoint.  `--preview-only` exists for cheap triage.
+Gait audit fails closed on backward/sideways walks.
+
+The v3 runner authenticates every stage boundary, not only the subprocess
+exit code: heading evidence and rigid preservation; rig coordinate/skin
+invariants; support-plane evidence, exact limits and four non-trivial mesh
+contact bands; retarget target/donor/export identities, fixed solver and +X
+Walk/Idle export; gait semantics; deformation thresholds, both required
+actions and sample counts; and the exact gentle-repair recipe plus protected
+topology/animation fingerprints.  A manifest that merely writes
+`status=pass` or changes a threshold no longer reaches rendering.
 
 ## 8. Deterministic weight repair (standard stage, not an exception)
 
 TokenRig native weights exceed the Walking gate at full amplitude on every
-measured generated asset.  The gentle recipe passes at amp 1.0 with no
-visual regression (verified Collie + Shiba); the aggressive default
-threshold causes visible poke artifacts — do not use it:
+measured generated asset.  The review runner now defaults to
+`--weight-repair-policy auto`: a non-passing initial deformation audit
+triggers the reviewed gentle recipe, authenticates its authority manifest,
+and re-runs gait and deformation before any render.  Repair incomplete,
+post-repair manual review and post-repair rejection all stop the run.
+`--weight-repair-policy never` is fail-closed; `always` is available for
+controlled revalidation.
+
+The standalone tool now also defaults to the same gentle recipe (verified
+Collie + Shiba at amp 1.0).  An explicit equivalent invocation is:
 ```
 blender -b --python-exit-code 2 --python tools/blender_repair_animated_quadruped_weight_stretch.py -- \
   --input <review_run>/04_motion/target_animated.glb --output <repaired.glb> \
@@ -170,9 +195,9 @@ blender -b --python-exit-code 2 --python tools/blender_repair_animated_quadruped
   --repair-mode component-parent-lock --component-rings 4 \
   --extension-threshold 0.02 --maximum-passes 6 --inner-iterations 4
 ```
-Re-run the deformation audit (strict rotation-invariant decision metric)
-and the gait audit on the repaired GLB, re-render the six views, build the
-final review page.  Owner final review is the third and last touchpoint.
+The runner performs the required repaired-GLB gait/deformation audits and
+six-view re-render automatically.  Owner final review remains the third and
+last touchpoint.
 
 ## 9. UE import (headless commandlet, no GUI)
 

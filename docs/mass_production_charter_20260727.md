@@ -43,8 +43,9 @@ W3: medium-risk coats (Golden, Poodle, Pomeranian, Ragdoll, Maine Coon,
 W4: Dachshund (stress), OFAT variant batches over every shipped animal,
     static appearance-pair batches, dry-sound registry completion.
 
-Batch FLUX/Pixal jobs per wave (one model load per batch); TokenRig via
-the resident warm server; UE imports batched per wave with one cook.
+Batch FLUX/Pixal jobs per wave (one model load per batch); keep TokenRig
+per-invocation until an authenticated consumer-side reuse launcher exists;
+UE imports are batched per wave with one cook.
 
 ## Supervision protocol (assistant, per artifact, before any owner gate)
 

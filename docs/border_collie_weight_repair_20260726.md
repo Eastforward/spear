@@ -20,7 +20,7 @@ defect (13 of 115,019 edges over gate).
 
 | run | parameters | Walking worst (rot-inv) | changed vertices | visual |
 |---|---|---|---|---|
-| v1 aggressive | component-parent-lock, rings 3, threshold 0.006 (default), passes 12 | 0.0283 pass | 17,124 | REJECT-class regression: new dark poke/speckle artifacts on chest and forelegs, caught by project owner |
+| v1 aggressive | component-parent-lock, rings 3, threshold 0.006 (historical default), passes 12 | 0.0283 pass | 17,124 | REJECT-class regression: new dark poke/speckle artifacts on chest and forelegs, caught by project owner |
 | v2 gentle | component-parent-lock, rings 4, threshold 0.02, passes 6 | 0.0256 pass | 6,779 | clean at both peak-tear phases; visually equivalent to pre-repair |
 
 Both runs: geometry/topology/action-curve fingerprints unchanged (hard
@@ -33,9 +33,9 @@ gates), gait-direction audit `forward` (stance drift ~172.6 deg), Idle
   that nothing new appeared.  v1 passed every automatic gate while
   introducing visible skin pokes from over-broad weight reassignment.
 - Prefer the smallest seed set that clears the acceptance gate
-  (`--extension-threshold` at ~0.02) over the tool default 0.006; broad
-  reseeding touches an order of magnitude more vertices for no acceptance
-  benefit.
+  (`--extension-threshold` at ~0.02).  The tool and hardened runner now use
+  this owner-reviewed gentle default; the historical 0.006 setting broadly
+  reseeded an order of magnitude more vertices for no acceptance benefit.
 - The hind-leg membrane still exists geometrically; this repair stops the
   tearing but true removal needs topology separation or better multi-view
   generation.  Recorded as an open item for the generation route.

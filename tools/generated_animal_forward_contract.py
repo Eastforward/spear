@@ -41,6 +41,20 @@ MOTION_DONOR_BASIS = {
     },
 }
 
+# Donor tags are identities, not aliases for arbitrary GLBs that happen to
+# expose similarly named actions.  Keep the approved source bytes independent
+# from the per-asset declaration so historical declarations remain readable
+# while every new execution authenticates the actual donor supplied to the
+# runner.
+MOTION_DONOR_ARTIFACTS = {
+    "quaternius_universal_quadruped_v1": {
+        "sha256": (
+            "bf9d2fdaf74a36be453edf4516a0b13b042cfce2d2614e0bf3ee24d40d553032"
+        ),
+        "size_bytes": 143692,
+    },
+}
+
 HEAD_END_DECISION_SOURCES = (
     "human_review",
     "human_confirming_estimator",
@@ -159,6 +173,22 @@ def load_forward_declaration(path: Path) -> dict:
         raise ForwardContractError(
             "forward declaration head-end decision must record a human source"
         )
+    evidence_path_value = head_end.get("evidence_path")
+    if not isinstance(evidence_path_value, str) or not evidence_path_value:
+        raise ForwardContractError(
+            "forward declaration head-end evidence path is missing"
+        )
+    evidence_path = Path(evidence_path_value).resolve()
+    if (
+        evidence_path.is_symlink()
+        or not evidence_path.is_file()
+        or evidence_path.stat().st_size <= 0
+        or str(evidence_path) != evidence_path_value
+        or head_end.get("evidence_sha256") != sha256_file(evidence_path)
+    ):
+        raise ForwardContractError(
+            "forward declaration head-end evidence is missing or changed"
+        )
     donor_tag = declaration.get("motion_donor_tag")
     if donor_tag not in MOTION_DONOR_BASIS:
         raise ForwardContractError(
@@ -179,6 +209,34 @@ def expected_motion_basis(motion_donor_tag: str) -> dict:
             "MOTION_DONOR_BASIS before use"
         )
     return dict(MOTION_DONOR_BASIS[motion_donor_tag])
+
+
+def assert_declared_motion_donor_artifact(
+    motion_donor_tag: str,
+    source_motion_glb: Path,
+) -> None:
+    expected = MOTION_DONOR_ARTIFACTS.get(motion_donor_tag)
+    if expected is None:
+        raise ForwardContractError(
+            f"motion donor {motion_donor_tag!r} has no authenticated artifact"
+        )
+    source_motion_glb = Path(source_motion_glb).resolve()
+    if (
+        source_motion_glb.is_symlink()
+        or not source_motion_glb.is_file()
+        or source_motion_glb.stat().st_size <= 0
+    ):
+        raise ForwardContractError(
+            f"missing or unsafe motion donor artifact: {source_motion_glb}"
+        )
+    if (
+        source_motion_glb.stat().st_size != expected["size_bytes"]
+        or sha256_file(source_motion_glb) != expected["sha256"]
+    ):
+        raise ForwardContractError(
+            "motion donor artifact does not match the declared donor tag "
+            f"{motion_donor_tag!r}: {source_motion_glb}"
+        )
 
 
 def assert_declared_motion_basis(

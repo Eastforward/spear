@@ -135,12 +135,16 @@ def lower_endpoint(record):
 def mesh_foot_bottom_point(world_vertices, anchor, mesh_diagonal):
     """Ground-contact point of one foot: among mesh vertices within a
     horizontal capture radius of the foot-bone anchor, take the lowest-z
-    vertex band and return its centroid at the true minimum height.  Falls
-    back to the bone anchor when the capture region is empty."""
+    vertex band and return its centroid at the true minimum height.  A sparse
+    or empty capture is rejected instead of silently reverting to the
+    bone-endpoint mode that this plane source was selected to replace."""
     horizontal = np.linalg.norm(world_vertices[:, :2] - anchor[:2], axis=1)
     capture = world_vertices[horizontal < mesh_diagonal*0.05]
     if len(capture) < 10:
-        return np.asarray(anchor, dtype=np.float64), 0
+        raise RuntimeError(
+            "mesh-foot-bottoms captured fewer than 10 vertices around "
+            f"semantic foot anchor {anchor.tolist()}: captured={len(capture)}"
+        )
     z_floor = float(capture[:, 2].min())
     band = capture[capture[:, 2] <= z_floor + max(0.004, mesh_diagonal*0.003)]
     return (

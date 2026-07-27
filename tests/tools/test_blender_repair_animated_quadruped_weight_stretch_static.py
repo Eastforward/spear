@@ -54,6 +54,18 @@ def test_repair_supports_conservative_and_residual_component_modes():
     assert "top_k_normalize" in text
 
 
+def test_repair_defaults_to_the_owner_reviewed_gentle_recipe():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert '"--extension-threshold",' in text
+    assert "default=0.02" in text
+    assert '"--component-rings",' in text
+    assert "default=4" in text
+    assert 'default="component-parent-lock"' in text
+    assert 'parser.add_argument("--maximum-passes", type=int, default=6)' in text
+    assert 'parser.add_argument("--inner-iterations", type=int, default=4)' in text
+
+
 def test_repair_uses_manual_front_axis_not_direction_inference():
     text = SCRIPT.read_text(encoding="utf-8")
 
