@@ -96,12 +96,16 @@ def spear_artifact(path: Path) -> dict[str, Any]:
 
 
 def license_records() -> list[dict[str, Any]]:
+    models_root = MODELS_ROOT.absolute()
+    if models_root.is_symlink() or not models_root.is_dir():
+        raise contracts.ContractError("/data/models root is missing or unsafe")
+    resolved_root = models_root.resolve()
     records = []
     for spec in LICENSE_SPECS:
-        logical = MODELS_ROOT / spec["path"]
-        resolved = logical.resolve()
+        logical = models_root / spec["path"]
+        resolved = logical.resolve(strict=True)
         try:
-            resolved.relative_to(MODELS_ROOT.resolve())
+            relative = resolved.relative_to(resolved_root)
         except ValueError as error:
             raise contracts.ContractError("model license escaped /data/models") from error
         if (
@@ -110,7 +114,22 @@ def license_records() -> list[dict[str, Any]]:
             or _sha256_file(resolved) != spec["sha256"]
         ):
             raise contracts.ContractError(f"model license changed: {logical}")
-        records.append({"root_id": "models_root", **copy.deepcopy(spec)})
+        # Hugging Face snapshot license entries are normally symlink leaves.
+        # Preserve the pinned bytes while recording their direct content-addressed
+        # blob path so downstream consumers never need to weaken symlink checks.
+        direct = resolved_root / relative
+        if direct.is_symlink() or direct.resolve(strict=True) != resolved:
+            raise contracts.ContractError(
+                f"resolved model license is not a direct file: {resolved}"
+            )
+        records.append(
+            {
+                "root_id": "models_root",
+                "path": relative.as_posix(),
+                "sha256": spec["sha256"],
+                "size_bytes": spec["size_bytes"],
+            }
+        )
     return records
 
 

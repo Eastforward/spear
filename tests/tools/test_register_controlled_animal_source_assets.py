@@ -105,6 +105,46 @@ def test_pinned_model_license_snapshots_are_present_and_hashed():
     assert len(records) == 4
     assert {record["root_id"] for record in records} == {"models_root"}
     assert all(len(record["sha256"]) == 64 for record in records)
+    for record in records:
+        direct = registry.MODELS_ROOT / record["path"]
+        assert direct.absolute() == direct.resolve(strict=True)
+        assert direct.stat().st_size == record["size_bytes"]
+        assert _sha256(direct) == record["sha256"]
+
+
+def test_license_records_replace_snapshot_symlink_with_direct_blob(
+    tmp_path, monkeypatch
+):
+    blob = tmp_path / "blobs" / "license-bytes"
+    blob.parent.mkdir()
+    blob.write_bytes(b"pinned license")
+    snapshot = tmp_path / "snapshots" / "revision" / "LICENSE"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.symlink_to(blob)
+    monkeypatch.setattr(registry, "MODELS_ROOT", tmp_path)
+    monkeypatch.setattr(
+        registry,
+        "LICENSE_SPECS",
+        (
+            {
+                "path": snapshot.relative_to(tmp_path).as_posix(),
+                "sha256": _sha256(blob),
+                "size_bytes": blob.stat().st_size,
+            },
+        ),
+    )
+
+    records = registry.license_records()
+
+    assert records == [
+        {
+            "root_id": "models_root",
+            "path": "blobs/license-bytes",
+            "sha256": _sha256(blob),
+            "size_bytes": blob.stat().st_size,
+        }
+    ]
+    assert not (tmp_path / records[0]["path"]).is_symlink()
 
 
 def test_approved_attempt_ids_keeps_approved_subset_after_complete_review():
