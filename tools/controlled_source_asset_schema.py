@@ -21,7 +21,7 @@ import os
 import re
 import string
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 
 PROFILE_SCHEMA = "avengine_attribute_profile_v1"
@@ -176,6 +176,48 @@ _SOURCE_ASSET_FIELDS = frozenset(
 
 class ContractError(ValueError):
     """Raised when a controlled-asset contract is incomplete or contradictory."""
+
+
+class StrictJSONError(ValueError):
+    """Raised when JSON is ambiguous, non-standard, or otherwise invalid."""
+
+
+def _strict_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise StrictJSONError(f"duplicate JSON object key: {key!r}")
+        value[key] = item
+    return value
+
+
+def _reject_json_constant(value: str) -> Any:
+    raise StrictJSONError(f"non-finite JSON number is forbidden: {value}")
+
+
+def _parse_finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise StrictJSONError(f"non-finite JSON number is forbidden: {value}")
+    return parsed
+
+
+def strict_json_loads(payload: str | bytes | bytearray) -> Any:
+    """Parse standards-compliant JSON while rejecting ambiguous evidence bytes."""
+
+    try:
+        if isinstance(payload, (bytes, bytearray)):
+            payload = bytes(payload).decode("utf-8")
+        return json.loads(
+            payload,
+            object_pairs_hook=_strict_json_object,
+            parse_constant=_reject_json_constant,
+            parse_float=_parse_finite_json_float,
+        )
+    except StrictJSONError:
+        raise
+    except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as error:
+        raise StrictJSONError(str(error)) from error
 
 
 def canonical_json(value: Any) -> str:
@@ -2671,8 +2713,8 @@ def build_dataset_manifest(
 def load_json(path: Path | str) -> Any:
     path = Path(path)
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        return strict_json_loads(path.read_bytes())
+    except (OSError, StrictJSONError) as error:
         raise ContractError(f"cannot load JSON {path}: {error}") from error
 
 

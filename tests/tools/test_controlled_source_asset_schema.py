@@ -26,6 +26,47 @@ HEX_A = "a" * 64
 HEX_B = "b" * 64
 
 
+def test_strict_json_loader_accepts_standard_historical_json(tmp_path):
+    path = tmp_path / "historical.json"
+    path.write_bytes(
+        '{"schema":"historical_v1","value":-0.0,"label":"英短"}'.encode()
+    )
+
+    assert schema.load_json(path) == {
+        "schema": "historical_v1",
+        "value": -0.0,
+        "label": "英短",
+    }
+
+
+def test_strict_json_loader_rejects_nested_duplicate_keys(tmp_path):
+    path = tmp_path / "duplicate.json"
+    path.write_text(
+        '{"schema":"evidence_v1","binding":{"sha256":"a","sha256":"b"}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(schema.ContractError, match="duplicate JSON object key"):
+        schema.load_json(path)
+
+
+def test_strict_json_loader_preserves_utf8_only_evidence_contract(tmp_path):
+    path = tmp_path / "utf16.json"
+    path.write_bytes('{"schema":"evidence_v1"}'.encode("utf-16"))
+
+    with pytest.raises(schema.ContractError, match="cannot load JSON"):
+        schema.load_json(path)
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity", "1e999"])
+def test_strict_json_loader_rejects_non_finite_numbers(tmp_path, constant):
+    path = tmp_path / "non_finite.json"
+    path.write_text(f'{{"value":{constant}}}', encoding="utf-8")
+
+    with pytest.raises(schema.ContractError, match="non-finite JSON number"):
+        schema.load_json(path)
+
+
 def artifact(
     path: str = "data/reference.png",
     digest: str = HEX_A,
