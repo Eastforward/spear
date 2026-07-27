@@ -52,7 +52,20 @@ def parse_args(argv=None):
         required=True,
     )
     parser.add_argument(
-        "--motion-donor-tag", default="quaternius_universal_quadruped_v1"
+        "--target-species",
+        choices=("dog", "cat"),
+        default="dog",
+        help=(
+            "Generated target species. Selects the pinned species motion donor; "
+            "the donor supplies skeleton semantics and actions, never body geometry."
+        ),
+    )
+    parser.add_argument(
+        "--motion-donor-tag",
+        help=(
+            "Optional explicit donor ID. It must match --target-species; omit "
+            "to use the registered species donor."
+        ),
     )
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args(argv)
@@ -112,6 +125,7 @@ def main(argv=None):
             head_end_decision_source=args.head_end_decision_source,
             head_end_evidence=args.head_end_evidence,
             motion_donor_tag=args.motion_donor_tag,
+            target_species=args.target_species,
             estimate=estimate,
         )
     except ForwardContractError as error:
