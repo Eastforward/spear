@@ -7,13 +7,14 @@ categories from FSD50K + SAO.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import re
 import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 
 import numpy as np
 
@@ -28,6 +29,11 @@ _PINNED_FIELDS = frozenset(
         "channels",
         "sample_width_bytes",
         "frame_count",
+        "dry_source_policy",
+        "spatialization_status",
+        "known_spatialized_derivative_sha256",
+        "item_origin",
+        "objective_audio_content_qa_status",
         "item_level_license_status",
         "item_level_license_snapshot",
         "formal_registration_authorized",
@@ -50,6 +56,11 @@ class AudioSample:
     channels: Optional[int] = None
     sample_width_bytes: Optional[int] = None
     frame_count: Optional[int] = None
+    dry_source_policy: Optional[str] = None
+    spatialization_status: Optional[str] = None
+    known_spatialized_derivative_sha256: Optional[str] = None
+    item_origin: Optional[dict] = None
+    objective_audio_content_qa_status: Optional[str] = None
     item_level_license_status: Optional[str] = None
     item_level_license_snapshot: Optional[str] = None
     formal_registration_authorized: bool = False
@@ -100,7 +111,12 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _validate_pinned_entry(entry: dict, *, index: int) -> None:
+def _validate_pinned_entry(
+    entry: dict,
+    *,
+    index: int,
+    source_payload_overrides: Mapping[str, bytes] | None = None,
+) -> None:
     """Fail closed when an entry opts into the exact dry-source contract."""
     present = _PINNED_FIELDS.intersection(entry)
     if not present:
@@ -121,27 +137,75 @@ def _validate_pinned_entry(entry: dict, *, index: int) -> None:
         raise ValueError(
             f"samples[{index}] pinned animal dry source cannot be synthetic"
         )
-    if bool(entry["formal_registration_authorized"]):
-        if (
-            entry["item_level_license_status"] != "verified"
-            or not entry["item_level_license_snapshot"]
-        ):
-            raise ValueError(
-                f"samples[{index}] {category!r} cannot authorize formal "
-                "registration without verified item-level license evidence"
-            )
-    elif entry["item_level_license_status"] == "verified":
-        if not entry["item_level_license_snapshot"]:
-            raise ValueError(
-                f"samples[{index}] verified item-level license lacks snapshot"
-            )
+    derivative_sha256 = str(entry["known_spatialized_derivative_sha256"])
+    item_origin = entry["item_origin"]
+    if (
+        int(entry["channels"]) != 1
+        or entry["dry_source_policy"] != "mono_no_hrtf_no_pre_spatialization"
+        or entry["spatialization_status"] != "mono_unspatialized_dry_source"
+        or not _SHA256_RE.fullmatch(derivative_sha256)
+        or derivative_sha256 == expected_sha256
+        or not isinstance(item_origin, dict)
+        or set(item_origin)
+        != {
+            "dataset_release",
+            "freesound_id",
+            "creator",
+            "reported_license",
+            "license_metadata_status",
+        }
+        or item_origin.get("dataset_release") != "Clotho_v2.1"
+        or not isinstance(item_origin.get("freesound_id"), int)
+        or int(item_origin["freesound_id"]) <= 0
+        or not isinstance(item_origin.get("creator"), str)
+        or not item_origin["creator"]
+        or not isinstance(item_origin.get("reported_license"), str)
+        or item_origin.get("license_metadata_status")
+        != "recorded_not_hash_bound_to_local_item_snapshot"
+        or entry["objective_audio_content_qa_status"]
+        not in {
+            "pending_background_contamination_review",
+            "clotho_five_caption_consensus_animal_only_pending_listening",
+        }
+    ):
+        raise ValueError(
+            f"samples[{index}] pinned dry source provenance/spatialization "
+            "contract changed"
+        )
+    # v1 has no structured, file-backed, hash-bound item-level license
+    # snapshot schema. Any entry opting into this exact-source contract must
+    # therefore remain explicitly missing/nonformal. A future schema revision
+    # can introduce verified evidence without weakening v1 consumers.
+    if (
+        entry["item_level_license_status"] != "missing"
+        or entry["item_level_license_snapshot"] is not None
+        or entry["formal_registration_authorized"] is not False
+    ):
+        raise ValueError(
+            f"samples[{index}] {category!r} v1 pinned source must remain "
+            "nonformal with missing item-level license evidence"
+        )
 
     path = Path(entry["path"])
-    if not path.is_file():
-        raise FileNotFoundError(path)
-    if path.stat().st_size != int(entry["size_bytes"]):
+    normalized_path = str(Path(path).absolute())
+    override_payload = (
+        source_payload_overrides.get(normalized_path)
+        if source_payload_overrides is not None
+        else None
+    )
+    if override_payload is None:
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.resolve() != path.absolute()
+        ):
+            raise FileNotFoundError(path)
+        payload = path.read_bytes()
+    else:
+        payload = bytes(override_payload)
+    if len(payload) != int(entry["size_bytes"]):
         raise ValueError(f"samples[{index}] pinned source size changed: {path}")
-    actual_sha256 = _sha256(path)
+    actual_sha256 = hashlib.sha256(payload).hexdigest()
     if actual_sha256 != expected_sha256:
         raise ValueError(
             f"samples[{index}] pinned source SHA-256 changed: {path}"
@@ -151,7 +215,7 @@ def _validate_pinned_entry(entry: dict, *, index: int) -> None:
             f"samples[{index}] unsupported pinned codec {entry['codec']!r}"
         )
     try:
-        with wave.open(str(path), "rb") as stream:
+        with wave.open(io.BytesIO(payload), "rb") as stream:
             channels = stream.getnchannels()
             sample_width_bytes = stream.getsampwidth()
             sample_rate = stream.getframerate()
@@ -191,11 +255,19 @@ def _validate_pinned_entry(entry: dict, *, index: int) -> None:
         )
 
 
-def load_library(catalog_json_path: Path) -> AudioLibrary:
+def load_library(
+    catalog_json_path: Path,
+    *,
+    source_payload_overrides: Mapping[str, bytes] | None = None,
+) -> AudioLibrary:
     j = json.loads(Path(catalog_json_path).read_text())
     entries = j["samples"]
     for index, entry in enumerate(entries):
-        _validate_pinned_entry(entry, index=index)
+        _validate_pinned_entry(
+            entry,
+            index=index,
+            source_payload_overrides=source_payload_overrides,
+        )
 
     pinned_species_by_hash = {}
     for index, entry in enumerate(entries):
@@ -237,6 +309,15 @@ def load_library(catalog_json_path: Path) -> AudioLibrary:
                 int(e["frame_count"])
                 if e.get("frame_count") is not None
                 else None
+            ),
+            dry_source_policy=e.get("dry_source_policy"),
+            spatialization_status=e.get("spatialization_status"),
+            known_spatialized_derivative_sha256=e.get(
+                "known_spatialized_derivative_sha256"
+            ),
+            item_origin=e.get("item_origin"),
+            objective_audio_content_qa_status=e.get(
+                "objective_audio_content_qa_status"
             ),
             item_level_license_status=e.get("item_level_license_status"),
             item_level_license_snapshot=e.get("item_level_license_snapshot"),

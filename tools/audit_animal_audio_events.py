@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import sys
 from pathlib import Path
@@ -14,17 +15,29 @@ from scipy.signal import resample_poly
 
 SPEAR_ROOT = Path(__file__).resolve().parents[1]
 TOOLS_ROOT = SPEAR_ROOT / "tools"
-sys.path.insert(0, str(TOOLS_ROOT))
-sys.path.insert(0, str(TOOLS_ROOT / "spike_rlr"))
+if str(SPEAR_ROOT) not in sys.path:
+    sys.path.insert(0, str(SPEAR_ROOT))
 
-from audio_event_schedule import prepare_animal_call  # noqa: E402
-from animal_audio import (  # noqa: E402
-    pinned_animal_audio_contract,
-    resolve_animal_audio_path,
-    species_for_tag,
-)
-from gpurir_scenes.audio_registry import pick_audio  # noqa: E402
-from species_rig_map import ANIMATED_RIG_MAP, STATIC_MESH_MAP  # noqa: E402
+if __package__:
+    from .audio_event_schedule import prepare_animal_call
+    from .gpurir_scenes.audio_registry import pick_audio
+    from .species_rig_map import ANIMATED_RIG_MAP, STATIC_MESH_MAP
+    from .spike_rlr.animal_audio import (
+        load_authenticated_file_bytes,
+        pinned_animal_audio_contract,
+        resolve_animal_audio_path,
+        species_for_tag,
+    )
+else:  # pragma: no cover - direct script execution
+    from audio_event_schedule import prepare_animal_call
+    from gpurir_scenes.audio_registry import pick_audio
+    from species_rig_map import ANIMATED_RIG_MAP, STATIC_MESH_MAP
+    from tools.spike_rlr.animal_audio import (
+        load_authenticated_file_bytes,
+        pinned_animal_audio_contract,
+        resolve_animal_audio_path,
+        species_for_tag,
+    )
 
 
 def _sha256(path: Path) -> str:
@@ -35,10 +48,18 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _load_mono(path: Path, sample_rate: int) -> np.ndarray:
-    signal, source_rate = sf.read(path, dtype="float32", always_2d=False)
+def _load_mono(path: Path, sample_rate: int) -> tuple[np.ndarray, str]:
+    payload = load_authenticated_file_bytes(path)
+    source_sha256 = hashlib.sha256(payload).hexdigest()
+    signal, source_rate = sf.read(
+        io.BytesIO(payload),
+        dtype="float32",
+        always_2d=False,
+    )
     if signal.ndim > 1:
-        signal = signal.mean(axis=1)
+        raise ValueError(
+            f"animal dry-source audit refuses pre-spatialized/stereo input: {path}"
+        )
     if int(source_rate) != int(sample_rate):
         divisor = int(np.gcd(source_rate, sample_rate))
         signal = resample_poly(
@@ -46,7 +67,7 @@ def _load_mono(path: Path, sample_rate: int) -> np.ndarray:
             sample_rate // divisor,
             source_rate // divisor,
         ).astype(np.float32)
-    return np.asarray(signal, dtype=np.float32)
+    return np.asarray(signal, dtype=np.float32), source_sha256
 
 
 def _canonical_species(tag: str) -> str:
@@ -87,7 +108,15 @@ def main(argv=None):
         source_path, source_kind, keyword, pinned_contract = (
             _resolve_audit_source(tag, pick_rng)
         )
-        source_signal = _load_mono(source_path, args.sample_rate)
+        source_signal, source_sha256 = _load_mono(
+            source_path,
+            args.sample_rate,
+        )
+        if (
+            pinned_contract is not None
+            and source_sha256 != pinned_contract["sha256"]
+        ):
+            raise RuntimeError(f"pinned audit source changed: {tag}")
         scheduled, schedule = prepare_animal_call(
             source_signal,
             sample_rate=args.sample_rate,
@@ -105,7 +134,7 @@ def main(argv=None):
                 "source_kind": source_kind,
                 "lookup_keyword": str(keyword),
                 "source_path": str(source_path),
-                "source_sha256": _sha256(source_path),
+                "source_sha256": source_sha256,
                 "preview_path": str(preview_path),
                 "preview_sha256": _sha256(preview_path),
                 "source_original_sample_rate_hz": (
@@ -117,6 +146,9 @@ def main(argv=None):
                     pinned_contract["duration_s"]
                     if pinned_contract is not None
                     else None
+                ),
+                "source_contract": (
+                    pinned_contract if pinned_contract is not None else None
                 ),
             }
         )

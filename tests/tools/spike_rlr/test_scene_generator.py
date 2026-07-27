@@ -186,17 +186,47 @@ def test_sample_scene_propagates_pinned_animal_audio_evidence():
     by_lookup = {source["audio_lookup"]: source for source in scene.source_specs}
 
     assert by_lookup["dog_bark"]["audio_sha256"] == (
-        "d244289ddde2d60065e258ef8f336776f2209f7b9240a706dbf8d42888854033"
+        "5481218ef268b4df98b03e52c48a4973852d60ea5cae9cbf42d0f203a6b9a505"
     )
     assert by_lookup["cat_meow"]["audio_sha256"] == (
-        "accd2babb3facabd1f140ce16da9a3986e457f49f175bb0b162c9fa2e070b158"
+        "aa8736bc58a4cd8a35d8911e2cfa22fb2e93fa899b67b1c04a927322c074df3d"
     )
     for source in by_lookup.values():
+        contract = source["audio_contract"]
+        assert contract["schema"] == "avengine_pinned_animal_dry_source_v1"
+        assert contract["channels"] == 1
         assert source["audio_source_sample_rate_hz"] == 44100
+        assert source["audio_source_size_bytes"] == 882044
+        assert source["audio_source_codec"] == "pcm_s16le"
+        assert source["audio_source_channels"] == 1
+        assert source["audio_source_sample_width_bytes"] == 2
+        assert source["audio_source_frame_count"] == 441000
         assert source["audio_source_duration_s"] == 10.0
+        assert source["audio_source_species"] == contract["species"]
+        assert source["audio_dry_source_policy"] == (
+            "mono_no_hrtf_no_pre_spatialization"
+        )
+        assert source["audio_spatialization_status"] == (
+            "mono_unspatialized_dry_source"
+        )
+        assert source["audio_item_origin"] == contract["item_origin"]
+        assert source["audio_objective_content_qa_status"] == {
+            "dog_bark": "clotho_five_caption_consensus_animal_only_pending_listening",
+            "cat_meow": "pending_background_contamination_review",
+        }[source["audio_lookup"]]
         assert source["audio_item_level_license_status"] == "missing"
+        assert source["audio_item_level_license_snapshot"] is None
         assert source["audio_formal_registration_authorized"] is False
         assert source["strict_audio"] is True
+
+
+def test_package_scene_generator_import_uses_relative_dependencies():
+    import tools.spike_rlr.scene_generator as packaged
+
+    assert packaged.SceneSample.__name__ == SceneSample.__name__
+    assert packaged.resolve_source_pool.__module__.startswith(
+        "tools.spike_rlr."
+    )
 
 
 def test_sample_scene_uses_configured_source_pool(tmp_path, monkeypatch):

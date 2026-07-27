@@ -653,11 +653,19 @@ def publish_stable_animal_registry_clip(
         ),
     }
     audio_path = clip_dir / "binaural.wav"
+    audio_evidence_path = clip_dir / "audio_evidence.json"
     schedule_path = clip_dir / "binaural_source_schedule.json"
+    render_manifest_path = clip_dir / "binaural_audio_render_manifest.json"
     if audio_path.is_file():
         evidence["binaural_audio"] = file_descriptor(audio_path)
+    if audio_evidence_path.is_file():
+        evidence["audio_evidence"] = file_descriptor(audio_evidence_path)
     if schedule_path.is_file():
         evidence["binaural_source_schedule"] = file_descriptor(schedule_path)
+    if render_manifest_path.is_file():
+        evidence["binaural_audio_render_manifest"] = file_descriptor(
+            render_manifest_path
+        )
 
     registry_root = Path(registry_root).resolve()
     registry_root.mkdir(parents=True, exist_ok=True)

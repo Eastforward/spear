@@ -15,7 +15,20 @@ from typing import List, Optional
 
 import numpy as np
 
-from source_asset_registry import resolve_source_pool
+if __package__:
+    from .animal_audio import (
+        is_pinned_animal_audio_lookup,
+        pinned_animal_audio_contract,
+        validate_pinned_source_spec,
+    )
+    from .source_asset_registry import resolve_source_pool
+else:  # pragma: no cover - exercised by direct-script consumers
+    from animal_audio import (
+        is_pinned_animal_audio_lookup,
+        pinned_animal_audio_contract,
+        validate_pinned_source_spec,
+    )
+    from source_asset_registry import resolve_source_pool
 
 
 @dataclass
@@ -259,21 +272,61 @@ def sample_scene(spec_template: dict, audio_lib, rng) -> SceneSample:
                     "end_pos_m": list(end),
                 }
                 if audio_sample.sha256 is not None:
+                    contract = (
+                        pinned_animal_audio_contract(audio_cat)
+                        if is_pinned_animal_audio_lookup(audio_cat)
+                        else None
+                    )
+                    if contract is None:
+                        raise RuntimeError(
+                            f"exact audio metadata is unsupported for {audio_cat!r}"
+                        )
                     source_spec.update(
                         {
-                            "audio_sha256": audio_sample.sha256,
-                            "audio_source_sample_rate_hz": (
-                                audio_sample.sample_rate
-                            ),
-                            "audio_source_duration_s": audio_sample.duration_s,
-                            "audio_item_level_license_status": (
-                                audio_sample.item_level_license_status
-                            ),
-                            "audio_formal_registration_authorized": (
-                                audio_sample.formal_registration_authorized
-                            ),
+                            "audio_contract": contract,
+                            "audio_sha256": contract["sha256"],
+                            "audio_source_size_bytes": contract["size_bytes"],
+                            "audio_source_codec": contract["codec"],
+                            "audio_source_channels": contract["channels"],
+                            "audio_source_sample_width_bytes": contract[
+                                "sample_width_bytes"
+                            ],
+                            "audio_source_sample_rate_hz": contract[
+                                "sample_rate_hz"
+                            ],
+                            "audio_source_frame_count": contract["frame_count"],
+                            "audio_source_duration_s": contract["duration_s"],
+                            "audio_source_species": contract["species"],
+                            "audio_dry_source_policy": contract[
+                                "dry_source_policy"
+                            ],
+                            "audio_spatialization_status": contract[
+                                "spatialization_status"
+                            ],
+                            "audio_known_spatialized_derivative_sha256": contract[
+                                "known_spatialized_derivative_sha256"
+                            ],
+                            "audio_item_origin": contract["item_origin"],
+                            "audio_objective_content_qa_status": contract[
+                                "objective_audio_content_qa_status"
+                            ],
+                            "audio_item_level_license_status": contract[
+                                "item_level_license_status"
+                            ],
+                            "audio_item_level_license_snapshot": contract[
+                                "item_level_license_snapshot"
+                            ],
+                            "audio_formal_registration_authorized": contract[
+                                "formal_registration_authorized"
+                            ],
                             "strict_audio": True,
                         }
+                    )
+                    validate_pinned_source_spec(
+                        tag,
+                        source_spec,
+                        contract=contract,
+                        require_embedded_contract=True,
                     )
                 if "asset_id" in pool_entry:
                     source_spec["asset_id"] = pool_entry["asset_id"]

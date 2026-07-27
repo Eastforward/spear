@@ -1,5 +1,11 @@
+import hashlib
+import math
+import struct
 import sys
 from pathlib import Path
+import wave
+
+import numpy as np
 
 import pytest
 
@@ -127,12 +133,12 @@ def test_resolver_rejects_synthetic_sentinel_as_explicit_real_source():
         (
             "dog_pembroke_welsh_corgi_four_limb_rest_side_candidate",
             "dog_bark",
-            "d244289ddde2d60065e258ef8f336776f2209f7b9240a706dbf8d42888854033",
+            "5481218ef268b4df98b03e52c48a4973852d60ea5cae9cbf42d0f203a6b9a505",
         ),
         (
             "cat_british_shorthair_four_limb_rest_side_candidate",
             "cat_meow",
-            "accd2babb3facabd1f140ce16da9a3986e457f49f175bb0b162c9fa2e070b158",
+            "aa8736bc58a4cd8a35d8911e2cfa22fb2e93fa899b67b1c04a927322c074df3d",
         ),
     ],
 )
@@ -150,7 +156,13 @@ def test_new_candidate_lookups_resolve_exact_nonformal_contract(
     assert path.is_file()
     assert contract["sha256"] == expected_sha256
     assert contract["sample_rate_hz"] == 44100
+    assert contract["channels"] == 1
     assert contract["duration_s"] == 10.0
+    assert contract["spatialization_status"] == "mono_unspatialized_dry_source"
+    assert contract["objective_audio_content_qa_status"] == {
+        "dog_bark": "clotho_five_caption_consensus_animal_only_pending_listening",
+        "cat_meow": "pending_background_contamination_review",
+    }[lookup]
     assert contract["item_level_license_status"] == "missing"
     assert contract["formal_registration_authorized"] is False
 
@@ -197,3 +209,373 @@ def test_synthetic_audio_paths_are_detected():
     assert not is_synthetic_audio_path(
         "/data/datasets/omniaudio/train-data-az-360-large/Barking Aldi Dog_358.wav"
     )
+
+
+@pytest.mark.parametrize(
+    ("tag", "lookup", "spatialized_path"),
+    [
+        (
+            "dog_pembroke_welsh_corgi_candidate",
+            "dog_bark",
+            "/data/datasets/omniaudio/train-data-az-360-large/"
+            "Barking Aldi Dog_358.wav",
+        ),
+        (
+            "cat_british_shorthair_candidate",
+            "cat_meow",
+            "/data/datasets/omniaudio/train-data-az-360-large/"
+            "Cat Meowing_293.wav",
+        ),
+    ],
+)
+def test_resolver_rejects_known_pre_spatialized_stereo_derivative(
+    tag,
+    lookup,
+    spatialized_path,
+):
+    from animal_audio import resolve_animal_audio_path
+
+    with pytest.raises(ValueError, match="does not match pinned"):
+        resolve_animal_audio_path(
+            tag,
+            lookup,
+            explicit_path=spatialized_path,
+        )
+
+
+def test_package_import_path_is_supported_without_flat_module_aliases():
+    from tools.spike_rlr import animal_audio as packaged
+
+    assert packaged.pinned_audio_lookup_for_tag(
+        "cat_british_shorthair_candidate"
+    ) == "cat_meow"
+
+
+def _write_test_binaural(path, *, dual_mono=False, continuous=False):
+    rate = 16000
+    frame_count = 32000
+    left = np.zeros(frame_count, dtype=np.int16)
+    if continuous:
+        windows = ((0, frame_count),)
+    else:
+        windows = ((1600, 4800), (20800, 24000))
+    for start, end in windows:
+        phase = np.arange(end - start, dtype=np.float64) / rate
+        left[start:end] = np.round(
+            5000.0 * np.sin(2.0 * math.pi * 440.0 * phase)
+        ).astype(np.int16)
+    right = (
+        left.copy()
+        if dual_mono
+        else np.round(left.astype(np.float64) * 0.65).astype(np.int16)
+    )
+    with wave.open(str(path), "wb") as stream:
+        stream.setnchannels(2)
+        stream.setsampwidth(2)
+        stream.setframerate(rate)
+        stream.writeframes(
+            np.column_stack((left, right)).astype("<i2", copy=False).tobytes()
+        )
+
+
+def test_binaural_validator_rejects_dual_mono_and_continuous_schedule_spoof(
+    tmp_path,
+):
+    from animal_audio import validate_binaural_wav
+
+    dual_mono = tmp_path / "dual_mono.wav"
+    _write_test_binaural(dual_mono, dual_mono=True)
+    with pytest.raises(ValueError, match="dual-mono"):
+        validate_binaural_wav(
+            dual_mono,
+            sample_rate_hz=16000,
+            duration_s=2.0,
+        )
+
+    continuous = tmp_path / "continuous.wav"
+    _write_test_binaural(continuous, continuous=True)
+    with pytest.raises(ValueError, match="does not follow"):
+        validate_binaural_wav(
+            continuous,
+            sample_rate_hz=16000,
+            duration_s=2.0,
+            event_windows=[(1600, 4800), (20800, 24000)],
+        )
+
+
+def test_binaural_validator_rejects_truncated_pcm_payload(tmp_path):
+    from animal_audio import validate_binaural_wav
+
+    path = tmp_path / "truncated.wav"
+    _write_test_binaural(path)
+    payload = bytearray(path.read_bytes())
+    claimed_data_bytes = 64000 * 2 * 2
+    struct.pack_into("<I", payload, 4, 36 + claimed_data_bytes)
+    struct.pack_into("<I", payload, 40, claimed_data_bytes)
+    path.write_bytes(payload)
+
+    with pytest.raises(ValueError, match="truncated"):
+        validate_binaural_wav(
+            path,
+            sample_rate_hz=16000,
+            duration_s=4.0,
+        )
+
+
+def test_generated_tag_uses_spec_identity_and_uncontracted_animal_fails_closed(
+    tmp_path,
+):
+    from animal_audio import (
+        animal_species_for_source,
+        pinned_animal_audio_contract,
+        validate_animal_audio_evidence,
+        validate_pinned_source_spec,
+    )
+
+    contract = pinned_animal_audio_contract("dog_bark")
+    generated = {
+        "asset_class": "animal",
+        "species": "dog",
+        "audio_lookup": "dog_bark",
+        "strict_audio": True,
+    }
+    assert animal_species_for_source(
+        "gate_pixal_generated_shiba_inu_red_v1",
+        generated,
+    ) == "dog"
+    assert validate_pinned_source_spec(
+        "gate_pixal_generated_shiba_inu_red_v1",
+        generated,
+        contract=contract,
+    ) == contract
+
+    with pytest.raises(ValueError, match="declarations conflict"):
+        animal_species_for_source(
+            "cat_generated_mislabeled",
+            {"asset_class": "animal", "species": "dog"},
+        )
+
+    with pytest.raises(ValueError, match="lacks an authenticated"):
+        validate_animal_audio_evidence(
+            spec={
+                "audio_config": {
+                    "sample_rate_hz": 16000,
+                    "duration_s": 2.0,
+                },
+                "sources": [
+                    {
+                        "tag": "stable_horse_bay_native",
+                        "audio_lookup": "horse_neigh",
+                        "strict_audio": True,
+                    }
+                ],
+            },
+            schedule={
+                "schema": "rlr_audio_source_schedules_v1",
+                "sources": {"stable_horse_bay_native": {}},
+            },
+            audio_path=tmp_path / "not_reached.wav",
+        )
+
+
+def test_pinned_source_spec_requires_strict_and_embedded_contract():
+    from animal_audio import (
+        pinned_animal_audio_contract,
+        validate_pinned_source_spec,
+    )
+
+    contract = pinned_animal_audio_contract("cat_meow")
+    tag = "cat_british_shorthair_candidate"
+    with pytest.raises(ValueError, match="strict_audio"):
+        validate_pinned_source_spec(
+            tag,
+            {"audio_lookup": "cat_meow"},
+            contract=contract,
+            require_embedded_contract=True,
+        )
+    with pytest.raises(ValueError, match="missing from source spec"):
+        validate_pinned_source_spec(
+            tag,
+            {"audio_lookup": "cat_meow", "strict_audio": True},
+            contract=contract,
+            require_embedded_contract=True,
+        )
+
+
+def test_bind_pinned_contract_populates_every_field_and_rejects_conflict():
+    from animal_audio import (
+        bind_pinned_animal_audio_contract,
+        pinned_animal_audio_contract,
+        validate_pinned_source_spec,
+    )
+
+    tag = "pixal_generated_shiba_inu"
+    source = {
+        "tag": tag,
+        "asset_class": "animal",
+        "species": "dog",
+        "audio_lookup": "dog_bark",
+        "strict_audio": True,
+    }
+    bound = bind_pinned_animal_audio_contract(source)
+    contract = pinned_animal_audio_contract("dog_bark")
+
+    assert bound is source
+    assert source["audio_contract"] == contract
+    assert source["audio_path"] == contract["path"]
+    assert source["audio_sha256"] == contract["sha256"]
+    assert source["audio_source_size_bytes"] == contract["size_bytes"]
+    assert source["audio_source_channels"] == 1
+    assert source["audio_formal_registration_authorized"] is False
+    assert validate_pinned_source_spec(
+        tag,
+        source,
+        contract=contract,
+        require_embedded_contract=True,
+    ) == contract
+
+    conflicting = dict(source)
+    conflicting["audio_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="existing audio_sha256 conflicts"):
+        bind_pinned_animal_audio_contract(conflicting)
+
+    unsupported_silence_migration = {
+        "tag": "stable_alpaca_quaternius",
+        "asset_class": "animal",
+        "species": "alpaca",
+        "audio_lookup": "silent",
+        "strict_audio": True,
+    }
+    assert (
+        bind_pinned_animal_audio_contract(unsupported_silence_migration)
+        is unsupported_silence_migration
+    )
+    assert "audio_contract" not in unsupported_silence_migration
+
+
+def test_authenticated_reader_rejects_indirect_parent_directory(tmp_path):
+    from animal_audio import load_authenticated_file_bytes
+
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "evidence.bin").write_bytes(b"evidence")
+    indirect = tmp_path / "indirect"
+    indirect.symlink_to(real, target_is_directory=True)
+
+    with pytest.raises(OSError):
+        load_authenticated_file_bytes(indirect / "evidence.bin")
+
+
+def test_binaural_mix_must_reconstruct_from_every_distinct_solo(tmp_path):
+    from animal_audio import _validate_binaural_mixture_reconstruction
+
+    rate = 16000
+    frame_count = rate
+    time_s = np.arange(frame_count, dtype=np.float64) / rate
+
+    def write_stereo(path, samples):
+        pcm = np.clip(
+            np.floor(samples * 32768.0),
+            -32768,
+            32767,
+        ).astype("<i2")
+        with wave.open(str(path), "wb") as stream:
+            stream.setnchannels(2)
+            stream.setsampwidth(2)
+            stream.setframerate(rate)
+            stream.writeframes(pcm.tobytes())
+
+    def descriptor(path):
+        payload = path.read_bytes()
+        return {
+            "path": str(path.resolve()),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size_bytes": len(payload),
+        }
+
+    raw_a = np.column_stack(
+        (
+            0.20 * np.sin(2.0 * np.pi * 440.0 * time_s),
+            0.13 * np.sin(2.0 * np.pi * 440.0 * time_s),
+        )
+    )
+    raw_b = np.column_stack(
+        (
+            0.07 * np.sin(2.0 * np.pi * 880.0 * time_s),
+            0.11 * np.sin(2.0 * np.pi * 880.0 * time_s),
+        )
+    )
+    peaks = {
+        "dog_a": float(np.max(np.abs(raw_a))),
+        "dog_b": float(np.max(np.abs(raw_b))),
+    }
+    solo_paths = {
+        "dog_a": tmp_path / "dog_a.wav",
+        "dog_b": tmp_path / "dog_b.wav",
+    }
+    write_stereo(solo_paths["dog_a"], raw_a * (0.9 / peaks["dog_a"]))
+    write_stereo(solo_paths["dog_b"], raw_b * (0.9 / peaks["dog_b"]))
+
+    def decoded(path):
+        with wave.open(str(path), "rb") as stream:
+            return (
+                np.frombuffer(
+                    stream.readframes(stream.getnframes()),
+                    dtype="<i2",
+                )
+                .reshape(-1, 2)
+                .astype(np.float64)
+                / 32768.0
+            )
+
+    recovered = sum(
+        decoded(solo_paths[tag]) * (peaks[tag] / 0.9)
+        for tag in sorted(solo_paths)
+    )
+    mix_peak = float(np.max(np.abs(recovered)))
+    mix_path = tmp_path / "mix.wav"
+    write_stereo(mix_path, recovered * (0.9 / mix_peak))
+    records = {
+        tag: {"pre_normalization_peak": peaks[tag]}
+        for tag in solo_paths
+    }
+    solo_descriptors = {
+        tag: descriptor(path) for tag, path in solo_paths.items()
+    }
+    result = _validate_binaural_mixture_reconstruction(
+        mix_path,
+        output_descriptor=descriptor(mix_path),
+        per_source_records=records,
+        solo_descriptors=solo_descriptors,
+        mix_pre_normalization_peak=mix_peak,
+        sample_rate_hz=rate,
+        duration_s=1.0,
+    )
+    assert result["rms_error"] < 2.0e-4
+
+    write_stereo(mix_path, decoded(solo_paths["dog_a"]))
+    with pytest.raises(ValueError, match="does not reconstruct"):
+        _validate_binaural_mixture_reconstruction(
+            mix_path,
+            output_descriptor=descriptor(mix_path),
+            per_source_records=records,
+            solo_descriptors=solo_descriptors,
+            mix_pre_normalization_peak=mix_peak,
+            sample_rate_hz=rate,
+            duration_s=1.0,
+        )
+
+    duplicated = {
+        "dog_a": solo_descriptors["dog_a"],
+        "dog_b": solo_descriptors["dog_a"],
+    }
+    with pytest.raises(ValueError, match="duplicate solo"):
+        _validate_binaural_mixture_reconstruction(
+            solo_paths["dog_a"],
+            output_descriptor=solo_descriptors["dog_a"],
+            per_source_records=records,
+            solo_descriptors=duplicated,
+            mix_pre_normalization_peak=mix_peak,
+            sample_rate_hz=rate,
+            duration_s=1.0,
+        )

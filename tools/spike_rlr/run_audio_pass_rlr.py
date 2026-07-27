@@ -27,11 +27,15 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import os
 import sys
+import tempfile
 import time
+import types
 from pathlib import Path
 
 import numpy as np
@@ -41,21 +45,270 @@ TOOLS_ROOT = Path(__file__).resolve().parents[1]
 if str(TOOLS_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLS_ROOT))
 
-from audio_event_schedule import prepare_animal_call
-from animal_audio import (
-    is_animal_tag,
-    is_pinned_animal_audio_lookup,
-    is_synthetic_audio_path,
-    pinned_animal_audio_contract,
-    resolve_animal_audio_path,
-    species_for_tag,
-)
-from speech_audio import is_speech_lookup, resolve_speech_audio_path
-from source_trajectory import acoustic_trajectory
+if __package__:
+    from tools.audio_event_schedule import prepare_animal_call
+    from .acoustic_scene_contract import (
+        RLR_FIXED_ACOUSTICS_CONFIG,
+        approved_rlr_renderer_contract,
+        validate_approved_acoustic_scene_inputs,
+        validate_approved_rlr_runtime_artifact,
+    )
+    from .active_frame_rir_evidence import (
+        serialize_active_frame_rir_evidence,
+    )
+    from .animal_audio import (
+        MAX_AUTHENTICATED_JSON_SIZE_BYTES,
+        animal_species_for_source,
+        is_pinned_animal_audio_lookup,
+        is_synthetic_audio_path,
+        load_authenticated_file_bytes,
+        pinned_animal_audio_contract,
+        pinned_audio_lookup_for_tag,
+        pinned_audio_lookup_for_source,
+        resolve_animal_audio_path,
+        validate_animal_silence_contract,
+        validate_pinned_source_spec,
+    )
+    from .rlr_materials import build_rlr_materials_payload
+    from .speech_audio import is_speech_lookup, resolve_speech_audio_path
+    from .source_trajectory import acoustic_trajectory
+else:  # pragma: no cover - covered by direct-script CLI smoke tests
+    from acoustic_scene_contract import (
+        RLR_FIXED_ACOUSTICS_CONFIG,
+        approved_rlr_renderer_contract,
+        validate_approved_acoustic_scene_inputs,
+        validate_approved_rlr_runtime_artifact,
+    )
+    from active_frame_rir_evidence import (
+        serialize_active_frame_rir_evidence,
+    )
+    from audio_event_schedule import prepare_animal_call
+    from animal_audio import (
+        MAX_AUTHENTICATED_JSON_SIZE_BYTES,
+        animal_species_for_source,
+        is_pinned_animal_audio_lookup,
+        is_synthetic_audio_path,
+        load_authenticated_file_bytes,
+        pinned_animal_audio_contract,
+        pinned_audio_lookup_for_tag,
+        pinned_audio_lookup_for_source,
+        resolve_animal_audio_path,
+        validate_animal_silence_contract,
+        validate_pinned_source_spec,
+    )
+    from rlr_materials import build_rlr_materials_payload
+    from speech_audio import is_speech_lookup, resolve_speech_audio_path
+    from source_trajectory import acoustic_trajectory
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RLR_NATIVE_BINAURAL_CHANNEL_ORDER = (0, 1)
+AUDIO_RENDER_MANIFEST_SCHEMA = "rlr_audio_render_manifest_v3"
+
+
+def _authenticated_descriptor(path):
+    path = Path(path).resolve()
+    payload = load_authenticated_file_bytes(path)
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+    }
+
+
+def _load_authenticated_json_with_descriptor(path):
+    path = Path(path).resolve()
+    payload = load_authenticated_file_bytes(
+        path,
+        max_size_bytes=MAX_AUTHENTICATED_JSON_SIZE_BYTES,
+    )
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"RLR render input is not valid UTF-8 JSON: {path}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"RLR render JSON input must be an object: {path}")
+    return value, {
+        "path": str(path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+    }, payload
+
+
+def _stage_authenticated_snapshot(directory, name, payload):
+    path = Path(directory) / name
+    descriptor = os.open(
+        path,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0),
+        0o600,
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.fchmod(stream.fileno(), 0o400)
+    except BaseException:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        raise
+    return {
+        "path": str(path.resolve()),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+    }
+
+
+def _require_unchanged_descriptor(path, expected):
+    observed = _authenticated_descriptor(path)
+    if observed != expected:
+        raise RuntimeError(f"RLR render input changed during execution: {path}")
+    return observed
+
+
+@contextlib.contextmanager
+def _pinned_snapshot_root(directory, expected_files):
+    """Yield a rename-stable /proc path to one authenticated snapshot inode.
+
+    The output directory remains writable while RLR runs.  Merely chmod'ing a
+    child directory therefore does not stop a concurrent rename-and-replace of
+    that child.  Holding the directory inode open and consuming its files via
+    /proc/self/fd keeps path-only Habitat loaders attached to the staged inode.
+    """
+    directory = Path(directory).resolve()
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    directory_fd = os.open(directory, flags)
+    try:
+        opened = os.fstat(directory_fd)
+        named = os.stat(directory, follow_symlinks=False)
+        if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+            raise RuntimeError("authenticated RLR input directory was replaced")
+        root = Path("/proc/self/fd") / str(directory_fd)
+        if not root.is_dir():
+            raise RuntimeError("rename-stable /proc input path is unavailable")
+        for name, expected in expected_files.items():
+            file_fd = os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_fd,
+            )
+            try:
+                observed_size = os.fstat(file_fd).st_size
+                payload = b""
+                while len(payload) <= expected["size_bytes"]:
+                    chunk = os.read(file_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    payload += chunk
+            finally:
+                os.close(file_fd)
+            if (
+                observed_size != expected["size_bytes"]
+                or len(payload) != expected["size_bytes"]
+                or hashlib.sha256(payload).hexdigest() != expected["sha256"]
+            ):
+                raise RuntimeError(
+                    f"authenticated RLR snapshot changed before use: {name}"
+                )
+        yield root
+    finally:
+        os.close(directory_fd)
+
+
+def _write_audio_render_manifest(
+    *,
+    out_wav_path,
+    schedule_path,
+    spec_descriptor,
+    mesh_descriptor,
+    materials_descriptor,
+    derived_materials_descriptor,
+    acoustic_scene_contract,
+    renderer_contract,
+    channel_layout,
+    sample_rate_hz,
+    duration_s,
+    n_frames,
+    fps,
+    quality_mode,
+    indirect_ray_count,
+    source_tags,
+    per_source_outputs,
+    mix_pre_normalization_peak,
+):
+    """Bind immutable render inputs, schedule, RLR config, and output bytes."""
+    output_descriptor = _authenticated_descriptor(out_wav_path)
+    schedule_descriptor = _authenticated_descriptor(schedule_path)
+    manifest = {
+        "schema": AUDIO_RENDER_MANIFEST_SCHEMA,
+        "backend": "habitat_sim_rlr_audio_sensor",
+        "channel_layout": channel_layout,
+        "sample_rate_hz": int(sample_rate_hz),
+        "duration_s": float(duration_s),
+        "n_frames": int(n_frames),
+        "fps": float(fps),
+        "quality_mode": quality_mode,
+        "indirect_ray_count": int(indirect_ray_count),
+        "native_binaural_channel_order": (
+            list(RLR_NATIVE_BINAURAL_CHANNEL_ORDER)
+            if channel_layout == "binaural_native"
+            else None
+        ),
+        "source_tags": sorted(source_tags),
+        "spec": dict(spec_descriptor),
+        "acoustic_mesh": dict(mesh_descriptor),
+        "acoustic_materials": dict(materials_descriptor),
+        "derived_rlr_materials": dict(derived_materials_descriptor),
+        "acoustic_scene_contract": dict(acoustic_scene_contract),
+        "renderer_contract": dict(renderer_contract),
+        "source_schedule": schedule_descriptor,
+        "output_wav": output_descriptor,
+        "per_source_outputs": dict(per_source_outputs),
+        "mix_pre_normalization_peak": float(mix_pre_normalization_peak),
+        "behavior_gates": {
+            "per_source_event_alignment": "validate_on_readback",
+            "binaural_spatial_ild": "validate_on_readback",
+            "mixture_reconstruction": "validate_on_readback",
+            "active_frame_rir_replay": "validate_on_readback",
+        },
+        "technical_render_status": "passed",
+        "formal_registration_authorized": False,
+    }
+    manifest_path = Path(out_wav_path).with_name(
+        Path(out_wav_path).stem + "_audio_render_manifest.json"
+    )
+    payload = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{manifest_path.name}.",
+        suffix=".staging",
+        dir=manifest_path.parent,
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, manifest_path)
+    finally:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+    return manifest_path
 
 
 # --- coordinate transform ---------------------------------------------------
@@ -88,24 +341,9 @@ def _make_rlr_materials_json(materials_sidecar, out_path):
     Sound-Spaces format:
       {"materials": [{"name": ..., "absorption": [freq1, val1, freq2, val2, ...], "scattering": [...], "transmission": [...], "labels": [...]}, ...]}
     """
-    # 4 bands center frequencies (SoundSpaces high-quality preset default)
-    bands_hz = [125.0, 500.0, 2000.0, 8000.0]
-
-    def interleave(vals):
-        return [v for pair in zip(bands_hz, vals) for v in pair]
-
-    out = {"materials": []}
-    for m in materials_sidecar["materials"]:
-        out["materials"].append({
-            "name": m["name"],
-            "absorption": interleave(m["alpha"]),
-            "scattering": interleave([m["scattering"]] * 4),
-            "transmission": interleave(m["transmission"]),
-            "labels": [m["name"]],
-        })
-
-    with open(out_path, "w") as f:
-        json.dump(out, f, indent=2)
+    payload = build_rlr_materials_payload(materials_sidecar)
+    with open(out_path, "wb") as f:
+        f.write(payload)
     return out_path
 
 
@@ -135,12 +373,21 @@ def _load_scene_and_scene_two_dogs(spec_path=None):
 # real animal clips. Synthetic sentinels are still supported when a spec asks
 # for them explicitly, but no production animal tag should silently map to one.
 _TAG_AUDIO_OVERRIDES = {
-    # Golden: real dog bark (restored per user request)
-    "dog_golden": "/data/datasets/omniaudio/train-data-az-360-large/Barking Aldi Dog_358.wav",
-    # Beagle review asset: same real dog bark class as golden.
-    "dog_beagle_v2": "/data/datasets/omniaudio/train-data-az-360-large/Barking Aldi Dog_358.wav",
-    # British shorthair review asset: local Omniloc cat purring clip.
-    "cat_british_shorthair_v2": "/data/datasets/cy/omniloc/train/audio/cat purring/-A1eKkZVSRw_000070.mp3",
+    # Legacy tag entries retain mono, non-spatialized values as an additional
+    # defense. Dog/cat lookup resolution now selects the authenticated pinned
+    # species default before this mapping is considered.
+    "dog_golden": (
+        "/data/datasets/omniaudio/source_data/processed/clothov2/"
+        "Growling and Barking Dog.wav"
+    ),
+    "dog_beagle_v2": (
+        "/data/datasets/omniaudio/source_data/processed/clothov2/"
+        "Growling and Barking Dog.wav"
+    ),
+    "cat_british_shorthair_v2": (
+        "/data/datasets/omniaudio/source_data/processed/clothov2/"
+        "Cat Meowing.wav"
+    ),
 }
 
 
@@ -269,29 +516,43 @@ def _load_dry_source(
 ):
     """Load a dry source wav for a given tag.
 
-    Source spec audio_path/audio_lookup wins, then _TAG_AUDIO_OVERRIDES, then
-    audio_registry, then a synthesized placeholder. Synthetic sentinel strings
-    are still supported when explicitly requested.
+    Source spec audio_path/audio_lookup wins. Dog/cat tags without a lookup use
+    their pinned species default before any legacy override. Other tags may use
+    legacy overrides, the audio registry, or an explicitly requested synthetic
+    debug source. Strict and pinned sources never accept synthesis.
     """
     n_samples = int(round(sample_rate * duration_s))
     is_speech_source = False
     manual_repeat_applied = False
     source_spec = source_spec or {}
     requested_audio_lookup = source_spec.get("audio_lookup")
+    source_species = animal_species_for_source(tag, source_spec)
+    pinned_default_lookup = pinned_audio_lookup_for_source(tag, source_spec)
     fail_closed_audio = (
         bool(source_spec.get("strict_audio"))
+        or source_species in {"dog", "cat"}
+        or is_pinned_animal_audio_lookup(requested_audio_lookup)
         or (
             requested_audio_lookup not in {None, "silent"}
-            and is_animal_tag(tag)
-        )
-        or (
-            requested_audio_lookup is None
-            and species_for_tag(tag) in {"dog", "cat"}
+            and source_species is not None
         )
     )
     resolved_pinned_lookup = None
     try:
+        explicit_path = source_spec.get("audio_path") or source_spec.get(
+            "dry_audio_path"
+        )
+        if (
+            fail_closed_audio
+            and explicit_path is not None
+            and is_synthetic_audio_path(explicit_path)
+        ):
+            raise ValueError(
+                f"strict animal source {tag!r} cannot use a synthetic sentinel"
+            )
         if source_spec.get("mute_audio") or source_spec.get("audio_lookup") == "silent":
+            if source_species is not None:
+                validate_animal_silence_contract(tag, source_spec)
             print(f"[audio] {tag}: muted by source spec")
             if schedule_metadata_out is not None:
                 schedule_metadata_out.update(
@@ -299,7 +560,7 @@ def _load_dry_source(
                 )
             return np.zeros(n_samples, dtype=np.float32)
         override = None
-        explicit_path = source_spec.get("audio_path") or source_spec.get("dry_audio_path")
+        wav_path = None
         audio_lookup = source_spec.get("audio_lookup")
         if explicit_path and is_synthetic_audio_path(explicit_path):
             override = str(explicit_path)
@@ -319,16 +580,35 @@ def _load_dry_source(
                 audio_lookup=audio_lookup,
                 explicit_path=explicit_path,
             ))
-            if is_pinned_animal_audio_lookup(audio_lookup):
-                resolved_pinned_lookup = audio_lookup
+            resolved_pinned_lookup = (
+                audio_lookup
+                if is_pinned_animal_audio_lookup(audio_lookup)
+                else (
+                    pinned_default_lookup
+                    if audio_lookup in (None, "")
+                    else None
+                )
+            )
             print(f"[audio] {tag}: using spec audio_path {os.path.basename(wav_path)}")
         elif audio_lookup:
             wav_path = str(resolve_animal_audio_path(tag, audio_lookup=audio_lookup))
             if is_pinned_animal_audio_lookup(audio_lookup):
                 resolved_pinned_lookup = audio_lookup
             print(f"[audio] {tag}: using spec audio_lookup {audio_lookup} -> {os.path.basename(wav_path)}")
+        elif pinned_default_lookup is not None:
+            resolved_pinned_lookup = pinned_default_lookup
+            wav_path = resolve_animal_audio_path(tag, pinned_default_lookup)
+            print(
+                f"[audio] {tag}: using pinned species default "
+                f"{resolved_pinned_lookup} -> {os.path.basename(wav_path)}"
+            )
         else:
             override = _TAG_AUDIO_OVERRIDES.get(tag)
+        if override is not None and is_synthetic_audio_path(override):
+            if fail_closed_audio:
+                raise ValueError(
+                    f"strict animal source {tag!r} cannot use a synthetic sentinel"
+                )
         if override == "__pink_noise__":
             print(f"[audio] {tag}: using SYNTHETIC pink noise (steady-state)")
             return _synth_pink_noise(sample_rate, duration_s, seed=seed)
@@ -347,51 +627,83 @@ def _load_dry_source(
         if override and os.path.exists(override):
             wav_path = override
             print(f"[audio] {tag}: using SPIKE OVERRIDE {os.path.basename(wav_path)}")
-        elif "wav_path" not in locals():
-            species = species_for_tag(tag)
-            if species in {"dog", "cat"}:
-                resolved_pinned_lookup = (
-                    "dog_bark" if species == "dog" else "cat_meow"
-                )
-                wav_path = resolve_animal_audio_path(tag)
-                print(
-                    f"[audio] {tag}: using pinned species default "
-                    f"{resolved_pinned_lookup} -> {os.path.basename(wav_path)}"
-                )
-            else:
-                sys.path.insert(0, str(REPO_ROOT / "tools"))
-                from gpurir_scenes.audio_registry import pick_audio
-                picked = pick_audio(tag, np.random.default_rng(seed))
-                # pick_audio returns (path, source, keyword) or just path
-                # (varies by registry version). Support both.
-                wav_path = picked[0] if isinstance(picked, tuple) else picked
-                print(
-                    f"[audio] {tag}: using registry pick "
-                    f"{os.path.basename(wav_path)}"
-                )
+        elif wav_path is None:
+            sys.path.insert(0, str(REPO_ROOT / "tools"))
+            from gpurir_scenes.audio_registry import pick_audio
+            picked = pick_audio(tag, np.random.default_rng(seed))
+            # pick_audio returns (path, source, keyword) or just path
+            # (varies by registry version). Support both.
+            wav_path = picked[0] if isinstance(picked, tuple) else picked
+            print(
+                f"[audio] {tag}: using registry pick "
+                f"{os.path.basename(wav_path)}"
+            )
         source_path = Path(wav_path)
-        source_digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        pinned_contract = (
+            pinned_animal_audio_contract(resolved_pinned_lookup)
+            if resolved_pinned_lookup is not None
+            else None
+        )
+        if pinned_contract is not None:
+            validate_pinned_source_spec(
+                tag,
+                source_spec,
+                contract=pinned_contract,
+                require_embedded_contract=True,
+            )
+        # Hash and decode one immutable byte snapshot obtained through one
+        # O_NOFOLLOW descriptor. A pathname replacement between authentication
+        # and sf.decode therefore cannot select different bytes.
+        source_bytes = load_authenticated_file_bytes(source_path)
+        source_digest = hashlib.sha256(source_bytes).hexdigest()
         expected_digest = source_spec.get("audio_sha256")
         if expected_digest is not None and source_digest != expected_digest:
             raise ValueError(
                 f"audio_sha256 mismatch for {tag}: "
                 f"expected={expected_digest}, observed={source_digest}"
             )
-        pinned_contract = (
-            pinned_animal_audio_contract(resolved_pinned_lookup)
-            if resolved_pinned_lookup is not None
-            else None
-        )
         if pinned_contract is not None and source_digest != pinned_contract["sha256"]:
             raise ValueError(
                 f"resolved {resolved_pinned_lookup!r} source changed before load"
             )
-        y, sr = sf.read(wav_path, dtype="float32")
+        if (
+            pinned_contract is not None
+            and len(source_bytes) != pinned_contract["size_bytes"]
+        ):
+            raise ValueError(
+                f"resolved {resolved_pinned_lookup!r} source size changed"
+            )
+        y, sr = sf.read(io.BytesIO(source_bytes), dtype="float32")
         source_original_sample_rate_hz = int(sr)
         source_original_frame_count = int(len(y))
         source_original_channels = int(y.shape[1]) if y.ndim > 1 else 1
+        if (
+            fail_closed_audio
+            and source_species is not None
+            and source_original_channels != 1
+        ):
+            raise ValueError(
+                f"strict animal dry source {tag!r} must be mono and "
+                "non-spatialized"
+            )
+        if pinned_contract is not None and (
+            source_original_sample_rate_hz != pinned_contract["sample_rate_hz"]
+            or source_original_frame_count != pinned_contract["frame_count"]
+            or source_original_channels != pinned_contract["channels"]
+        ):
+            raise ValueError(
+                f"decoded {resolved_pinned_lookup!r} metadata changed"
+            )
         if y.ndim > 1:
             y = y.mean(axis=1)
+        if pinned_contract is not None and (
+            not np.all(np.isfinite(y))
+            or float(np.max(np.abs(y))) < 1.0e-3
+            or float(np.sqrt(np.mean(np.square(y, dtype=np.float64)))) < 1.0e-4
+        ):
+            raise ValueError(
+                f"decoded {resolved_pinned_lookup!r} source is invalid or near-silent"
+            )
         if sr != sample_rate:
             # simple linear resample (crude but good enough for spike)
             new_len = int(round(len(y) * sample_rate / sr))
@@ -427,7 +739,7 @@ def _load_dry_source(
                 y = segment
         adaptive_repeat = bool(source_spec.get("adaptive_repeat_short_calls", True))
         if (
-            is_animal_tag(tag)
+            source_species is not None
             and not is_speech_source
             and not manual_repeat_applied
             and adaptive_repeat
@@ -511,6 +823,19 @@ def _load_dry_source(
                         "source_catalog_duration_s": pinned_contract[
                             "duration_s"
                         ],
+                        "dry_source_policy": pinned_contract[
+                            "dry_source_policy"
+                        ],
+                        "spatialization_status": pinned_contract[
+                            "spatialization_status"
+                        ],
+                        "known_spatialized_derivative_sha256": pinned_contract[
+                            "known_spatialized_derivative_sha256"
+                        ],
+                        "item_origin": pinned_contract["item_origin"],
+                        "objective_audio_content_qa_status": pinned_contract[
+                            "objective_audio_content_qa_status"
+                        ],
                         "item_level_license_status": pinned_contract[
                             "item_level_license_status"
                         ],
@@ -520,6 +845,7 @@ def _load_dry_source(
                         "formal_registration_authorized": pinned_contract[
                             "formal_registration_authorized"
                         ],
+                        "source_contract": dict(pinned_contract),
                     }
                 )
             schedule_metadata_out.update(schedule)
@@ -569,15 +895,29 @@ def build_rlr_sim(glb_path, materials_json_path, sample_rate=16000,
     """
     # Imported lazily so dispatcher/help tests can import this module in
     # spear-env; actual RLR rendering still requires the ss2 env.
+    _install_habitat_audio_only_scipy_stub()
     import habitat_sim
     from habitat_sim.sensor import RLRAudioPropagationChannelLayoutType
+
+    rlr_library_path = (
+        Path(habitat_sim.__file__).resolve().parent
+        / "_ext"
+        / "libRLRAudioPropagation.so"
+    )
+    rlr_library_payload = load_authenticated_file_bytes(rlr_library_path)
+    validate_approved_rlr_runtime_artifact(
+        artifact_name="rlr_audio_propagation_shared_library",
+        path=str(rlr_library_path),
+        payload=rlr_library_payload,
+    )
 
     sim_cfg = habitat_sim.SimulatorConfiguration()
     sim_cfg.scene_id = str(glb_path)
     sim_cfg.enable_physics = False
-    # Audio-only: skip the OpenGL renderer entirely (avoids the "cannot
-    # retrieve OpenGL version" error when running headless without X). RLR
-    # doesn't need a GL context — it operates on the loaded mesh directly.
+    # Request an audio-only simulator with no visual renderer.  Habitat 0.2.2
+    # still creates a windowless EGL context while loading the stage, so CLI
+    # callers must retain the repository's system libEGL/libGLdispatch
+    # preload; this flag alone is not a headless-loader workaround.
     sim_cfg.create_renderer = False
     sim_cfg.load_semantic_mesh = False
     sim_cfg.requires_textures = False
@@ -604,17 +944,35 @@ def build_rlr_sim(glb_path, materials_json_path, sample_rate=16000,
         raise ValueError(f"unknown channel layout {channel_layout}")
 
     audio_spec.acousticsConfig.sampleRate = sample_rate
-    audio_spec.acousticsConfig.threadCount = 4
-    audio_spec.acousticsConfig.direct = True
-    audio_spec.acousticsConfig.indirect = True
-    audio_spec.acousticsConfig.diffraction = True
-    audio_spec.acousticsConfig.transmission = True
-    audio_spec.acousticsConfig.temporalCoherence = True
+    audio_spec.acousticsConfig.threadCount = RLR_FIXED_ACOUSTICS_CONFIG[
+        "thread_count"
+    ]
+    audio_spec.acousticsConfig.direct = RLR_FIXED_ACOUSTICS_CONFIG["direct"]
+    audio_spec.acousticsConfig.indirect = RLR_FIXED_ACOUSTICS_CONFIG[
+        "indirect"
+    ]
+    audio_spec.acousticsConfig.diffraction = RLR_FIXED_ACOUSTICS_CONFIG[
+        "diffraction"
+    ]
+    audio_spec.acousticsConfig.transmission = RLR_FIXED_ACOUSTICS_CONFIG[
+        "transmission"
+    ]
+    audio_spec.acousticsConfig.temporalCoherence = RLR_FIXED_ACOUSTICS_CONFIG[
+        "temporal_coherence"
+    ]
     audio_spec.acousticsConfig.indirectRayCount = indirect_ray_count
-    audio_spec.acousticsConfig.sourceRayCount = 200
-    audio_spec.acousticsConfig.indirectRayDepth = 50
-    audio_spec.acousticsConfig.frequencyBands = 4
-    audio_spec.acousticsConfig.unitScale = 1.0  # meters
+    audio_spec.acousticsConfig.sourceRayCount = RLR_FIXED_ACOUSTICS_CONFIG[
+        "source_ray_count"
+    ]
+    audio_spec.acousticsConfig.indirectRayDepth = RLR_FIXED_ACOUSTICS_CONFIG[
+        "indirect_ray_depth"
+    ]
+    audio_spec.acousticsConfig.frequencyBands = RLR_FIXED_ACOUSTICS_CONFIG[
+        "frequency_bands"
+    ]
+    audio_spec.acousticsConfig.unitScale = RLR_FIXED_ACOUSTICS_CONFIG[
+        "unit_scale_m"
+    ]
 
     # sensor mounted on the agent
     agent_cfg.sensor_specifications = [audio_spec]
@@ -627,6 +985,54 @@ def build_rlr_sim(glb_path, materials_json_path, sample_rate=16000,
     audio_sensor.setAudioMaterialsJSON(str(materials_json_path))
 
     return sim, audio_sensor
+
+
+def _install_habitat_audio_only_scipy_stub():
+    """Avoid Habitat's unused PyRobot/SciPy import in the audio-only runner.
+
+    Habitat 0.2.2 imports its optional noisy locomotion controller eagerly,
+    which recursively imports all of SciPy.  On the current shared filesystem
+    that unrelated import takes minutes.  RLR never invokes the controller, so
+    install fail-closed placeholders for the two eagerly imported optional
+    surfaces. ``scene_spec`` imports ``CubicSpline`` only to define unrelated
+    random-scene helpers; the controlled Apartment composer never calls it.
+    Any accidental use of either placeholder raises instead of silently
+    changing behavior.
+    """
+    if "scipy" in sys.modules or "scipy.stats" in sys.modules:
+        return
+
+    class _UnavailableTruncatedNormal:
+        @staticmethod
+        def rvs(*_args, **_kwargs):
+            raise RuntimeError(
+                "SciPy noisy locomotion is disabled in the audio-only RLR runner"
+            )
+
+    class _UnavailableCubicSpline:
+        def __init__(self, *_args, **_kwargs):
+            raise RuntimeError(
+                "SciPy random-scene splines are disabled in the controlled "
+                "audio-only RLR runner"
+            )
+
+    scipy_module = types.ModuleType("scipy")
+    scipy_module.__path__ = []
+    scipy_module.__version__ = "1.10.0"
+    stats_module = types.ModuleType("scipy.stats")
+    stats_module.truncnorm = _UnavailableTruncatedNormal()
+    interpolate_module = types.ModuleType("scipy.interpolate")
+    interpolate_module.CubicSpline = _UnavailableCubicSpline
+    scipy_module.stats = stats_module
+    scipy_module.interpolate = interpolate_module
+    sys.modules["scipy"] = scipy_module
+    sys.modules["scipy.stats"] = stats_module
+    sys.modules["scipy.interpolate"] = interpolate_module
+    # ``habitat_sim.simulator`` also imports the full Torch stack only to
+    # support optional tensor observations.  Audio observations are NumPy;
+    # make the optional import take its documented ImportError branch.
+    if "torch" not in sys.modules:
+        sys.modules["torch"] = None
 
 
 def _mic_yaw_deg_from_spec(spec: dict) -> float:
@@ -723,7 +1129,9 @@ def compute_rir_and_render(spec_path, glb_path, materials_sidecar_path,
     }
 
     # Place mic (Habitat's agent = the listener)
-    _set_agent_pose(sim, spec["mic"]["pos_m"], _mic_yaw_deg_from_spec(spec))
+    mic_position_scene = np.asarray(spec["mic"]["pos_m"], dtype=np.float64)
+    mic_yaw_deg = _mic_yaw_deg_from_spec(spec)
+    _set_agent_pose(sim, mic_position_scene, mic_yaw_deg)
 
     # Wet output buffer (n_channels x n_samples_total). We know from
     # build_rlr_sim we set 4-ch ambisonic; assert to be defensive.
@@ -874,10 +1282,53 @@ def compute_binaural(spec_path, glb_path, materials_sidecar_path,
     binaural output is already ordered [left, right]. Keep the explicit channel
     order constant above so future calibration changes are localized.
     """
-    with open(spec_path) as f:
-        spec = json.load(f)
-    with open(materials_sidecar_path) as f:
-        materials_sidecar = json.load(f)
+    out_wav_path = Path(out_wav_path)
+    out_wav_path.parent.mkdir(parents=True, exist_ok=True)
+    spec, _origin_spec_descriptor, spec_payload = (
+        _load_authenticated_json_with_descriptor(spec_path)
+    )
+    materials_sidecar, _origin_materials_descriptor, materials_payload = (
+        _load_authenticated_json_with_descriptor(materials_sidecar_path)
+    )
+    # ``tmp`` is a repository-owned compatibility symlink to the large
+    # workspace.  Canonicalize that logical CLI path once, then authenticate
+    # every physical path component with O_NOFOLLOW in the shared reader.
+    mesh_payload = load_authenticated_file_bytes(Path(glb_path).resolve())
+    acoustic_scene_contract = validate_approved_acoustic_scene_inputs(
+        spec,
+        mesh_payload=mesh_payload,
+        materials_payload=materials_payload,
+    )
+    authenticated_inputs = Path(
+        tempfile.mkdtemp(
+            prefix=f".{out_wav_path.stem}_authenticated_inputs.",
+            dir=out_wav_path.parent,
+        )
+    )
+    spec_descriptor = _stage_authenticated_snapshot(
+        authenticated_inputs,
+        "spec.json",
+        spec_payload,
+    )
+    mesh_descriptor = _stage_authenticated_snapshot(
+        authenticated_inputs,
+        "acoustic_mesh.glb",
+        mesh_payload,
+    )
+    materials_descriptor = _stage_authenticated_snapshot(
+        authenticated_inputs,
+        "acoustic_materials.json",
+        materials_payload,
+    )
+    derived_materials_descriptor = _stage_authenticated_snapshot(
+        authenticated_inputs,
+        "rlr_materials.json",
+        build_rlr_materials_payload(materials_sidecar),
+    )
+    os.chmod(authenticated_inputs, 0o500)
+    spec_path = Path(spec_descriptor["path"])
+    glb_path = Path(mesh_descriptor["path"])
+    materials_sidecar_path = Path(materials_descriptor["path"])
 
     sample_rate = spec["audio_config"]["sample_rate_hz"]
     duration_s = spec["audio_config"]["duration_s"]
@@ -886,38 +1337,71 @@ def compute_binaural(spec_path, glb_path, materials_sidecar_path,
     n_samples_total = int(round(sample_rate * duration_s))
     samples_per_frame = int(round(sample_rate / fps))
 
-    rlr_materials_json = Path(materials_sidecar_path).with_name(
-        Path(materials_sidecar_path).stem + "_rlr.json")
-    _make_rlr_materials_json(materials_sidecar, rlr_materials_json)
-
-    ray_count_by_quality = {"low": 100, "high": 500, "max": 5000}
-    indirect_ray_count = ray_count_by_quality.get(quality_mode, 500)
-
-    sim, audio_sensor = build_rlr_sim(
-        glb_path, rlr_materials_json,
-        sample_rate=sample_rate,
-        channel_layout="binaural",
-        indirect_ray_count=indirect_ray_count,
+    rlr_materials_json = Path(derived_materials_descriptor["path"])
+    renderer_contract = approved_rlr_renderer_contract(
+        sample_rate_hz=sample_rate,
+        quality_mode=quality_mode,
     )
-
-    load_scene = _load_scene_and_scene_two_dogs(spec_path)
-    scene = load_scene(spec_path)
+    indirect_ray_count = renderer_contract["acoustics"][
+        "indirect_ray_count"
+    ]
+    staged_descriptors = {
+        "spec.json": spec_descriptor,
+        "acoustic_mesh.glb": mesh_descriptor,
+        "acoustic_materials.json": materials_descriptor,
+        "rlr_materials.json": derived_materials_descriptor,
+    }
+    with _pinned_snapshot_root(
+        authenticated_inputs,
+        staged_descriptors,
+    ) as pinned_inputs:
+        sim, audio_sensor = build_rlr_sim(
+            pinned_inputs / "acoustic_mesh.glb",
+            pinned_inputs / "rlr_materials.json",
+            sample_rate=sample_rate,
+            channel_layout="binaural",
+            indirect_ray_count=indirect_ray_count,
+        )
+        load_scene = _load_scene_and_scene_two_dogs(
+            pinned_inputs / "spec.json"
+        )
+        scene = load_scene(pinned_inputs / "spec.json")
     source_specs_by_tag = {
         src.get("tag"): src for src in spec.get("sources", []) if src.get("tag")
     }
-    _set_agent_pose(sim, spec["mic"]["pos_m"], _mic_yaw_deg_from_spec(spec))
+    mic_position_scene = np.asarray(spec["mic"]["pos_m"], dtype=np.float64)
+    mic_yaw_deg = _mic_yaw_deg_from_spec(spec)
+    _set_agent_pose(sim, mic_position_scene, mic_yaw_deg)
 
     wet = np.zeros((2, n_samples_total), dtype=np.float32)
     per_source_wet_map = {}
+    per_source_dry_descriptors = {}
+    per_source_rir_descriptors = {}
     source_schedules = {}
+    source_azimuths = {}
+    rir_evidence_directory = Path(
+        tempfile.mkdtemp(
+            prefix=f".{out_wav_path.stem}_active_frame_rir.",
+            dir=out_wav_path.parent,
+        )
+    )
 
     for a in scene.animals:
         tag = a.tag
         source_spec = source_specs_by_tag.get(tag) or {}
         if source_spec.get("mute_audio") or source_spec.get("audio_lookup") == "silent":
+            if animal_species_for_source(tag, source_spec) is not None:
+                validate_animal_silence_contract(tag, source_spec)
             print(f"[rlr-bin] source {tag}: muted, skipping RIR/audio render")
             continue
         traj_scene = acoustic_trajectory(a.trajectory_m, source_spec)
+        relative_xy = traj_scene[:, :2] - mic_position_scene[:2]
+        world_angle_deg = np.degrees(
+            np.arctan2(relative_xy[:, 1], relative_xy[:, 0])
+        )
+        source_azimuths[tag] = (
+            (world_angle_deg - mic_yaw_deg + 180.0) % 360.0 - 180.0
+        ).astype(float).tolist()
         schedule_metadata = {}
         dry = _load_dry_source(
             tag,
@@ -927,9 +1411,24 @@ def compute_binaural(spec_path, glb_path, materials_sidecar_path,
             schedule_metadata_out=schedule_metadata,
         )
         source_schedules[tag] = schedule_metadata
+        scheduled_dry_path = out_wav_path.parent / (
+            f"{out_wav_path.stem}_{tag}_scheduled_dry.wav"
+        )
+        sf.write(
+            str(scheduled_dry_path),
+            dry,
+            sample_rate,
+            subtype="PCM_16",
+        )
+        per_source_dry_descriptors[tag] = _authenticated_descriptor(
+            scheduled_dry_path
+        )
         if verbose:
             print(f"[rlr-bin] source {tag}: dry rms={np.sqrt(np.mean(dry**2)):.4f}")
         per_source_wet = np.zeros_like(wet)
+        active_frame_indices = []
+        active_frame_rirs = []
+        active_frame_positions = []
         t0 = time.time()
 
         for f in range(n_frames):
@@ -943,12 +1442,29 @@ def compute_binaural(spec_path, glb_path, materials_sidecar_path,
                 ir = ir.T
             elif ir.ndim == 1:
                 ir = ir[None, :]
+            if (
+                ir.ndim != 2
+                or ir.shape[0] != 2
+                or ir.shape[1] <= 0
+                or not np.all(np.isfinite(ir))
+            ):
+                raise RuntimeError(
+                    f"RLR returned malformed native binaural RIR for {tag!r}"
+                )
 
             frame_start = f * samples_per_frame
             frame_end = min(frame_start + samples_per_frame, n_samples_total)
             dry_chunk = dry[frame_start:frame_end]
             if len(dry_chunk) == 0:
                 continue
+            if np.any(dry_chunk != 0.0):
+                useful_ir_length = min(
+                    ir.shape[1],
+                    n_samples_total - frame_start,
+                )
+                active_frame_indices.append(f)
+                active_frame_rirs.append(ir[:, :useful_ir_length].copy())
+                active_frame_positions.append(np.asarray(src_pos, dtype=np.float64))
             for c in range(2):
                 wet_chunk = np.convolve(dry_chunk, ir[c], mode="full")
                 w_end = min(frame_start + len(wet_chunk), n_samples_total)
@@ -959,12 +1475,34 @@ def compute_binaural(spec_path, glb_path, materials_sidecar_path,
 
         wet += per_source_wet
         per_source_wet_map[tag] = per_source_wet.copy()
+        rir_payload = serialize_active_frame_rir_evidence(
+            source_tag=tag,
+            frame_indices=active_frame_indices,
+            rirs=active_frame_rirs,
+            source_positions_scene_m=np.asarray(
+                active_frame_positions,
+                dtype=np.float64,
+            ),
+            mic_position_scene_m=mic_position_scene,
+            mic_yaw_deg=mic_yaw_deg,
+            sample_rate_hz=int(sample_rate),
+            n_samples_total=n_samples_total,
+            n_frames=int(n_frames),
+            fps=float(fps),
+            samples_per_frame=samples_per_frame,
+            channel_order=RLR_NATIVE_BINAURAL_CHANNEL_ORDER,
+        )
+        per_source_rir_descriptors[tag] = _stage_authenticated_snapshot(
+            rir_evidence_directory,
+            f"{tag}_active_frame_binaural_rir.npz",
+            rir_payload,
+        )
 
+    os.chmod(rir_evidence_directory, 0o500)
     channel_order = list(RLR_NATIVE_BINAURAL_CHANNEL_ORDER)
     wet = wet[channel_order, :]
 
-    out_wav_path = Path(out_wav_path)
-    out_wav_path.parent.mkdir(parents=True, exist_ok=True)
+    per_source_outputs = {}
     for tag, buf in per_source_wet_map.items():
         buf_sw = buf[channel_order, :]
         p = np.abs(buf_sw).max()
@@ -972,6 +1510,13 @@ def compute_binaural(spec_path, glb_path, materials_sidecar_path,
             buf_sw = buf_sw * (0.9 / p)
         solo_path = out_wav_path.parent / f"{out_wav_path.stem}_{tag}_binaural.wav"
         sf.write(str(solo_path), buf_sw.T, sample_rate, subtype="PCM_16")
+        per_source_outputs[tag] = {
+            "binaural": _authenticated_descriptor(solo_path),
+            "scheduled_dry": per_source_dry_descriptors[tag],
+            "active_frame_rir": per_source_rir_descriptors[tag],
+            "pre_normalization_peak": float(p),
+            "mic_local_azimuth_deg_per_frame": source_azimuths[tag],
+        }
         print(f"[rlr-bin] wrote SOLO {solo_path.name}")
 
     peak = np.abs(wet).max()
@@ -981,6 +1526,40 @@ def compute_binaural(spec_path, glb_path, materials_sidecar_path,
     print(f"[rlr-bin] wrote {out_wav_path} shape={wet.shape} sr={sample_rate}")
     schedule_path = _write_source_schedule_manifest(out_wav_path, source_schedules)
     print(f"[rlr-bin] wrote source schedules {schedule_path}")
+    _require_unchanged_descriptor(spec_path, spec_descriptor)
+    _require_unchanged_descriptor(glb_path, mesh_descriptor)
+    _require_unchanged_descriptor(materials_sidecar_path, materials_descriptor)
+    _require_unchanged_descriptor(
+        rlr_materials_json,
+        derived_materials_descriptor,
+    )
+    for tag, descriptor in per_source_rir_descriptors.items():
+        _require_unchanged_descriptor(
+            descriptor["path"],
+            descriptor,
+        )
+    manifest_path = _write_audio_render_manifest(
+        out_wav_path=out_wav_path,
+        schedule_path=schedule_path,
+        spec_descriptor=spec_descriptor,
+        mesh_descriptor=mesh_descriptor,
+        materials_descriptor=materials_descriptor,
+        derived_materials_descriptor=derived_materials_descriptor,
+        acoustic_scene_contract=acoustic_scene_contract,
+        renderer_contract=renderer_contract,
+        channel_layout="binaural_native",
+        sample_rate_hz=sample_rate,
+        duration_s=duration_s,
+        n_frames=n_frames,
+        fps=fps,
+        quality_mode=quality_mode,
+        indirect_ray_count=indirect_ray_count,
+        source_tags=source_schedules,
+        per_source_outputs=per_source_outputs,
+        mix_pre_normalization_peak=float(peak),
+    )
+    print(f"[rlr-bin] wrote render manifest {manifest_path}")
+    return manifest_path
 
 
 def main():

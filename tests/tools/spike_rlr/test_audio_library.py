@@ -95,24 +95,33 @@ def test_pinned_dog_and_cat_sources_match_real_wav_and_remain_nonformal():
         "dog",
         44100,
         10.0,
-        2,
+        1,
     )
     assert (cat.species, cat.sample_rate, cat.duration_s, cat.channels) == (
         "cat",
         44100,
         10.0,
-        2,
+        1,
     )
     assert dog.sha256 == (
-        "d244289ddde2d60065e258ef8f336776f2209f7b9240a706dbf8d42888854033"
+        "5481218ef268b4df98b03e52c48a4973852d60ea5cae9cbf42d0f203a6b9a505"
     )
     assert cat.sha256 == (
-        "accd2babb3facabd1f140ce16da9a3986e457f49f175bb0b162c9fa2e070b158"
+        "aa8736bc58a4cd8a35d8911e2cfa22fb2e93fa899b67b1c04a927322c074df3d"
     )
+    expected_content_status = {
+        "dog_bark": "clotho_five_caption_consensus_animal_only_pending_listening",
+        "cat_meow": "pending_background_contamination_review",
+    }
     for sample in (dog, cat):
         assert sample.codec == "pcm_s16le"
         assert sample.sample_width_bytes == 2
         assert sample.frame_count == 441000
+        assert sample.dry_source_policy == "mono_no_hrtf_no_pre_spatialization"
+        assert sample.spatialization_status == "mono_unspatialized_dry_source"
+        assert sample.objective_audio_content_qa_status == (
+            expected_content_status[sample.category]
+        )
         assert sample.item_level_license_status == "missing"
         assert sample.item_level_license_snapshot is None
         assert sample.formal_registration_authorized is False
@@ -160,5 +169,45 @@ def test_pinned_catalog_cannot_authorize_formal_without_item_license(tmp_path):
     entries = _real_pinned_entries()
     entries[0]["formal_registration_authorized"] = True
 
-    with pytest.raises(ValueError, match="item-level license evidence"):
+    with pytest.raises(ValueError, match="v1 pinned source"):
+        load_library(_write_catalog(tmp_path, entries))
+
+
+def test_pinned_catalog_rejects_known_pre_spatialized_stereo_derivative(
+    tmp_path,
+):
+    entries = _real_pinned_entries()
+    dog = entries[0]
+    dog.update(
+        {
+            "path": (
+                "/data/datasets/omniaudio/train-data-az-360-large/"
+                "Growling and Barking Dog_184.wav"
+            ),
+            "sha256": (
+                "c5e243e2293a85352184b279263911d5fe6ac2ba63517e0991e559e03e4d1f55"
+            ),
+            "size_bytes": 1764044,
+            "channels": 2,
+            "spatialization_status": "pre_spatialized_hrtf_binaural",
+        }
+    )
+
+    with pytest.raises(ValueError, match="provenance/spatialization"):
+        load_library(_write_catalog(tmp_path, entries))
+
+
+def test_v1_rejects_unbound_verified_license_snapshot(tmp_path):
+    entries = _real_pinned_entries()
+    entries[0].update(
+        {
+            "item_level_license_status": "verified",
+            "item_level_license_snapshot": {
+                "path": "/tmp/unbound-license.html",
+                "sha256": "b" * 64,
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="v1 pinned source"):
         load_library(_write_catalog(tmp_path, entries))
