@@ -10,6 +10,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -42,6 +43,7 @@ MAX_QUADRUPED_FAR_LIMB_OFFSET_RATIO = 0.35
 # does not scale its torso.  This bound only admits that numerical round-trip;
 # the guide's leg, tail, foot-ground, and body-drop contracts remain unchanged.
 MAX_MORPHOTYPE_MATRIX_ROUNDTRIP_ERROR = 2.0e-6
+RENDER_MANIFEST_SCHEMA = "avengine_glb_animation_frame_render_v1"
 
 
 def parse_argv():
@@ -140,9 +142,18 @@ def parse_argv():
         ),
     )
     p.add_argument("--output-dir", required=True)
+    p.add_argument(
+        "--manifest",
+        default=None,
+        help=(
+            "Optional exclusive render-lineage manifest. When supplied, the "
+            "manifest and every expected frame must be new files."
+        ),
+    )
     p.add_argument("--n-frames", type=int, default=12)
     p.add_argument("--width", type=int, default=640)
     p.add_argument("--height", type=int, default=480)
+    p.add_argument("--fps", type=int, default=8)
     p.add_argument("--samples", type=int, default=16)
     p.add_argument("--view", default="side", choices=["side", "front", "quarter"])
     p.add_argument(
@@ -193,6 +204,53 @@ def parse_argv():
     p.add_argument("--engine", default="BLENDER_EEVEE_NEXT",
                    choices=["BLENDER_EEVEE_NEXT", "CYCLES"])
     return p.parse_args(argv)
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def file_descriptor(path):
+    lexical_path = os.path.abspath(path)
+    if os.path.islink(lexical_path):
+        raise SystemExit(
+            f"missing or unsafe render-lineage artifact: {lexical_path}"
+        )
+    path = os.path.realpath(lexical_path)
+    if (
+        not os.path.isfile(path)
+        or os.path.getsize(path) <= 0
+    ):
+        raise SystemExit(f"missing or unsafe render-lineage artifact: {path}")
+    return {
+        "path": path,
+        "sha256": sha256_file(path),
+        "size_bytes": os.path.getsize(path),
+    }
+
+
+def write_json_exclusive(path, payload):
+    lexical_path = os.path.abspath(path)
+    if os.path.islink(lexical_path):
+        raise SystemExit(
+            f"refusing unsafe render manifest symlink: {lexical_path}"
+        )
+    path = os.path.join(
+        os.path.realpath(os.path.dirname(lexical_path)),
+        os.path.basename(lexical_path),
+    )
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "x", encoding="utf-8") as stream:
+        json.dump(payload, stream, indent=2)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 def look_at(obj, target):
@@ -938,6 +996,49 @@ def apply_pose_template_yaw(asset_root, yaw_deg):
 
 def main():
     args = parse_argv()
+    input_lexical_path = os.path.abspath(args.input)
+    output_dir_lexical_path = os.path.abspath(args.output_dir)
+    manifest_lexical_path = (
+        os.path.abspath(args.manifest) if args.manifest else None
+    )
+    if os.path.islink(input_lexical_path):
+        raise SystemExit(
+            f"refusing unsafe input GLB symlink: {input_lexical_path}"
+        )
+    if os.path.islink(output_dir_lexical_path):
+        raise SystemExit(
+            f"refusing unsafe output directory symlink: "
+            f"{output_dir_lexical_path}"
+        )
+    if manifest_lexical_path and os.path.islink(manifest_lexical_path):
+        raise SystemExit(
+            f"refusing unsafe render manifest symlink: "
+            f"{manifest_lexical_path}"
+        )
+    args.input = os.path.realpath(input_lexical_path)
+    args.output_dir = os.path.realpath(output_dir_lexical_path)
+    args.manifest = (
+        os.path.join(
+            os.path.realpath(
+                os.path.dirname(manifest_lexical_path)
+            ),
+            os.path.basename(manifest_lexical_path),
+        )
+        if args.manifest
+        else None
+    )
+    input_record = file_descriptor(args.input) if args.manifest else None
+    morphotype_profile_record = (
+        file_descriptor(args.quadruped_morphotype_guide_profile)
+        if args.manifest and args.quadruped_morphotype_guide_profile
+        else None
+    )
+    if not 1 <= args.n_frames <= 240:
+        raise SystemExit("--n-frames must be in [1, 240]")
+    if not 16 <= args.width <= 8192 or not 16 <= args.height <= 8192:
+        raise SystemExit("--width and --height must be in [16, 8192]")
+    if not 1 <= args.fps <= 120:
+        raise SystemExit("--fps must be in [1, 120]")
     if not 1 <= args.samples <= 256:
         raise SystemExit("--samples must be in [1, 256]")
     if not 0.75 <= args.camera_distance_multiplier <= 4.0:
@@ -1017,6 +1118,23 @@ def main():
             raise SystemExit(
                 f"invalid --quadruped-morphotype-guide-profile: {error}"
             ) from error
+    expected_frame_paths = [
+        os.path.join(args.output_dir, f"frame_{index:04d}.png")
+        for index in range(args.n_frames)
+    ]
+    if args.manifest:
+        if os.path.lexists(args.manifest):
+            raise SystemExit(
+                f"refusing to replace render manifest: {args.manifest}"
+            )
+        occupied = [
+            path for path in expected_frame_paths if os.path.lexists(path)
+        ]
+        if occupied:
+            raise SystemExit(
+                "refusing to replace render frames: "
+                + ", ".join(occupied[:3])
+            )
     os.makedirs(args.output_dir, exist_ok=True)
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -1178,6 +1296,9 @@ def main():
     scene.render.image_settings.file_format = "PNG"
     scene.render.resolution_x = args.width
     scene.render.resolution_y = args.height
+    scene.render.resolution_percentage = 100
+    scene.render.fps = args.fps
+    scene.render.fps_base = 1.0
     scene.render.film_transparent = False
     if args.engine == "CYCLES":
         scene.cycles.samples = args.samples
@@ -1192,6 +1313,7 @@ def main():
             f"distance={trajectory_distance:.6f} start_fraction=-0.5 end_fraction=0.5",
             flush=True,
         )
+    frame_records = []
     for i in range(args.n_frames):
         t = 0.0 if args.n_frames == 1 else i / (args.n_frames - 1)
         frame = start + (end - start) * t
@@ -1200,9 +1322,85 @@ def main():
             ((t - 0.5) * trajectory_distance, 0.0, 0.0)
         )
         bpy.context.view_layer.update()
-        scene.render.filepath = os.path.join(args.output_dir, f"frame_{i:04d}.png")
+        scene.render.filepath = expected_frame_paths[i]
         bpy.ops.render.render(write_still=True)
+        frame_records.append(
+            {
+                "index": i,
+                "sample_fraction": float(t),
+                "source_action_frame": float(int(round(frame))),
+                "artifact": file_descriptor(expected_frame_paths[i]),
+            }
+        )
         print(f"[anim] frame {i + 1}/{args.n_frames} source_frame={frame:.2f}", flush=True)
+
+    if args.manifest:
+        if file_descriptor(args.input) != input_record:
+            raise SystemExit("render input GLB changed while frames were produced")
+        if args.quadruped_morphotype_guide_profile and (
+            file_descriptor(args.quadruped_morphotype_guide_profile)
+            != morphotype_profile_record
+        ):
+            raise SystemExit(
+                "render morphotype guide changed while frames were produced"
+            )
+        manifest = {
+            "schema": RENDER_MANIFEST_SCHEMA,
+            "status": "frames_rendered",
+            "formal_dataset_registration_authorized": False,
+            "input_glb": input_record,
+            "request": {
+                "action": args.action,
+                "resolved_action": action_label,
+                "rest_pose": bool(args.rest_pose),
+                "view": args.view,
+                "asset_yaw_deg": float(args.asset_yaw_deg),
+                "n_frames": args.n_frames,
+                "resolution": {
+                    "width": args.width,
+                    "height": args.height,
+                },
+                "fps": args.fps,
+                "output_dir": args.output_dir,
+            },
+            "render_config": {
+                "engine": args.engine,
+                "samples": args.samples,
+                "image_format": "PNG",
+                "film_transparent": False,
+                "ground_plane": bool(args.ground_plane),
+                "trajectory_distance_ratio": float(
+                    args.trajectory_distance_ratio
+                ),
+                "orthographic": bool(args.orthographic),
+                "camera_distance_multiplier": float(
+                    args.camera_distance_multiplier
+                ),
+                "camera_reference_diagonal": float(
+                    args.camera_reference_diagonal
+                ),
+                "quadruped_far_limb_offset_ratio": float(
+                    args.quadruped_far_limb_offset_ratio
+                ),
+                "quadruped_far_limb_action_pose_ratio": float(
+                    args.quadruped_far_limb_action_pose_ratio
+                ),
+                "quadruped_pose_action": args.quadruped_pose_action,
+                "quadruped_pose_samples": args.quadruped_pose_samples,
+                "quadruped_morphotype_guide_profile": (
+                    morphotype_profile_record
+                ),
+                "pose_template_clay_color": args.pose_template_clay_color,
+                "pose_template_yaw_deg": float(
+                    args.pose_template_yaw_deg
+                ),
+                "review_clay_color": args.review_clay_color,
+                "preserve_volume": bool(args.preserve_volume),
+            },
+            "action_frame_range": [float(start), float(end)],
+            "frames": frame_records,
+        }
+        write_json_exclusive(args.manifest, manifest)
 
     print(f"RENDER_GLB_ANIM_OK {args.output_dir}", flush=True)
 

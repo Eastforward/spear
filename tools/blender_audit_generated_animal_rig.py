@@ -242,8 +242,8 @@ def main():
         hard_failures.append("skeleton_must_have_exactly_one_root")
     if hierarchy["bone_count"] < 5:
         hard_failures.append("skeleton_too_small")
-    if len(hierarchy["low_leaf_endpoint_candidates"]) < 2:
-        hard_failures.append("insufficient_low_limb_endpoints")
+    if len(hierarchy["low_leaf_endpoint_candidates"]) != 4:
+        hard_failures.append("expected_exactly_four_low_limb_endpoints")
     payload = {
         "schema": SCHEMA,
         "created_at": datetime.now(timezone.utc).isoformat(),

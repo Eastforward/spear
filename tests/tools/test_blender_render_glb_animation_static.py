@@ -168,3 +168,27 @@ def test_animation_renderer_rotates_the_existing_whole_asset_root():
     assert "while authority_root.parent is not None" in text
     assert "authority_root.parent = asset_root" in text
     assert "authority_root={authority_root.name}" in text
+
+
+def test_animation_renderer_can_publish_exclusive_per_frame_lineage():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert "avengine_glb_animation_frame_render_v1" in text
+    assert '"--manifest"' in text
+    assert 'p.add_argument("--fps", type=int, default=8)' in text
+    assert 'with open(path, "x", encoding="utf-8")' in text
+    assert '"input_glb": input_record' in text
+    assert '"render_config": {' in text
+    assert '"source_action_frame": float(int(round(frame)))' in text
+    assert '"artifact": file_descriptor(expected_frame_paths[i])' in text
+    assert "render input GLB changed while frames were produced" in text
+    assert "lexical_path = os.path.abspath(path)" in text
+    assert "if os.path.islink(lexical_path):" in text
+    assert "path = os.path.realpath(lexical_path)" in text
+    assert (
+        "args.output_dir = os.path.realpath(output_dir_lexical_path)"
+        in text
+    )
+    assert "if os.path.islink(input_lexical_path):" in text
+    assert "if os.path.islink(output_dir_lexical_path):" in text
+    assert "refusing unsafe render manifest symlink" in text

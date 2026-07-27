@@ -1,11 +1,13 @@
-"""Level a generated quadruped from its four semantic foot endpoints.
+"""Level a generated quadruped from two independent visible-foot authorities.
 
 Image-to-3D output can be anatomically usable while the complete animal is
 exported with a non-zero pitch or roll.  After heading normalization and
-target-native rigging, the four foot chains provide stable support evidence.
-This stage fits one least-squares foot plane, rigidly rotates every scene root
-so its normal becomes world +Z, and translates the lowest reviewed foot to
-z=0.  Mesh topology, materials, hierarchy, and skin weights are untouched.
+target-native rigging, this stage assigns visible mesh vertices to the nearest
+complete semantic leaf-bone segment, fits the four mutually exclusive foot
+bottoms, and independently repeats the measurement from distal-two-bone skin
+weight ownership.  Both authorities must pass and agree before one rigid
+rotation and vertical translation are applied.  Mesh topology, materials,
+hierarchy, and skin weights are untouched.
 """
 
 from __future__ import annotations
@@ -14,7 +16,6 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import sys
@@ -28,10 +29,14 @@ SPEAR_ROOT = Path(__file__).resolve().parents[1]
 if str(SPEAR_ROOT) not in sys.path:
     sys.path.insert(0, str(SPEAR_ROOT))
 
-from tools.generated_quadruped_semantics import infer_quadruped_semantics
+from tools.generated_animal_support_plane import (  # noqa: E402
+    POLICY,
+    evaluate_dual_authority_support_plane,
+)
+from tools.generated_quadruped_semantics import infer_quadruped_semantics  # noqa: E402
 
 
-SCHEMA = "avengine_generated_animal_support_plane_leveling_v1"
+SCHEMA = "avengine_generated_animal_support_plane_leveling_v2"
 
 
 def parse_argv():
@@ -48,16 +53,13 @@ def parse_argv():
     parser.add_argument("--review-evidence", type=Path, required=True)
     parser.add_argument(
         "--plane-source",
-        choices=("bone-endpoints", "mesh-foot-bottoms"),
-        default="bone-endpoints",
+        choices=("mesh-foot-bottoms",),
+        default="mesh-foot-bottoms",
         help=(
-            "bone-endpoints levels on the semantic foot-chain bone tips "
-            "(v1 behavior).  mesh-foot-bottoms levels on the visible mesh "
-            "ground-contact band around each foot instead: generated rigs "
-            "can extend bone tails unevenly below the mesh, leaving the "
-            "asset floating and pitched even though the bone tips are "
-            "perfectly level.  Both modes apply one rigid rotation plus one "
-            "vertical translation and never move feet individually."
+            "Visible mesh-foot authority.  V2 uses mutually exclusive nearest "
+            "complete-leaf-segment corridors and requires an independent "
+            "distal-two-bone weight-owned crosscheck; no endpoint, expanded "
+            "radius, or weight fallback exists."
         ),
     )
     parser.add_argument("--maximum-tilt-deg", type=float, default=30.0)
@@ -126,34 +128,38 @@ def semantic_records(armature):
     return records
 
 
-def lower_endpoint(record):
-    head = np.asarray(record["head_world"], dtype=np.float64)
-    tail = np.asarray(record["tail_world"], dtype=np.float64)
-    return head if head[2] <= tail[2] else tail
+def distal_two_weight_scores(mesh, semantics):
+    """Return one exclusive-authority score column per semantic limb."""
 
+    chain_by_leaf = {}
+    for _label, chain in semantics.chains().items():
+        if chain and chain[-1] in semantics.foot_leaves:
+            chain_by_leaf[chain[-1]] = list(chain)
+    if set(chain_by_leaf) != set(semantics.foot_leaves):
+        raise RuntimeError("semantic foot chains are incomplete")
 
-def mesh_foot_bottom_point(world_vertices, anchor, mesh_diagonal):
-    """Ground-contact point of one foot: among mesh vertices within a
-    horizontal capture radius of the foot-bone anchor, take the lowest-z
-    vertex band and return its centroid at the true minimum height.  A sparse
-    or empty capture is rejected instead of silently reverting to the
-    bone-endpoint mode that this plane source was selected to replace."""
-    horizontal = np.linalg.norm(world_vertices[:, :2] - anchor[:2], axis=1)
-    capture = world_vertices[horizontal < mesh_diagonal*0.05]
-    if len(capture) < 10:
-        raise RuntimeError(
-            "mesh-foot-bottoms captured fewer than 10 vertices around "
-            f"semantic foot anchor {anchor.tolist()}: captured={len(capture)}"
-        )
-    z_floor = float(capture[:, 2].min())
-    band = capture[capture[:, 2] <= z_floor + max(0.004, mesh_diagonal*0.003)]
-    return (
-        np.asarray(
-            [float(band[:, 0].mean()), float(band[:, 1].mean()), z_floor],
-            dtype=np.float64,
-        ),
-        int(len(band)),
-    )
+    bone_owner = {}
+    for index, leaf in enumerate(semantics.foot_leaves):
+        chain = chain_by_leaf[leaf]
+        if len(chain) < 2:
+            raise RuntimeError(
+                f"semantic foot chain has fewer than two bones: {leaf}"
+            )
+        for bone_name in chain[-2:]:
+            previous = bone_owner.setdefault(bone_name, index)
+            if previous != index:
+                raise RuntimeError(
+                    "distal semantic bone belongs to more than one foot"
+                )
+
+    group_names = {group.index: group.name for group in mesh.vertex_groups}
+    scores = np.zeros((len(mesh.data.vertices), 4), dtype=np.float64)
+    for vertex in mesh.data.vertices:
+        for membership in vertex.groups:
+            owner = bone_owner.get(group_names.get(membership.group))
+            if owner is not None:
+                scores[vertex.index, owner] += float(membership.weight)
+    return scores
 
 
 def scene_summary():
@@ -204,54 +210,37 @@ def main():
         front_axis=args.front_axis,
     )
     by_name = {record["name"]: record for record in records}
-    bone_anchor_points = np.asarray(
-        [lower_endpoint(by_name[name]) for name in semantics.foot_leaves],
+    world_matrix = np.asarray(mesh.matrix_world, dtype=np.float64)
+    local = np.empty((len(mesh.data.vertices), 3), dtype=np.float64)
+    mesh.data.vertices.foreach_get("co", local.ravel())
+    world_vertices = local @ world_matrix[:3, :3].T + world_matrix[:3, 3]
+    segment_heads = np.asarray(
+        [by_name[name]["head_world"] for name in semantics.foot_leaves],
         dtype=np.float64,
     )
-    foot_point_band_sizes = None
-    if args.plane_source == "mesh-foot-bottoms":
-        world_matrix = np.asarray(mesh.matrix_world, dtype=np.float64)
-        local = np.empty((len(mesh.data.vertices), 3), dtype=np.float64)
-        mesh.data.vertices.foreach_get("co", local.ravel())
-        world_vertices = local @ world_matrix[:3, :3].T + world_matrix[:3, 3]
-        mesh_diagonal_early = float(np.linalg.norm(extent))
-        resolved = [
-            mesh_foot_bottom_point(world_vertices, anchor, mesh_diagonal_early)
-            for anchor in bone_anchor_points
-        ]
-        foot_points = np.asarray([point for point, _band in resolved])
-        foot_point_band_sizes = [band for _point, band in resolved]
-    else:
-        foot_points = bone_anchor_points
-    design = np.column_stack((foot_points[:, 0], foot_points[:, 1], np.ones(4)))
-    coefficients, _residuals, _rank, _singular = np.linalg.lstsq(
-        design,
-        foot_points[:, 2],
-        rcond=None,
+    segment_tails = np.asarray(
+        [by_name[name]["tail_world"] for name in semantics.foot_leaves],
+        dtype=np.float64,
     )
-    predicted = design @ coefficients
-    residuals = foot_points[:, 2] - predicted
     mesh_diagonal = float(np.linalg.norm(extent))
-    if mesh_diagonal <= 0.0:
-        raise RuntimeError("target mesh has zero diagonal")
-    maximum_residual = float(np.abs(residuals).max())
-    maximum_residual_ratio = maximum_residual / mesh_diagonal
-    if maximum_residual_ratio > args.maximum_foot_plane_residual_ratio:
-        raise RuntimeError(
-            "semantic feet do not define one support plane: residual ratio "
-            f"{maximum_residual_ratio:.6f} exceeds reviewed maximum "
-            f"{args.maximum_foot_plane_residual_ratio:.6f}"
-        )
-    normal = Vector(
-        (-float(coefficients[0]), -float(coefficients[1]), 1.0)
-    ).normalized()
+    dual_authority = evaluate_dual_authority_support_plane(
+        world_vertices,
+        segment_heads,
+        segment_tails,
+        distal_two_weight_scores(mesh, semantics),
+        mesh_diagonal=mesh_diagonal,
+        maximum_residual_ratio=args.maximum_foot_plane_residual_ratio,
+        maximum_tilt_deg=args.maximum_tilt_deg,
+    )
+    primary = dual_authority["primary"]
+    crosscheck = dual_authority["crosscheck"]
+    primary_plane = primary["plane"]
+    foot_points = np.asarray(primary["foot_points"], dtype=np.float64)
+    crosscheck_foot_points = np.asarray(
+        crosscheck["foot_points"], dtype=np.float64
+    )
+    normal = Vector(primary_plane["normal"])
     up = Vector((0.0, 0.0, 1.0))
-    tilt_deg = math.degrees(normal.angle(up))
-    if tilt_deg > args.maximum_tilt_deg:
-        raise RuntimeError(
-            f"support plane tilt {tilt_deg:.6f} exceeds reviewed maximum "
-            f"{args.maximum_tilt_deg:.6f}"
-        )
     rotation = normal.rotation_difference(up).to_matrix().to_4x4()
     rotated_feet = np.asarray(
         [tuple(rotation @ Vector(point)) for point in foot_points],
@@ -266,6 +255,10 @@ def main():
         root.matrix_world = transform @ root.matrix_world
     post_feet = np.asarray(
         [tuple(transform @ Vector(point)) for point in foot_points],
+        dtype=np.float64,
+    )
+    post_crosscheck_feet = np.asarray(
+        [tuple(transform @ Vector(point)) for point in crosscheck_foot_points],
         dtype=np.float64,
     )
 
@@ -312,22 +305,29 @@ def main():
             "front_axis": args.front_axis,
             "foot_leaves": list(semantics.foot_leaves),
             "plane_source": args.plane_source,
-            "mesh_foot_contact_band_sizes": foot_point_band_sizes,
+            "dual_authority": dual_authority,
+            "mesh_foot_capture_counts": primary["capture_counts"],
+            "mesh_foot_contact_band_sizes": primary["contact_band_sizes"],
             "foot_points_before": foot_points.tolist(),
-            "z_equals_ax_plus_by_plus_c": coefficients.tolist(),
-            "residual_z": residuals.tolist(),
-            "maximum_residual": maximum_residual,
-            "maximum_residual_ratio_of_mesh_diagonal": maximum_residual_ratio,
+            "z_equals_ax_plus_by_plus_c": primary_plane[
+                "z_equals_ax_plus_by_plus_c"
+            ],
+            "residual_z": primary_plane["residual_z"],
+            "maximum_residual": primary_plane["maximum_residual"],
+            "maximum_residual_ratio_of_mesh_diagonal": primary_plane[
+                "maximum_residual_ratio_of_mesh_diagonal"
+            ],
             "maximum_reviewed_residual_ratio_of_mesh_diagonal": (
                 args.maximum_foot_plane_residual_ratio
             ),
-            "normal_before": list(normal),
-            "tilt_deg": tilt_deg,
+            "normal_before": primary_plane["normal"],
+            "tilt_deg": primary_plane["tilt_deg"],
             "maximum_tilt_deg": args.maximum_tilt_deg,
             "applied_vertical_translation": vertical_translation,
             "foot_points_after": post_feet.tolist(),
+            "crosscheck_foot_points_after": post_crosscheck_feet.tolist(),
             "minimum_foot_z_after": float(post_feet[:, 2].min()),
-            "policy": "four_semantic_feet_least_squares_plane_rigid_leveling",
+            "policy": POLICY,
         },
         "preservation_contract": {
             "mesh_topology_changed": False,
@@ -351,7 +351,7 @@ def main():
         os.fsync(stream.fileno())
     print(
         "GENERATED_ANIMAL_SUPPORT_PLANE_LEVELING_OK "
-        f"tilt_deg={tilt_deg:.6f} output={output}",
+        f"tilt_deg={primary_plane['tilt_deg']:.6f} output={output}",
         flush=True,
     )
 

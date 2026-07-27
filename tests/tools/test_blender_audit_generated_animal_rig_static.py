@@ -13,6 +13,8 @@ def test_generated_animal_rig_audit_is_name_independent_and_fail_closed():
     assert "per_bone_support" in text
     assert "maximum_weight_sum_error" in text
     assert "low_leaf_endpoint_candidates" in text
+    assert 'len(hierarchy["low_leaf_endpoint_candidates"]) != 4' in text
+    assert "expected_exactly_four_low_limb_endpoints" in text
     assert '"animation_authorized": False' in text
     assert '"formal_dataset_registration_authorized": False' in text
 
