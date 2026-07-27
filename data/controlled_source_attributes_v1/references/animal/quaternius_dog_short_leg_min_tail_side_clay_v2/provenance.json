@@ -1,0 +1,100 @@
+{
+  "schema": "avengine_controlled_reference_provenance_v1",
+  "reference_id": "quaternius_dog_short_leg_min_tail_side_clay_v2",
+  "state_classification": "research_candidate",
+  "method_revision": {
+    "kind": "new_render_only_morphotype_method_revision",
+    "supersedes_reference_id": "quaternius_dog_short_leg_short_tail_side_clay_v1",
+    "supersedes_reference_path": "data/controlled_source_attributes_v1/references/animal/quaternius_dog_short_leg_short_tail_side_clay_v1/provenance.json",
+    "triggered_by_rejected_candidate_sha256": "d63814fbe4fe4f4951ced196d79d082616bba916a7c47d9d3ea33d347b7b3951",
+    "reason": "The v2 candidate retained short legs but failed objective tail-length and fourth lower-limb/paw silhouette gates. This is a distinct frozen-reference method revision, not a seed retry or candidate selection."
+  },
+  "reference": {
+    "path": "data/controlled_source_attributes_v1/references/animal/quaternius_dog_short_leg_min_tail_side_clay_v2/frame_0000.png",
+    "sha256": "d85cfbd15b9a69394102cc8534fbb3326fb07099633f8cf9e0ae8186d281f025",
+    "size_bytes": 1041918,
+    "canvas": [
+      1024,
+      1024
+    ]
+  },
+  "source_rig": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/quaternius_animalpack/Dog.glb",
+    "sha256": "bf9d2fdaf74a36be453edf4516a0b13b042cfce2d2614e0bf3ee24d40d553032",
+    "size_bytes": 143692,
+    "pose": "authored_armature_rest_pose_with_deterministic_render_only_morphotype_guide_and_far_limb_offset"
+  },
+  "license_snapshot": {
+    "root_id": "avengine_repo",
+    "path": "assets/mesh_library/README.md",
+    "sha256": "5887c71ec9a300997bee4445def8f4fb9014ea4e09b36522c1efb9b8eb3a5aef",
+    "size_bytes": 1347,
+    "declared_license": "CC0-1.0",
+    "upstream_url": "https://quaternius.com/packs/animatedanimals.html"
+  },
+  "morphotype_guide": {
+    "profile": {
+      "path": "data/controlled_source_attributes_v1/contracts/quadruped_morphotype_guide_short_leg_min_tail_v2.json",
+      "sha256": "e2ebec654d4f7416b86bcb2b0ae258c3d39f7a627d1c157c06dfccb103dc37cd",
+      "size_bytes": 213
+    },
+    "implementation": {
+      "path": "tools/quadruped_morphotype_guide.py",
+      "sha256": "9470f9389830ac354253f3154c34909500ba9a8dd3ea19b02063a4817629b951",
+      "size_bytes": 16626
+    },
+    "leg_length_ratio": 0.65,
+    "tail_length_ratio": 0.25,
+    "body_drop_height_ratio": 0.1539846974465941,
+    "maximum_endpoint_residual_height_ratio": 2.311992552378391e-07,
+    "maximum_foot_ground_residual_height_ratio": 3.399989047615281e-09,
+    "mesh_ground_residual_height_ratio": 5.0999835714229214e-09,
+    "maximum_cross_section_scale_error": 2.384185791015625e-07,
+    "maximum_torso_segment_scale_error": 3.0530488981383996e-07,
+    "realized_tail_length_ratio": 0.24999973973823916,
+    "render_only": true,
+    "source_asset_unchanged": true
+  },
+  "render": {
+    "spear_base_revision": "12e4446b3ca221a040924f68f42800b15a45dd21",
+    "renderer_path": "tools/blender_render_glb_animation.py",
+    "renderer_sha256": "4583538a0e2f999eee38f98fa27457fc28019d68ed15fa18a45070cc95de449d",
+    "blender_version": "4.2.1 LTS",
+    "parameters": {
+      "rest_pose": true,
+      "orthographic": true,
+      "view": "side",
+      "quadruped_morphotype_guide_profile": "quadruped_morphotype_guide_short_leg_min_tail_v2",
+      "quadruped_far_limb_offset_ratio": 0.35,
+      "pose_template_clay_color": "#b88b6a",
+      "smooth_shading": true,
+      "torso_transform": "rigid_translation_down_only",
+      "camera_yaw_deg": 0,
+      "ground_delta": 0,
+      "width": 1024,
+      "height": 1024,
+      "n_frames": 1,
+      "samples": 64,
+      "camera_distance_multiplier": 1.5,
+      "ground_plane": true
+    }
+  },
+  "visual_inspection": {
+    "reviewer": "codex_objective_render_check_20260727_v3",
+    "result": "passed",
+    "checks": {
+      "tail_visibly_shorter_than_v1_guide": "passed",
+      "tail_free_of_hind_legs_and_paws": "passed",
+      "exactly_four_distinct_lower_limb_and_paw_silhouettes": "passed",
+      "four_paws_on_one_ground_plane": "passed"
+    },
+    "notes": "The 0.25 tail guide is visibly compact and detached from the hind limbs. The 0.35 far-limb offset leaves two hind and two front lower-limb/paw silhouettes separated in the exact side render."
+  },
+  "usage": {
+    "purpose": "license-authenticated generic short-leg and minimum-tail uniform-clay pose template for controlled quadruped appearance generation",
+    "pose_contract": "orthographic side torso/head; the four inferred feet remain anchored to one ground plane, the axial/head chain receives one rigid downward translation, each inferred leg chain is shortened without cross-section scaling, and the tail chain is shortened about its anatomical root; far-side limbs retain deterministic horizontal depth-disambiguating offsets",
+    "appearance_contract": "one uniform clay material and smooth polygon shading remove source material-region leakage while preserving the transformed guide silhouette",
+    "formal_dataset_registration_authorized": false
+  }
+}
