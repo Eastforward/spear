@@ -27,7 +27,7 @@ renders -> owner final approval.
 | deformation under 0.07/0.08 gates without acceptance exception | PASS at full amplitude 1.0 (Walking 0.0222 / Idle 0.0108) via the deterministic repair stage; as-generated was 0.1089 |
 | at most three designed human touchpoints | PASS (2D accept, head-end confirm, final review) |
 | no cross-limb membrane class defect | PASS (largest low-slice component 3,347 faces vs legacy Collie's 17,784 welded blob; verified visually front/rear) |
-| UE import/readback | PASS-except-live-bundle (2026-07-27): headless import 8 assets + BP, full-flag UAT cook, orbit z readback -1.181 cm at scale 1.0 (mesh-foot leveling holds; frame delta 0), frames personally inspected 4 views, runtime registry entry committed (habitat-native fbeab98) with instance-measured basis bones, canary binding resolution exercised. The live in-episode readback render (forward <=25 deg / floor <=5 cm) rides the asset-bound UE bundle batched with Corgi. Evidence: `shiba_inu_20260726_01/ue_readback_supervision_20260727.json` |
+| UE import/readback | PASS (2026-07-27): headless import 8 assets + BP, full-flag UAT cook, orbit z readback -1.181 cm at scale 1.0 (mesh-foot leveling holds; frame delta 0), runtime registry entry committed (habitat-native fbeab98) with instance-measured basis bones, and canary binding resolution exercised. The asset-bound chain then completed trajectory selection, native RLR RIR cache, binaural rendering, bundle construction, dry-run, and two real GPU 3 UE canaries. Both UE runs exited 0; root error was 0 cm / <=1.14e-13 deg, animation error 4.8e-7 s, anatomical-forward error 0.069 deg, floor error 1.48 cm, audio copy passed, and all 4 x 75-frame media readbacks passed. Frozen supervision: `/data/jzy/code/AVEngine-habitat-native/tmp/shiba_native_closure_20260727/supervision_retry1.json` (`0511aa86490d1e67dfc197f6b7321ecf1da4718fef4c71038bb92b97261c8cf9`); primary and supplemental UE evidence: `15e69aae4840c452d50d20b03fcd001017517766c8bf6109931df79501093d55` and `d8ac4273affa839ee4d6db7285ed5a8227ae87f31a856a65ba83ffce9fe595b7`. The supplemental fixed-camera view verifies the visible head/chest/torso/forelegs but omits the tail/hindquarter; it closes the technical runtime gate and does not replace the already recorded full-body owner/orbit review. |
 
 ## Defects found by the run and fixed as reusable pipeline improvements
 
@@ -83,7 +83,8 @@ deformation rejection, five-pass repair, final gait/deformation pass and six
 H.264 readbacks.  A new six-view contact sheet plus all eight Walking side
 frames were inspected without a poke, tear or direction regression.  This
 evidence remains a research candidate and does not bypass the recorded human
-final-review or live UE bundle gate.
+final review or promote formal registration.  The live UE bundle gate was
+closed separately by the asset-bound runs recorded in the scorecard above.
 
 ## Owner review trail (verbatim, recorded per gate)
 
@@ -101,5 +102,7 @@ final-review or live UE bundle gate.
   watertight stage absorbed them cleanly here, and the resulting proxy kept
   breed silhouette.
 - This test is research-route evidence only; no dataset admission claim.
-  UE import/readback and runtime registration remain before the asset can
-  replace the deprecated legacy Collie in any pair template.
+  UE import/readback and research-state runtime registration are complete,
+  but formal registration remains false.  The asset cannot replace the
+  deprecated legacy Collie in a pair template until the replacement wave,
+  final owner acceptance, and formal promotion are explicitly completed.

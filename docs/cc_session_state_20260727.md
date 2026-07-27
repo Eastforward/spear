@@ -50,7 +50,7 @@ prerequisite: instance diversity needs new assets to ship stably.
 ## Shiba asset state (workspace `tmp/new_animal_assets/shiba_inu_20260726_01/`)
 
 Owner-approved through all three designed touchpoints (verbatim decisions
-recorded in workspace JSONs).  Scorecard 4/5 PASS.  Final approved GLB:
+recorded in workspace JSONs).  Technical scorecard 5/5 PASS.  Final approved GLB:
 `weight_repair_v2_meshfoot/shiba_animated_repaired.glb`.  Muzzle emitter
 measured `[0.3727, 0.4866, 0.0] m` (`emitter_measurement.json`).  UE import
 PASSED (8 assets + `BP_gate_pixal_generated_shiba_inu_red_v1`).
@@ -75,8 +75,20 @@ Shiba criterion 5 — everything solo-completable is DONE:
   `..._z_right_m` label.  The immutable Shiba v1 sidecar remains historical;
   remeasurement goes to a new path and preserves the same sagittal `z=0`
   numeric offset.
-- Remaining for 5/5: live readback render needs an asset-bound UE bundle —
-  batched with Corgi as planned.
+- Asset-bound live readback is COMPLETE.  The chain ran selector -> RIR plan
+  -> native RLR cache -> binaural batch -> UE bundle -> dry-run -> two real
+  GPU 3 UE canaries.  Both UE runs exited 0; root error was 0 cm /
+  <=1.14e-13 deg, animation error 4.8e-7 s, anatomical-forward error
+  0.069 deg, floor error 1.48 cm, audio copy passed, and all four
+  75-frame/15 Hz/5 s media readbacks passed.  Frozen supervision:
+  `/data/jzy/code/AVEngine-habitat-native/tmp/shiba_native_closure_20260727/supervision_retry1.json`
+  (`0511aa86490d1e67dfc197f6b7321ecf1da4718fef4c71038bb92b97261c8cf9`);
+  primary/supplemental evidence hashes are `15e69aae...d55` and
+  `d8ac4273...95b7`.  The fixed supplemental composition shows the
+  head/chest/torso/forelegs but omits tail/hindquarter, so it closes the
+  technical runtime gate without replacing the previously recorded
+  full-body owner/orbit review.  Registry state remains research and formal
+  registration remains false.
 
 W1 2D wave COMPLETE, all decisions QUEUED at the owner gate (03:30):
 - Combined review page: http://127.0.0.1:8765/w1_owner_review_queue_20260727.html
@@ -120,10 +132,9 @@ W1 2D wave COMPLETE, all decisions QUEUED at the owner gate (03:30):
     骨骼语义按柴犬 TokenRig 实际骨架填（禁止照抄他种）；跑
     `tests/unit/test_runtime_profiles.py`（coat 验证器会核验
     dog_shiba_inu_coat_v1，已注册）。
-1c. UE 回读门 — `tools/m6y/run_spear_apartment_canary.py
-    --input-layout asset-bound-batch ... --dry-run` 先验注册表解析；完整
-    bundle（pair template→select_asset_bound_trajectories→RIR→
-    build_asset_bound_apartment_ue_bundle）与 Corgi 合成一批做。
+1c. **已完成（2026-07-27）**：UE 回读门已在完整 asset-bound bundle
+    上通过 dry-run 与两次真实 GPU 3 canary；精确证据路径和哈希见上方
+    Shiba 状态。此项只关闭技术门，不提升 formal registration。
 2. Corgi 压测 — 整链重放（runbook 逐步），关键在验证 morphotype
    checklist 的中风险预测（短腿→形变门附近挣扎）是否兑现；FLUX/Pixal
    与英短排同一批省 20 分钟模型加载。
