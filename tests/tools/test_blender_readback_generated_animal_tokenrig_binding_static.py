@@ -34,7 +34,7 @@ def test_readback_compares_logical_vertices_triangles_uvs_and_pbr():
 
 
 def test_readback_has_fixed_tolerances_and_no_cli_bypass():
-    assert "POSITION_TOLERANCE_RATIO = 2.0e-7" in SOURCE
+    assert "POSITION_TOLERANCE_RATIO = 3.0e-7" in SOURCE
     assert "UV_ABSOLUTE_TOLERANCE = 1.0e-7" in SOURCE
     assert "--position-tolerance" not in SOURCE
     assert "--allow-geometry-change" not in SOURCE

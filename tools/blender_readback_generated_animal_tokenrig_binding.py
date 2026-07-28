@@ -32,10 +32,11 @@ import numpy as np
 
 
 SCHEMA = "avengine_generated_animal_tokenrig_binding_readback_v1"
-# Two float32 round trips (source export -> import -> TokenRig export -> import)
-# can accumulate just under two 1e-7-diagonal ULPs on these assets.  This fixed
-# bound is deliberately below the pipeline's 1e-6 rigid-transform tolerance.
-POSITION_TOLERANCE_RATIO = 2.0e-7
+# The Blender 4.2 source import -> SkinTokens bpy 5.0 export -> Blender 4.2
+# readback path can accumulate just under three 1e-7-diagonal float32 ULPs.
+# This fixed bound remains deliberately below the pipeline's 1e-6
+# rigid-transform tolerance and cannot be overridden from the CLI.
+POSITION_TOLERANCE_RATIO = 3.0e-7
 MINIMUM_POSITION_TOLERANCE = 1.0e-9
 UV_ABSOLUTE_TOLERANCE = 1.0e-7
 GLB_MAGIC = 0x46546C67
