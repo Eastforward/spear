@@ -1860,6 +1860,17 @@ def _validate_physical_measurements(value: Any, *, formal: bool) -> dict[str, An
     for key, number in runtime.items():
         if key == "actor_scale":
             continue
+        if key == "audio_source_height_offset_m":
+            audio_height = _require_finite_number(
+                number,
+                "physical runtime audio_source_height_offset_m",
+            )
+            if audio_height < 0.0:
+                raise ContractError(
+                    "physical runtime audio_source_height_offset_m must be "
+                    "non-negative"
+                )
+            continue
         if not key.endswith("_cm"):
             raise ContractError(f"unexpected physical runtime field: {key}")
         _require_finite_number(number, f"physical runtime {key}", positive=True)

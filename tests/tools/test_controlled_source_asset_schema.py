@@ -914,6 +914,28 @@ def realized_asset(request: dict, *, state: str = "research_candidate") -> dict:
     )
 
 
+def test_physical_measurements_accept_emitter_height_m_and_reject_negative():
+    measurements = {
+        "status": "measured",
+        "method": "fixture_measurement_v1",
+        "runtime": {
+            "actor_scale": 1.0,
+            "shoulder_height_cm": 55.0,
+            "audio_source_height_offset_m": 0.3,
+        },
+    }
+
+    validated = schema._validate_physical_measurements(
+        measurements,
+        formal=False,
+    )
+
+    assert validated == measurements
+    measurements["runtime"]["audio_source_height_offset_m"] = -0.1
+    with pytest.raises(schema.ContractError, match="must be non-negative"):
+        schema._validate_physical_measurements(measurements, formal=False)
+
+
 def test_source_asset_v2_preserves_request_and_formal_gate():
     profile = animal_profile()
     request = schema.sample_instance_requests(profile, count=1, batch_seed=1)[0]
