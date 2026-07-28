@@ -15,6 +15,15 @@ import soundfile as sf
 
 from tools import controlled_source_asset_schema as schema
 import tools.register_controlled_animal_apartment_source_assets as apartment_registration
+from tests.tools import (
+    test_build_user_approved_generated_animal_apartment_specs as apartment_builder_support,
+)
+from tools import (
+    build_user_approved_generated_animal_apartment_specs as apartment_builder,
+)
+from tools import (
+    measure_controlled_animal_physical_attributes as measurement_builder,
+)
 from tools.register_controlled_animal_apartment_source_assets import (
     _validate_audio,
     _validate_registration_audio,
@@ -106,13 +115,291 @@ def test_upgrade_preserves_absolute_identity_rights_and_passes_scene_qa():
     assert upgraded["state_classification"] == "research_candidate"
 
 
+def _apartment_v2_manifest(tmp_path: Path) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    presentation_path = tmp_path / "presentation.json"
+    presentation_path.write_text("{}")
+    review_path = tmp_path / "review.mp4"
+    review_path.write_bytes(b"v")
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}")
+    presentation = {
+        "presentation_receipt": _descriptor(presentation_path),
+        "expected_presentation_receipt_file_sha256": _descriptor(
+            presentation_path
+        )["sha256"],
+        "presentation_receipt_sha256": "b" * 64,
+        "output_video": _descriptor(review_path),
+    }
+    descriptor = _descriptor(input_path)
+    asset_id = "cat_british_shorthair_fixture"
+    payload = {
+        "schema": apartment_registration.APARTMENT_SCHEMA_V2,
+        "generated_at": "2026-07-28T00:00:00+00:00",
+        "usage_scope": "research_candidate",
+        "formal_registration_authorized": False,
+        "trajectory_policy": "fixture trajectory",
+        "audio_policy": "fixture audio",
+        "avatar_count": 1,
+        "clip_count": 2,
+        "presentation_evidence": presentation,
+        "presentation_automatic_checks": copy.deepcopy(
+            apartment_registration.APARTMENT_V2_PRESENTATION_CHECKS
+        ),
+        "inputs": {
+            name: copy.deepcopy(descriptor)
+            for name in (
+                "config",
+                "ue_import_jobs",
+                "ue_import_result",
+                "ue_import_preparation",
+                "animation_decision",
+                "animation_decision_freeze_receipt",
+                "template",
+            )
+        },
+        "records": [
+            {
+                "base_avatar_id": asset_id,
+                "asset_id": asset_id,
+                "tag": f"pixal_{asset_id}",
+                "profile_schema_id": "cat_british_shorthair_v1",
+                "species": "cat",
+                "breed": "british_shorthair",
+                "sampled_attributes": {"size": "medium"},
+                "target_physical_profile": {"measurement": "shoulder_height_cm"},
+                "source_glb": {
+                    "path": str((tmp_path / "runtime.glb").resolve()),
+                    "sha256": "e" * 64,
+                },
+                "actions": {
+                    "Walking": {"clip_id": "walking"},
+                    "Idle": {"clip_id": "idle"},
+                },
+            }
+        ],
+    }
+    payload["manifest_sha256"] = apartment_registration._hash_without(
+        payload,
+        "manifest_sha256",
+    )
+    path = tmp_path / "spec_manifest.json"
+    path.write_text(json.dumps(payload))
+    return path
+
+
+def test_load_apartment_records_accepts_strict_builder_v2(tmp_path):
+    inputs = apartment_builder_support._fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    manifest = apartment_builder.build_specs(
+        **inputs,
+        output_root=tmp_path / "apartment",
+    )
+
+    records = apartment_registration._load_apartment_records([manifest])
+
+    assert set(records) == {"horse_candidate_001"}
+    record = records["horse_candidate_001"]
+    assert record["_authenticated_apartment_v2"]["runtime_lineage"] == record[
+        "runtime_lineage"
+    ]
+
+
+def test_load_apartment_records_rejects_v2_authority_expansion(tmp_path):
+    manifest = _apartment_v2_manifest(tmp_path)
+    payload = json.loads(manifest.read_text())
+    payload["unreviewed_authority"] = True
+    payload["manifest_sha256"] = apartment_registration._hash_without(
+        payload,
+        "manifest_sha256",
+    )
+    manifest.write_text(json.dumps(payload))
+
+    with pytest.raises(schema.ContractError, match="v2 authority"):
+        apartment_registration._load_apartment_records([manifest])
+
+
+def test_load_apartment_records_rejects_v2_formal_promotion(tmp_path):
+    manifest = _apartment_v2_manifest(tmp_path)
+    payload = json.loads(manifest.read_text())
+    payload["formal_registration_authorized"] = True
+    payload["manifest_sha256"] = apartment_registration._hash_without(
+        payload,
+        "manifest_sha256",
+    )
+    manifest.write_text(json.dumps(payload))
+
+    with pytest.raises(schema.ContractError, match="v2 authority"):
+        apartment_registration._load_apartment_records([manifest])
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _descriptor(path: Path) -> dict:
     payload = path.read_bytes()
     return {
         "path": str(path.resolve()),
-        "sha256": hashlib.sha256(payload).hexdigest(),
+        "sha256": _sha(path),
         "size_bytes": len(payload),
     }
+
+
+def _authenticated_measurement_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    shoulder_height_units: float = 2.5,
+) -> tuple[Path, dict[str, dict]]:
+    inputs = apartment_builder_support._fixture(tmp_path / "builder")
+    inputs.pop("semantic_evidence")
+    manifest_path = apartment_builder.build_specs(
+        **inputs,
+        output_root=tmp_path / "apartment",
+    )
+    apartment_records = apartment_registration._load_apartment_records(
+        [manifest_path]
+    )
+    manifest_path.parent.chmod(0o755)
+    record = apartment_records["horse_candidate_001"]
+    visual_path = (
+        Path(record["actions"]["Walking"]["output_dir"])
+        / "videos"
+        / "actor_visual_metadata.json"
+    )
+    visual_path.parent.mkdir(parents=True)
+    frame = {
+        "bounds_ue": {
+            "minimum_cm": [0.0, 0.0, 20.0],
+            "maximum_cm": [90.0, 30.0, 100.0],
+        },
+        "root_transform_ue": {"scale": [0.332, 0.332, 0.332]},
+        "floor_contact": {"within_penetration_tolerance": True},
+    }
+    visual_path.write_text(
+        json.dumps(
+            {
+                "automatic_checks": {"overall": "passed"},
+                "sources": [
+                    {
+                        "tag": record["tag"],
+                        "runtime_frames": [frame, frame],
+                    }
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    def fake_blender(command, **_kwargs):
+        output = Path(command[command.index("--output") + 1])
+        input_glb = Path(command[command.index("--input-glb") + 1])
+        output.write_text(
+            json.dumps(
+                {
+                    "schema": "weighted_quadruped_geometry_measurement_v1",
+                    "input_glb": _descriptor(input_glb),
+                    "mesh_name": "fixture_mesh",
+                    "vertex_count": 1000,
+                    "front_upper_groups": [
+                        "generated_front_negative_upper",
+                        "generated_front_positive_upper",
+                    ],
+                    "front_upper_group_authority": (
+                        "hash_bound_rig_semantic_evidence_v1"
+                    ),
+                    "selected_shoulder_vertex_count": 200,
+                    "quantiles": {
+                        "floor": 0.001,
+                        "top": 0.999,
+                        "shoulder_surface": 0.95,
+                        "length_min": 0.005,
+                        "length_max": 0.995,
+                    },
+                    "bounds_height_units": 4.0,
+                    "shoulder_height_units": shoulder_height_units,
+                    "nose_to_tail_length_units": 5.0,
+                    "shoulder_fraction_of_bounds_height": (
+                        shoulder_height_units / 4.0
+                    ),
+                }
+            )
+            + "\n"
+        )
+        return subprocess.CompletedProcess(command, 0, "fixture blender\n")
+
+    monkeypatch.setattr(measurement_builder.subprocess, "run", fake_blender)
+    batch_path = measurement_builder.build_measurements(
+        manifest_paths=[manifest_path],
+        output_root=tmp_path / "measurements",
+        blender=Path("/fixture/blender"),
+        workers=1,
+    )
+    return batch_path, apartment_records
+
+
+def test_measurement_consumer_recomputes_current_v2_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    batch_path, apartment_records = _authenticated_measurement_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+
+    measurements = apartment_registration._load_measurements(
+        batch_path,
+        apartment_records,
+    )
+
+    assert set(measurements) == {"horse_candidate_001"}
+    runtime = measurements["horse_candidate_001"]["payload"][
+        "physical_measurements"
+    ]["runtime"]
+    assert runtime["shoulder_height_cm"] == 50.0
+    assert runtime["audio_source_height_offset_m"] == 1.3
+
+
+def test_measurement_consumer_rejects_old_method_even_when_resealed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    batch_path, apartment_records = _authenticated_measurement_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    payload = json.loads(batch_path.read_text())
+    payload["method"] = "ue_bounds_calibrated_weighted_foreleg_surface_v1"
+    payload["batch_sha256"] = apartment_registration._hash_without(
+        payload,
+        "batch_sha256",
+    )
+    batch_path.chmod(0o644)
+    batch_path.write_text(json.dumps(payload) + "\n")
+
+    with pytest.raises(schema.ContractError, match="invalid physical"):
+        apartment_registration._load_measurements(
+            batch_path,
+            apartment_records,
+        )
+
+
+def test_measurement_consumer_rejects_outside_tolerance_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    batch_path, apartment_records = _authenticated_measurement_fixture(
+        tmp_path,
+        monkeypatch,
+        shoulder_height_units=2.0,
+    )
+
+    with pytest.raises(schema.ContractError, match="admission failed"):
+        apartment_registration._load_measurements(
+            batch_path,
+            apartment_records,
+        )
 
 
 def _strict_source_spec(tag: str, lookup: str, contract: dict) -> dict:
@@ -822,6 +1109,70 @@ def test_apartment_registry_wires_independent_gate_for_walk_and_idle(
             },
         },
     }
+    placeholder = tmp_path / "authority-placeholder"
+    placeholder.write_bytes(b"authority")
+    placeholder_descriptor = _descriptor(placeholder)
+    reviewed_descriptor = {
+        "path": str(placeholder.resolve()),
+        "sha256": "b" * 64,
+        "size_bytes": placeholder.stat().st_size,
+    }
+    record["source_glb"] = {
+        "path": reviewed_descriptor["path"],
+        "sha256": reviewed_descriptor["sha256"],
+    }
+    record["_authenticated_apartment_v2"] = {
+        "inputs": {
+            "animation_decision": {
+                **_descriptor(decision_path),
+                "decision_sha256": "d" * 64,
+            },
+            "ue_import_result": _descriptor(import_path),
+            "ue_import_jobs": placeholder_descriptor,
+            "ue_import_preparation": placeholder_descriptor,
+            "animation_decision_freeze_receipt": placeholder_descriptor,
+        },
+        "runtime_lineage": {
+            "reviewed_animated_glb": reviewed_descriptor,
+            "ue_import_glb": copy.deepcopy(reviewed_descriptor),
+            "texture_transcode_manifest": None,
+        },
+        "presentation_evidence": {
+            "presentation_receipt": placeholder_descriptor,
+            "output_video": placeholder_descriptor,
+        },
+        "emitter_measurement": placeholder_descriptor,
+    }
+    for action_name, output_dir in (
+        ("Walking", walking_output),
+        ("Idle", idle_output),
+    ):
+        videos_dir = output_dir / "videos"
+        videos_dir.mkdir()
+        rendered_paths = {
+            "spec": output_dir / "spec.json",
+            "runtime_gate": output_dir / "runtime_gate.json",
+            "actor_visual_metadata": (
+                videos_dir / "actor_visual_metadata.json"
+            ),
+            "apartment_video": videos_dir / "apartment_v1_view0.mp4",
+            "topdown_review_video": videos_dir / "topdown_review.mp4",
+            "annotated_review_video": (
+                videos_dir / "side_by_side_review_annotated.mp4"
+            ),
+        }
+        for name, path in rendered_paths.items():
+            path.write_bytes(f"{action_name}-{name}".encode())
+        registry["clips"][action_name].update(
+            {
+                name: _descriptor(path)
+                for name, path in rendered_paths.items()
+            }
+        )
+        record["actions"][action_name]["spec_evidence"] = _descriptor(
+            rendered_paths["spec"]
+        )
+    (registry_dir / f"{tag}.json").write_text(json.dumps(registry))
     calls = []
 
     def fake_registration_audio(
@@ -902,6 +1253,123 @@ def test_apartment_registry_wires_independent_gate_for_walk_and_idle(
     assert "apartment_walking_independent_rlr_sample_report" in extra
     assert "apartment_idle_independent_rlr_sample" in extra
     assert "apartment_idle_independent_rlr_sample_report" in extra
+
+    registry["clips"]["Walking"]["spec"] = _descriptor(decision_path)
+    (registry_dir / f"{tag}.json").write_text(json.dumps(registry))
+    with pytest.raises(schema.ContractError, match="rendered a different spec"):
+        apartment_registration._validate_apartment_registry(
+            record,
+            independent_evidence_staging_root=tmp_path / "staging_samples_2",
+            independent_evidence_final_root=tmp_path / "final_samples_2",
+        )
+
+
+def test_apartment_registry_rejects_render_b_for_reviewed_asset_a_without_transcode(
+    tmp_path: Path,
+) -> None:
+    tag = "pixal_lineage_fixture"
+    asset_id = "lineage_fixture"
+    walking_output = tmp_path / "actions" / "Walking"
+    idle_output = tmp_path / "actions" / "Idle"
+    walking_output.mkdir(parents=True)
+    idle_output.mkdir(parents=True)
+    registry_dir = walking_output.parent / "registry"
+    registry_dir.mkdir()
+    reviewed = tmp_path / "reviewed.glb"
+    reviewed.write_bytes(b"reviewed-a")
+    ue_import = tmp_path / "ue-import.glb"
+    ue_import.write_bytes(b"render-b")
+    decision_path = tmp_path / "decision.json"
+    decision_path.write_text(
+        json.dumps(
+            {
+                "asset_id": asset_id,
+                "decision": "approved_for_ue_apartment",
+                "checks": {"all": True},
+            }
+        )
+    )
+    import_path = tmp_path / "ue_import.json"
+    import_path.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "tag": tag,
+                        "status": "passed",
+                        "actions": ["Walking", "Idle"],
+                        "source_sha256": _sha(ue_import),
+                    }
+                ]
+            }
+        )
+    )
+    decision_descriptor = _descriptor(decision_path)
+    result_descriptor = _descriptor(import_path)
+    registry = {
+        "schema_version": apartment_registration.APARTMENT_REGISTRY_SCHEMA,
+        "usage_scope": "research_candidate",
+        "formal_registry_promotion": False,
+        "tag": tag,
+        "asset_id": asset_id,
+        "sampled_attributes": {"coat": "fixture"},
+        "animation_decision": decision_descriptor,
+        "ue_import_result": result_descriptor,
+        "ue_source_sha256": _sha(ue_import),
+        "clips": {
+            "Walking": {"clip_id": "walk_clip"},
+            "Idle": {"clip_id": "idle_clip"},
+        },
+    }
+    (registry_dir / f"{tag}.json").write_text(json.dumps(registry))
+    placeholder = tmp_path / "placeholder"
+    placeholder.write_bytes(b"p")
+    placeholder_descriptor = _descriptor(placeholder)
+    record = {
+        "tag": tag,
+        "base_avatar_id": asset_id,
+        "sampled_attributes": {"coat": "fixture"},
+        "source_glb": {
+            "path": str(reviewed.resolve()),
+            "sha256": _sha(reviewed),
+        },
+        "_authenticated_apartment_v2": {
+            "inputs": {
+                "animation_decision": decision_descriptor,
+                "ue_import_result": result_descriptor,
+                "ue_import_jobs": placeholder_descriptor,
+                "ue_import_preparation": placeholder_descriptor,
+                "animation_decision_freeze_receipt": placeholder_descriptor,
+            },
+            "runtime_lineage": {
+                "reviewed_animated_glb": _descriptor(reviewed),
+                "ue_import_glb": _descriptor(ue_import),
+                "texture_transcode_manifest": None,
+            },
+            "presentation_evidence": {
+                "presentation_receipt": placeholder_descriptor,
+                "output_video": placeholder_descriptor,
+            },
+            "emitter_measurement": placeholder_descriptor,
+        },
+        "actions": {
+            "Walking": {
+                "clip_id": "walk_clip",
+                "output_dir": str(walking_output),
+            },
+            "Idle": {
+                "clip_id": "idle_clip",
+                "output_dir": str(idle_output),
+            },
+        },
+    }
+
+    with pytest.raises(schema.ContractError, match="runtime lineage changed"):
+        apartment_registration._validate_apartment_registry(
+            record,
+            independent_evidence_staging_root=tmp_path / "staging",
+            independent_evidence_final_root=tmp_path / "final",
+        )
 
 
 def test_validate_audio_reauthenticates_full_nonformal_dry_source_contract(

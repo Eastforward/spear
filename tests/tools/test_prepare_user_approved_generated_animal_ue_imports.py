@@ -1,5 +1,6 @@
 import copy
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -9,12 +10,14 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from tools import build_controlled_source_asset_inputs as input_builder
 from tools import controlled_source_asset_schema as contracts
 from tools import prepare_controlled_source_asset_execution as execution_preparation
 from tools import prepare_user_approved_generated_animal_ue_imports as preparation
 from tools import register_controlled_animal_source_assets as source_registry
+from tools import transcode_glb_webp_to_png as transcode_tool
 
 PROFILE = (
     Path(__file__).resolve().parents[2]
@@ -159,6 +162,150 @@ def _write_glb(path):
         + struct.pack("<II", len(binary_chunk), 0x004E4942)
         + binary_chunk
     )
+
+
+def _encoded_image(format_name, color):
+    encoded = io.BytesIO()
+    Image.new("RGBA", (2, 2), color).save(
+        encoded,
+        format=format_name,
+        lossless=True,
+    )
+    return encoded.getvalue()
+
+
+def _write_mixed_webp_glb(path):
+    webp = _encoded_image("WEBP", (20, 80, 140, 255))
+    preserved_png = _encoded_image("PNG", (160, 120, 40, 255))
+    binary = bytearray(512)
+    webp_offset = len(binary)
+    binary.extend(webp)
+    binary.extend(b"\x00" * ((-len(binary)) % 4))
+    png_offset = len(binary)
+    binary.extend(preserved_png)
+    document = {
+        "asset": {"version": "2.0", "generator": "transcode-auth-test"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [
+            {"mesh": 0, "skin": 0},
+            {"name": "root"},
+            {"name": "joint_1"},
+            {"name": "joint_2"},
+            {"name": "joint_3"},
+            {"name": "joint_4"},
+        ],
+        "meshes": [
+            {
+                "primitives": [
+                    {
+                        "attributes": {
+                            "POSITION": 0,
+                            "JOINTS_0": 1,
+                            "WEIGHTS_0": 2,
+                        },
+                        "material": 0,
+                    }
+                ]
+            }
+        ],
+        "skins": [{"joints": [1, 2, 3, 4, 5], "inverseBindMatrices": 3}],
+        "animations": [
+            {
+                "name": name,
+                "samplers": [{"input": 4, "output": 5}],
+                "channels": [
+                    {
+                        "sampler": 0,
+                        "target": {"node": 1, "path": "rotation"},
+                    }
+                ],
+            }
+            for name in ("Idle", "Walking")
+        ],
+        "buffers": [{"byteLength": len(binary)}],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": 512},
+            {
+                "buffer": 0,
+                "byteOffset": webp_offset,
+                "byteLength": len(webp),
+            },
+            {
+                "buffer": 0,
+                "byteOffset": png_offset,
+                "byteLength": len(preserved_png),
+            },
+        ],
+        "accessors": [
+            {
+                "bufferView": 0,
+                "componentType": component,
+                "count": count,
+                "type": kind,
+            }
+            for component, count, kind in (
+                (5126, 1, "VEC3"),
+                (5123, 1, "VEC4"),
+                (5126, 1, "VEC4"),
+                (5126, 5, "MAT4"),
+                (5126, 1, "SCALAR"),
+                (5126, 1, "VEC4"),
+            )
+        ],
+        "images": [
+            {"name": "coat", "bufferView": 1, "mimeType": "image/webp"},
+            {"name": "normal", "bufferView": 2, "mimeType": "image/png"},
+        ],
+        "samplers": [{"magFilter": 9729, "minFilter": 9987}],
+        "textures": [
+            {
+                "name": "coat",
+                "sampler": 0,
+                "source": 1,
+                "extensions": {"EXT_texture_webp": {"source": 0}},
+            },
+            {"name": "normal", "sampler": 0, "source": 1},
+        ],
+        "materials": [
+            {
+                "name": "pbr_coat",
+                "pbrMetallicRoughness": {
+                    "baseColorTexture": {"index": 0},
+                    "metallicFactor": 0.0,
+                    "roughnessFactor": 0.7,
+                },
+                "normalTexture": {"index": 1},
+            }
+        ],
+        "extensionsUsed": ["KHR_materials_unlit", "EXT_texture_webp"],
+        "extensionsRequired": ["EXT_texture_webp"],
+    }
+    path.write_bytes(transcode_tool.encode_glb(document, bytes(binary)))
+    return path
+
+
+def _write_texture_transcode_fixture(root, *, source_path=None):
+    source = source_path or root / "reviewed_mixed_textures.glb"
+    _write_mixed_webp_glb(source)
+    output = root / "ue_compatible.glb"
+    manifest_path = root / "texture_transcode_manifest.json"
+    document, binary = transcode_tool.read_glb(source)
+    rewritten, rewritten_binary, records = transcode_tool.transcode(
+        document,
+        binary,
+    )
+    output.write_bytes(transcode_tool.encode_glb(rewritten, rewritten_binary))
+    manifest = {
+        "schema": preparation.TEXTURE_TRANSCODE_SCHEMA,
+        "purpose": preparation.TEXTURE_TRANSCODE_PURPOSE,
+        "geometry_skin_animation_byte_graph_changed": False,
+        "input": _record(source),
+        "output": _record(output),
+        "images": records,
+    }
+    _write_json(manifest_path, manifest)
+    return source, output, manifest_path
 
 
 def _write_fake_unskinned_glb(path):
@@ -1063,6 +1210,30 @@ def _prepare(
     )
 
 
+def test_derived_registry_cannot_fall_back_to_a_raw_only_source_asset(
+    approved_generated_animal,
+    monkeypatch,
+):
+    source_asset = copy.deepcopy(approved_generated_animal["source_asset"])
+    monkeypatch.setattr(
+        preparation.contracts,
+        "validate_source_asset_v2",
+        lambda value, **_kwargs: copy.deepcopy(source_asset),
+    )
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="without complete repair authority",
+    ):
+        preparation.load_source_asset(
+            approved_generated_animal["source_path"],
+            {"fixture_root": approved_generated_animal["artifact_root"]},
+            request={},
+            profile={},
+            require_derived_authority=True,
+        )
+
+
 def _rewrite_review_and_rebind_decision(fixture, review):
     _write_json(fixture["review_path"], review)
     decision = contracts.load_json(fixture["decision_path"])
@@ -1461,6 +1632,121 @@ def test_prepares_fresh_canonical_job_and_does_not_rewrite_old_job(
     assert job["sampled_attributes"] == source["sampled_attributes"]
     assert job["request_sha256"] == source["request_sha256"]
     assert old_job.read_bytes() == old_bytes
+
+
+def test_texture_transcode_authenticates_full_graph_and_preserves_non_webp(
+    tmp_path,
+):
+    source, output, manifest_path = _write_texture_transcode_fixture(tmp_path)
+
+    authenticated = preparation._authenticate_texture_transcode(
+        reviewed_glb=source,
+        ue_compatible_glb_path=output,
+        texture_transcode_manifest_path=manifest_path,
+    )
+
+    source_document, _ = transcode_tool.read_glb(source)
+    output_document, _ = transcode_tool.read_glb(output)
+    assert authenticated["ue_compatible_glb"] == output.resolve()
+    assert output_document["images"][1] == source_document["images"][1]
+    assert output_document["textures"][1] == source_document["textures"][1]
+
+
+def test_texture_transcode_rejects_resealed_geometry_bytes(tmp_path):
+    source, output, manifest_path = _write_texture_transcode_fixture(tmp_path)
+    document, binary = transcode_tool.read_glb(output)
+    tampered = bytearray(binary)
+    tampered[0] ^= 1
+    output.write_bytes(transcode_tool.encode_glb(document, bytes(tampered)))
+    manifest = contracts.load_json(manifest_path)
+    manifest["output"] = _record(output)
+    _write_json(manifest_path, manifest)
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="original GLB byte graph",
+    ):
+        preparation._authenticate_texture_transcode(
+            reviewed_glb=source,
+            ue_compatible_glb_path=output,
+            texture_transcode_manifest_path=manifest_path,
+        )
+
+
+def test_texture_transcode_rejects_resealed_pbr_routing(tmp_path):
+    source, output, manifest_path = _write_texture_transcode_fixture(tmp_path)
+    document, binary = transcode_tool.read_glb(output)
+    document["materials"][0]["pbrMetallicRoughness"]["roughnessFactor"] = 0.1
+    output.write_bytes(transcode_tool.encode_glb(document, binary))
+    manifest = contracts.load_json(manifest_path)
+    manifest["output"] = _record(output)
+    _write_json(manifest_path, manifest)
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="structure or PBR routing",
+    ):
+        preparation._authenticate_texture_transcode(
+            reviewed_glb=source,
+            ue_compatible_glb_path=output,
+            texture_transcode_manifest_path=manifest_path,
+        )
+
+
+def test_texture_transcode_rejects_resealed_png_with_different_rgba(tmp_path):
+    source, output, manifest_path = _write_texture_transcode_fixture(tmp_path)
+    document, binary = transcode_tool.read_glb(output)
+    image = document["images"][0]
+    view = document["bufferViews"][image["bufferView"]]
+    start = view["byteOffset"]
+    replacement = _encoded_image("PNG", (220, 20, 30, 255))
+    view["byteLength"] = len(replacement)
+    output.write_bytes(
+        transcode_tool.encode_glb(
+            document,
+            binary[:start] + replacement,
+        )
+    )
+    with Image.open(io.BytesIO(replacement)) as opened:
+        replacement_rgba = opened.convert("RGBA").tobytes()
+    manifest = contracts.load_json(manifest_path)
+    manifest["output"] = _record(output)
+    manifest["images"][0].update(
+        {
+            "pixel_size": [2, 2],
+            "rgba_sha256": hashlib.sha256(replacement_rgba).hexdigest(),
+            "png_sha256": hashlib.sha256(replacement).hexdigest(),
+            "png_size_bytes": len(replacement),
+        }
+    )
+    _write_json(manifest_path, manifest)
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="bytes/pixels",
+    ):
+        preparation._authenticate_texture_transcode(
+            reviewed_glb=source,
+            ue_compatible_glb_path=output,
+            texture_transcode_manifest_path=manifest_path,
+        )
+
+
+def test_transcoded_job_binds_manifest_path_sha_and_size(tmp_path):
+    source, output, manifest_path = _write_texture_transcode_fixture(tmp_path)
+    authenticated = preparation._authenticate_texture_transcode(
+        reviewed_glb=source,
+        ue_compatible_glb_path=output,
+        texture_transcode_manifest_path=manifest_path,
+    )
+    job_fields = preparation._texture_transcode_job_fields(authenticated)
+
+    assert job_fields["texture_transcode_manifest"] == str(manifest_path.resolve())
+    assert job_fields["texture_transcode_manifest_sha256"] == _sha256(manifest_path)
+    assert (
+        job_fields["texture_transcode_manifest_size_bytes"]
+        == manifest_path.stat().st_size
+    )
 
 
 def test_rejects_source_registry_without_external_expected_file_hash(

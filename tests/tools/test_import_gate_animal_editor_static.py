@@ -2,6 +2,7 @@ import ast
 import copy
 import hashlib
 import importlib.util
+import io
 import json
 import struct
 import sys
@@ -9,7 +10,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
+from tools import transcode_glb_webp_to_png as transcode_tool
 ROOT = Path(__file__).resolve().parents[2]
 IMPORT_ONE = ROOT / "tools/import_gate_animal_editor.py"
 BATCH_IMPORT = ROOT / "tools/import_pixal_animal_batch_editor.py"
@@ -58,6 +61,65 @@ def _write_glb_json(path, payload):
         + struct.pack("<II", len(payload), 0x4E4F534A)
         + payload
     )
+
+
+def _write_editor_transcode_fixture(tmp_path, batch):
+    webp_stream = io.BytesIO()
+    Image.new("RGBA", (2, 2), (40, 90, 130, 255)).save(
+        webp_stream,
+        format="WEBP",
+        lossless=True,
+    )
+    webp = webp_stream.getvalue()
+    source = tmp_path / "reviewed.glb"
+    binary = b"\x01\x02\x03\x04" + webp
+    document = {
+        "asset": {"version": "2.0"},
+        "buffers": [{"byteLength": len(binary)}],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": 4},
+            {"buffer": 0, "byteOffset": 4, "byteLength": len(webp)},
+        ],
+        "images": [{"bufferView": 1, "mimeType": "image/webp"}],
+        "textures": [
+            {
+                "source": 0,
+                "extensions": {"EXT_texture_webp": {"source": 0}},
+            }
+        ],
+        "extensionsUsed": ["EXT_texture_webp"],
+        "extensionsRequired": ["EXT_texture_webp"],
+        "animations": [{"name": "Idle"}, {"name": "Walking"}],
+    }
+    source.write_bytes(transcode_tool.encode_glb(document, binary))
+    readback, readback_binary = transcode_tool.read_glb(source)
+    rewritten, rewritten_binary, records = transcode_tool.transcode(
+        readback,
+        readback_binary,
+    )
+    output = tmp_path / "compatible.glb"
+    output.write_bytes(transcode_tool.encode_glb(rewritten, rewritten_binary))
+    manifest_path = tmp_path / "texture_transcode_manifest.json"
+    _write_json(
+        manifest_path,
+        {
+            "schema": batch.TEXTURE_TRANSCODE_SCHEMA,
+            "purpose": batch.TEXTURE_TRANSCODE_PURPOSE,
+            "geometry_skin_animation_byte_graph_changed": False,
+            "input": _record(source),
+            "output": _record(output),
+            "images": records,
+        },
+    )
+    job = {
+        "rigged_glb_sha256": _sha256(output),
+        "upstream_rigged_glb": str(source.resolve()),
+        "upstream_rigged_glb_sha256": _sha256(source),
+        "texture_transcode_manifest": str(manifest_path.resolve()),
+        "texture_transcode_manifest_sha256": _sha256(manifest_path),
+        "texture_transcode_manifest_size_bytes": manifest_path.stat().st_size,
+    }
+    return source, output, manifest_path, job
 
 
 def _sha256(path):
@@ -369,6 +431,97 @@ def test_pixal_batch_preflights_ue_texture_compatibility():
     assert '"EXT_texture_webp" in required' in text
     assert 'image.get("mimeType") == "image/webp"' in text
     assert "geometry_skin_animation_byte_graph_changed" in text
+
+
+def test_editor_revalidates_manifest_descriptor_and_complete_bin_graph(
+    tmp_path,
+    monkeypatch,
+):
+    batch = _load_module(
+        BATCH_IMPORT,
+        "_test_editor_transcode_complete_graph",
+        monkeypatch,
+    )
+    reviewed, output, manifest_path, job = _write_editor_transcode_fixture(
+        tmp_path,
+        batch,
+    )
+
+    batch._validate_texture_transcode_lineage(
+        job,
+        source=output.resolve(),
+        reviewed_source=reviewed.resolve(),
+    )
+
+    document, binary = transcode_tool.read_glb(output)
+    tampered = bytearray(binary)
+    tampered[0] ^= 1
+    output.write_bytes(transcode_tool.encode_glb(document, bytes(tampered)))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["output"] = _record(output)
+    _write_json(manifest_path, manifest)
+    job["rigged_glb_sha256"] = _sha256(output)
+    job["texture_transcode_manifest_sha256"] = _sha256(manifest_path)
+    job["texture_transcode_manifest_size_bytes"] = manifest_path.stat().st_size
+
+    with pytest.raises(RuntimeError, match="original GLB byte graph"):
+        batch._validate_texture_transcode_lineage(
+            job,
+            source=output.resolve(),
+            reviewed_source=reviewed.resolve(),
+        )
+
+
+def test_editor_rejects_changed_transcode_manifest_descriptor(
+    tmp_path,
+    monkeypatch,
+):
+    batch = _load_module(
+        BATCH_IMPORT,
+        "_test_editor_transcode_manifest_descriptor",
+        monkeypatch,
+    )
+    _reviewed, output, manifest_path, job = _write_editor_transcode_fixture(
+        tmp_path,
+        batch,
+    )
+    manifest_path.write_bytes(manifest_path.read_bytes() + b" ")
+
+    with pytest.raises(RuntimeError, match="does not authenticate"):
+        batch._load_texture_transcode_manifest(job, output.resolve())
+
+
+@pytest.mark.parametrize("residual_location", ["extensionsUsed", "texture"])
+def test_editor_rejects_any_residual_webp_extension(
+    tmp_path,
+    monkeypatch,
+    residual_location,
+):
+    batch = _load_module(
+        BATCH_IMPORT,
+        f"_test_editor_residual_webp_{residual_location}",
+        monkeypatch,
+    )
+    document = {
+        "asset": {"version": "2.0"},
+        "images": [{"mimeType": "image/png"}],
+        "textures": [{"source": 0}],
+        "animations": [{"name": "Idle"}, {"name": "Walking"}],
+    }
+    if residual_location == "extensionsUsed":
+        document["extensionsUsed"] = ["EXT_texture_webp"]
+    else:
+        document["textures"][0]["extensions"] = {
+            "EXT_texture_webp": {"source": 0}
+        }
+    source = tmp_path / f"{residual_location}.glb"
+    _write_glb_json(
+        source,
+        json.dumps(document, separators=(",", ":")).encode("utf-8"),
+    )
+
+    with pytest.raises(RuntimeError, match="still requires embedded WebP"):
+        batch._validate_ue_compatible_glb({}, source)
 
 
 def test_existing_gate_directory_is_unchanged_and_creation_fails():

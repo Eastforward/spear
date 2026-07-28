@@ -25,6 +25,12 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import controlled_source_asset_schema as contracts
+from tools import (
+    build_user_approved_generated_animal_apartment_specs as apartment_builder,
+)
+from tools import (
+    measure_controlled_animal_physical_attributes as physical_measurement,
+)
 from tools import register_controlled_animal_source_assets as static_registry
 from tools import rocketbox_native_material_canary as immutable
 from tools.spike_rlr.animal_audio import (
@@ -43,8 +49,34 @@ from tools.spike_rlr.active_frame_rir_evidence import (
 
 REGISTRY_SCHEMA = "avengine_controlled_animal_apartment_source_asset_registry_v1"
 APARTMENT_SCHEMA = "controlled_animal_walk_idle_apartment_specs_v1"
+APARTMENT_SCHEMA_V2 = "controlled_animal_walk_idle_apartment_specs_v2"
+APARTMENT_SCHEMAS = frozenset({APARTMENT_SCHEMA, APARTMENT_SCHEMA_V2})
+APARTMENT_V2_FIELDS = frozenset(
+    {
+        "schema",
+        "generated_at",
+        "usage_scope",
+        "formal_registration_authorized",
+        "trajectory_policy",
+        "audio_policy",
+        "avatar_count",
+        "clip_count",
+        "presentation_evidence",
+        "presentation_automatic_checks",
+        "inputs",
+        "records",
+        "manifest_sha256",
+    }
+)
+APARTMENT_V2_PRESENTATION_CHECKS = {
+    "presentation_receipt_raw_file_sha256_reauthenticated": True,
+    "presentation_receipt_internal_sha256_reauthenticated": True,
+    "presentation_exact_v4_review_sha256_reauthenticated": True,
+    "presentation_output_video_bytes_and_directory_reauthenticated": True,
+}
 MEASUREMENT_BATCH_SCHEMA = "controlled_animal_physical_measurement_batch_v1"
 MEASUREMENT_SCHEMA = "controlled_animal_physical_measurement_v1"
+MEASUREMENT_METHOD = physical_measurement.METHOD
 APARTMENT_REGISTRY_SCHEMA = (
     "controlled_animal_apartment_research_candidate_registry_v1"
 )
@@ -696,11 +728,26 @@ def _load_source_assets(roots: Sequence[Path]) -> dict[str, dict[str, Any]]:
 
 def _load_apartment_records(paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
     records: dict[str, dict[str, Any]] = {}
-    for path in paths:
-        payload = contracts.load_json(Path(path).resolve())
+    for supplied_path in paths:
+        raw_path = Path(supplied_path)
+        path = raw_path.resolve()
+        payload = contracts.load_json(path)
         items = payload.get("records", []) if isinstance(payload, dict) else []
+        manifest_schema = payload.get("schema")
+        authority: Mapping[str, Any] | None = None
+        if manifest_schema == APARTMENT_SCHEMA_V2:
+            try:
+                authority = apartment_builder.authenticate_apartment_v2_manifest(
+                    raw_path
+                )
+            except (contracts.ContractError, OSError, KeyError, TypeError, ValueError) as error:
+                raise contracts.ContractError(
+                    f"invalid Apartment v2 authority: {path}: {error}"
+                ) from error
+            payload = authority["manifest"]
+            items = [authority["record"]]
         if (
-            payload.get("schema") != APARTMENT_SCHEMA
+            manifest_schema not in APARTMENT_SCHEMAS
             or payload.get("avatar_count") != len(items)
             or payload.get("clip_count") != len(items) * 2
             or payload.get("manifest_sha256") != _hash_without(payload, "manifest_sha256")
@@ -710,36 +757,313 @@ def _load_apartment_records(paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
             asset_id = record.get("base_avatar_id")
             if not asset_id or asset_id in records:
                 raise contracts.ContractError(f"duplicate Apartment asset: {asset_id}")
-            records[asset_id] = record
+            if (
+                manifest_schema == APARTMENT_SCHEMA_V2
+                and (
+                    record.get("asset_id") != asset_id
+                    or not isinstance(record.get("tag"), str)
+                    or not record["tag"]
+                    or not isinstance(record.get("profile_schema_id"), str)
+                    or not record["profile_schema_id"]
+                    or not isinstance(record.get("sampled_attributes"), Mapping)
+                    or not record["sampled_attributes"]
+                    or not isinstance(record.get("source_glb"), Mapping)
+                    or set(record["source_glb"]) != {"path", "sha256"}
+                    or not isinstance(record.get("actions"), Mapping)
+                    or set(record["actions"]) != {"Walking", "Idle"}
+                )
+            ):
+                raise contracts.ContractError(
+                    f"invalid Apartment v2 record identity: {asset_id}"
+                )
+            authenticated_record = copy.deepcopy(dict(record))
+            if authority is not None:
+                authenticated_record["_authenticated_apartment_v2"] = {
+                    "manifest": {
+                        "path": str(path),
+                        "sha256": _sha256(path),
+                        "size_bytes": path.stat().st_size,
+                    },
+                    "inputs": copy.deepcopy(authority["inputs"]),
+                    "presentation_evidence": copy.deepcopy(
+                        authority["presentation_evidence"]
+                    ),
+                    "runtime_lineage": copy.deepcopy(
+                        record["runtime_lineage"]
+                    ),
+                    "emitter_measurement": copy.deepcopy(
+                        record["emitter_measurement"]
+                    ),
+                    "audio_source_height_offset_m": record[
+                        "audio_source_height_offset_m"
+                    ],
+                }
+            records[asset_id] = authenticated_record
     return records
 
 
-def _load_measurements(path: Path) -> dict[str, dict[str, Any]]:
+def _load_measurements(
+    path: Path,
+    apartment_records: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
     path = Path(path).resolve()
     payload = contracts.load_json(path)
     items = payload.get("measurements", []) if isinstance(payload, dict) else []
     if (
-        payload.get("schema") != MEASUREMENT_BATCH_SCHEMA
+        set(payload)
+        != {
+            "schema",
+            "generated_at",
+            "method",
+            "asset_count",
+            "inputs",
+            "measurements",
+            "size_ordering",
+            "admission_policy",
+            "automatic_checks",
+            "batch_sha256",
+        }
+        or payload.get("schema") != MEASUREMENT_BATCH_SCHEMA
+        or payload.get("method") != MEASUREMENT_METHOD
+        or not isinstance(payload.get("generated_at"), str)
+        or not payload["generated_at"]
         or payload.get("asset_count") != len(items)
+        or payload.get("asset_count") != len(apartment_records)
+        or not isinstance(items, list)
+        or not items
         or payload.get("batch_sha256") != _hash_without(payload, "batch_sha256")
-        or payload.get("automatic_checks", {}).get("overall") != "passed"
+        or payload.get("admission_policy")
+        != {
+            "target_tolerance": (
+                "required_for_downstream_source_asset_registration"
+            ),
+            "single_size_ordering": (
+                "not_applicable_not_vacuously_passed"
+            ),
+            "rejected_batch_usage": (
+                "measurement_and_scale_recalibration_evidence_only"
+            ),
+        }
     ):
         raise contracts.ContractError("invalid physical measurement batch")
-    records = {}
+    expected_manifest_descriptors = [
+        record["_authenticated_apartment_v2"]["manifest"]
+        for record in apartment_records.values()
+        if "_authenticated_apartment_v2" in record
+    ]
+    if expected_manifest_descriptors:
+        supplied_inputs = payload.get("inputs")
+        if (
+            not isinstance(supplied_inputs, list)
+            or sorted(
+                supplied_inputs,
+                key=lambda item: (
+                    str(item.get("path", "")),
+                    str(item.get("sha256", "")),
+                ),
+            )
+            != sorted(
+                expected_manifest_descriptors,
+                key=lambda item: (
+                    str(item.get("path", "")),
+                    str(item.get("sha256", "")),
+                ),
+            )
+        ):
+            raise contracts.ContractError(
+                "physical measurement Apartment inputs changed"
+            )
+    for descriptor in payload.get("inputs", []):
+        _descriptor_file(descriptor, "physical measurement Apartment input")
+
+    records: dict[str, dict[str, Any]] = {}
+    measured_payloads: list[dict[str, Any]] = []
     for index in items:
+        if (
+            not isinstance(index, Mapping)
+            or set(index)
+            != {
+                "asset_id",
+                "profile_schema_id",
+                "sampled_size",
+                "physical_measurements",
+                "target_comparison",
+                "record",
+            }
+        ):
+            raise contracts.ContractError("physical measurement index changed")
         record_path = _descriptor_file(index["record"], "physical measurement")
         record = contracts.load_json(record_path)
         asset_id = record.get("asset_id")
+        apartment = apartment_records.get(str(asset_id))
         if (
             record.get("schema") != MEASUREMENT_SCHEMA
+            or record.get("method") != MEASUREMENT_METHOD
+            or record.get("physical_measurements", {}).get("method")
+            != MEASUREMENT_METHOD
             or asset_id != index.get("asset_id")
+            or apartment is None
+            or record.get("tag") != apartment.get("tag")
+            or record.get("profile_schema_id")
+            != apartment.get("profile_schema_id")
+            or record.get("sampled_size")
+            != apartment.get("target_physical_profile", {}).get(
+                "selected_value"
+            )
+            or record.get("profile_schema_id")
+            != index.get("profile_schema_id")
+            or record.get("sampled_size") != index.get("sampled_size")
             or record.get("physical_measurements") != index.get("physical_measurements")
+            or record.get("target_comparison") != index.get("target_comparison")
             or asset_id in records
         ):
             raise contracts.ContractError("physical measurement identity changed")
-        for descriptor in record.get("evidence", {}).values():
-            _descriptor_file(descriptor, "physical measurement evidence")
+        runtime = record.get("physical_measurements", {}).get("runtime")
+        target = apartment.get("target_physical_profile")
+        comparison = record.get("target_comparison")
+        if (
+            not isinstance(runtime, Mapping)
+            or not isinstance(target, Mapping)
+            or not isinstance(comparison, Mapping)
+        ):
+            raise contracts.ContractError(
+                "physical measurement comparison is malformed"
+            )
+        measured_height = runtime.get("shoulder_height_cm")
+        target_height = target.get("target_value_cm")
+        tolerance = target.get("tolerance_cm")
+        if (
+            isinstance(measured_height, bool)
+            or not isinstance(measured_height, (int, float))
+            or not math.isfinite(float(measured_height))
+            or isinstance(target_height, bool)
+            or not isinstance(target_height, (int, float))
+            or not math.isfinite(float(target_height))
+            or isinstance(tolerance, bool)
+            or not isinstance(tolerance, (int, float))
+            or not math.isfinite(float(tolerance))
+            or float(tolerance) <= 0.0
+        ):
+            raise contracts.ContractError(
+                "physical measurement comparison is non-finite"
+            )
+        residual = float(measured_height) - float(target_height)
+        status = (
+            "within_tolerance"
+            if abs(residual) <= float(tolerance)
+            else "outside_tolerance"
+        )
+        expected_comparison = {
+            "target_value_cm": target_height,
+            "tolerance_cm": tolerance,
+            "measured_minus_target_cm": round(residual, 6),
+            "status": status,
+            "target_reference_status": target.get(
+                "reference_provenance", {}
+            ).get("status"),
+        }
+        expected_audio_height = apartment.get(
+            "audio_source_height_offset_m"
+        )
+        if (
+            comparison != expected_comparison
+            or status != "within_tolerance"
+            or not isinstance(expected_audio_height, (int, float))
+            or isinstance(expected_audio_height, bool)
+            or not math.isclose(
+                float(runtime.get("audio_source_height_offset_m", float("nan"))),
+                round(float(expected_audio_height), 9),
+                rel_tol=0.0,
+                abs_tol=1.0e-9,
+            )
+        ):
+            raise contracts.ContractError(
+                "physical measurement tolerance/emitter admission failed"
+            )
+
+        evidence = record.get("evidence")
+        if not isinstance(evidence, Mapping):
+            raise contracts.ContractError(
+                "physical measurement evidence is missing"
+            )
+        expected_evidence_fields = {
+            "walking_spec",
+            "ue_visual_metadata",
+            "geometry_measurement",
+            "emitter_measurement",
+        }
+        if apartment.get("rig_semantic_evidence") is not None:
+            expected_evidence_fields.add("rig_semantic_evidence")
+        if set(evidence) != expected_evidence_fields:
+            raise contracts.ContractError(
+                "physical measurement evidence fields changed"
+            )
+        evidence_paths = {
+            name: _descriptor_file(
+                descriptor,
+                f"physical measurement {name}",
+            )
+            for name, descriptor in evidence.items()
+        }
+        if (
+            evidence["walking_spec"]
+            != apartment["actions"]["Walking"]["spec_evidence"]
+            or evidence["emitter_measurement"]
+            != apartment["emitter_measurement"]
+            or evidence_paths["ue_visual_metadata"]
+            != (
+                Path(apartment["actions"]["Walking"]["output_dir"])
+                / "videos"
+                / "actor_visual_metadata.json"
+            ).resolve()
+            or (
+                apartment.get("rig_semantic_evidence") is not None
+                and evidence["rig_semantic_evidence"]
+                != apartment["rig_semantic_evidence"]["artifact"]
+            )
+        ):
+            raise contracts.ContractError(
+                "physical measurement evidence lineage changed"
+            )
+        geometry = contracts.load_json(evidence_paths["geometry_measurement"])
+        geometry_input = geometry.get("input_glb")
+        source_glb = apartment.get("source_glb")
+        if (
+            not isinstance(geometry_input, Mapping)
+            or not isinstance(source_glb, Mapping)
+            or geometry_input.get("path") != source_glb.get("path")
+            or geometry_input.get("sha256") != source_glb.get("sha256")
+            or record.get("calibration", {}).get("geometry") != geometry
+        ):
+            raise contracts.ContractError(
+                "physical measurement measured a different GLB"
+            )
         records[asset_id] = {"payload": record, "path": record_path}
+        measured_payloads.append(record)
+
+    try:
+        recomputed_ordering = physical_measurement.summarize_size_ordering(
+            measured_payloads
+        )
+        recomputed_checks = physical_measurement.build_admission_checks(
+            measured_payloads,
+            recomputed_ordering,
+        )
+    except physical_measurement.MeasurementError as error:
+        raise contracts.ContractError(
+            f"physical measurement admission cannot be recomputed: {error}"
+        ) from error
+    if (
+        payload.get("size_ordering") != recomputed_ordering
+        or payload.get("automatic_checks") != recomputed_checks
+        or recomputed_checks.get("downstream_source_asset_registration_ready")
+        is not True
+        or recomputed_checks.get("overall") != "passed"
+        or set(records) != set(apartment_records)
+    ):
+        raise contracts.ContractError(
+            "physical measurement downstream admission changed"
+        )
     return records
 
 
@@ -1308,6 +1632,11 @@ def _validate_apartment_registry(
     independent_evidence_final_root: Path,
 ) -> tuple[Path, dict[str, Any], dict[str, Any]]:
     tag = record["tag"]
+    authority = record.get("_authenticated_apartment_v2")
+    if authority is not None and not isinstance(authority, Mapping):
+        raise contracts.ContractError(
+            f"Apartment v2 authority is malformed: {tag}"
+        )
     walking_output = Path(record["actions"]["Walking"]["output_dir"]).resolve()
     registry_path = walking_output.parent / "registry" / f"{tag}.json"
     registry = contracts.load_json(registry_path)
@@ -1323,6 +1652,21 @@ def _validate_apartment_registry(
         raise contracts.ContractError(f"Apartment registry identity changed: {tag}")
     for descriptor_name in ("animation_decision", "ue_import_result"):
         _descriptor_file(registry[descriptor_name], descriptor_name)
+    if authority is not None and (
+        any(
+            registry.get("animation_decision", {}).get(field)
+            != authority["inputs"]["animation_decision"].get(field)
+            for field in ("path", "sha256", "size_bytes")
+        )
+        or any(
+            registry.get("ue_import_result", {}).get(field)
+            != authority["inputs"]["ue_import_result"].get(field)
+            for field in ("path", "sha256", "size_bytes")
+        )
+    ):
+        raise contracts.ContractError(
+            f"Apartment registry detached from builder authority: {tag}"
+        )
     decision = contracts.load_json(Path(registry["animation_decision"]["path"]))
     if (
         decision.get("asset_id") != record["base_avatar_id"]
@@ -1333,11 +1677,34 @@ def _validate_apartment_registry(
         raise contracts.ContractError(f"animation decision not approved: {tag}")
     imported = contracts.load_json(Path(registry["ue_import_result"]["path"]))
     imports = [item for item in imported.get("results", []) if item.get("tag") == tag]
+    expected_ue_source_sha256 = registry.get("ue_source_sha256")
+    if authority is not None:
+        lineage = authority["runtime_lineage"]
+        reviewed = lineage["reviewed_animated_glb"]
+        ue_import = lineage["ue_import_glb"]
+        transcode = lineage["texture_transcode_manifest"]
+        if (
+            reviewed.get("path") != record["source_glb"]["path"]
+            or reviewed.get("sha256") != record["source_glb"]["sha256"]
+            or expected_ue_source_sha256 != ue_import.get("sha256")
+            or (
+                transcode is None
+                and reviewed.get("sha256") != ue_import.get("sha256")
+            )
+            or (
+                transcode is not None
+                and reviewed.get("sha256") == ue_import.get("sha256")
+            )
+        ):
+            raise contracts.ContractError(
+                f"Apartment reviewed/UE runtime lineage changed: {tag}"
+            )
+        expected_ue_source_sha256 = ue_import["sha256"]
     if (
         len(imports) != 1
         or imports[0].get("status") != "passed"
         or set(imports[0].get("actions", [])) != {"Walking", "Idle"}
-        or imports[0].get("source_sha256") != registry.get("ue_source_sha256")
+        or imports[0].get("source_sha256") != expected_ue_source_sha256
     ):
         raise contracts.ContractError(f"UE import readback failed: {tag}")
 
@@ -1346,11 +1713,77 @@ def _validate_apartment_registry(
         "animation_decision": Path(registry["animation_decision"]["path"]).resolve(),
         "ue_import_result": Path(registry["ue_import_result"]["path"]).resolve(),
     }
+    if authority is not None:
+        extra.update(
+            {
+                "ue_import_jobs": Path(
+                    authority["inputs"]["ue_import_jobs"]["path"]
+                ).resolve(),
+                "ue_import_preparation": Path(
+                    authority["inputs"]["ue_import_preparation"]["path"]
+                ).resolve(),
+                "animation_decision_freeze_receipt": Path(
+                    authority["inputs"][
+                        "animation_decision_freeze_receipt"
+                    ]["path"]
+                ).resolve(),
+                "owner_review_presentation_receipt": Path(
+                    authority["presentation_evidence"][
+                        "presentation_receipt"
+                    ]["path"]
+                ).resolve(),
+                "owner_review_presentation_video": Path(
+                    authority["presentation_evidence"]["output_video"]["path"]
+                ).resolve(),
+                "generated_animal_emitter_measurement": Path(
+                    authority["emitter_measurement"]["path"]
+                ).resolve(),
+            }
+        )
     for action in ("Walking", "Idle"):
         clip = registry["clips"][action]
         action_record = record["actions"][action]
         if clip.get("clip_id") != action_record["clip_id"]:
             raise contracts.ContractError(f"Apartment clip identity changed: {tag}/{action}")
+        if authority is not None:
+            clip_root = Path(action_record["output_dir"]).resolve()
+            expected_clip_paths = {
+                "spec": clip_root / "spec.json",
+                "runtime_gate": clip_root / "runtime_gate.json",
+                "actor_visual_metadata": (
+                    clip_root / "videos" / "actor_visual_metadata.json"
+                ),
+                "apartment_video": (
+                    clip_root / "videos" / "apartment_v1_view0.mp4"
+                ),
+                "topdown_review_video": (
+                    clip_root / "videos" / "topdown_review.mp4"
+                ),
+                "annotated_review_video": (
+                    clip_root / "videos" / "side_by_side_review_annotated.mp4"
+                ),
+            }
+            rendered_spec = clip.get("spec")
+            source_spec = action_record.get("spec_evidence")
+            if (
+                set(clip) != {"clip_id", *expected_clip_paths}
+                or not isinstance(rendered_spec, Mapping)
+                or not isinstance(source_spec, Mapping)
+                or rendered_spec.get("sha256") != source_spec.get("sha256")
+                or rendered_spec.get("size_bytes")
+                != source_spec.get("size_bytes")
+                or any(
+                    _descriptor_file(
+                        clip.get(name, {}),
+                        f"{tag}/{action}/{name}",
+                    )
+                    != expected_path
+                    for name, expected_path in expected_clip_paths.items()
+                )
+            ):
+                raise contracts.ContractError(
+                    f"Apartment rendered a different spec: {tag}/{action}"
+                )
         for name, descriptor in clip.items():
             if name == "clip_id":
                 continue
@@ -1460,7 +1893,7 @@ def register(
         raise contracts.ContractError(f"output already exists: {output_root}")
     source_assets = _load_source_assets(source_asset_roots)
     apartment = _load_apartment_records(apartment_manifests)
-    measurements = _load_measurements(measurement_batch)
+    measurements = _load_measurements(measurement_batch, apartment)
     if set(apartment) != set(measurements):
         raise contracts.ContractError("Apartment and measurement asset sets differ")
     missing = set(apartment) - set(source_assets)
@@ -1508,6 +1941,22 @@ def register(
                     for role, path in sorted(evidence_paths.items())
                 },
             }
+            authority = record.get("_authenticated_apartment_v2")
+            if isinstance(authority, Mapping):
+                lineage = authority["runtime_lineage"]
+                added["ue_import_compatible_glb"] = (
+                    static_registry.spear_artifact(
+                        Path(lineage["ue_import_glb"]["path"])
+                    )
+                )
+                if lineage["texture_transcode_manifest"] is not None:
+                    added["texture_transcode_manifest"] = (
+                        static_registry.spear_artifact(
+                            Path(
+                                lineage["texture_transcode_manifest"]["path"]
+                            )
+                        )
+                    )
             upgraded = upgrade_source_asset(
                 source,
                 physical_measurements=measurement["payload"]["physical_measurements"],

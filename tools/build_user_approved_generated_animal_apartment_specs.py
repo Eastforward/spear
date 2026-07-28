@@ -32,6 +32,9 @@ OUTPUT_SCHEMA = "controlled_animal_walk_idle_apartment_specs_v2"
 LEGACY_OUTPUT_SCHEMAS = frozenset({"controlled_animal_walk_idle_apartment_specs_v1"})
 APARTMENT_GATE_SCHEMA = "controlled_animal_apartment_gate_v2"
 LEGACY_APARTMENT_GATE_SCHEMAS = frozenset({"controlled_animal_apartment_gate_v1"})
+EMITTER_MEASUREMENT_SCHEMA = "avengine_generated_animal_emitter_measurement_v2"
+EMITTER_COORDINATE_SYSTEM = "avengine_local_x_forward_y_up_z_right_m"
+EMITTER_METHOD = "semantic_head_forward_quantile_rest_mesh_v1"
 PHYSICAL_MEASUREMENT = "shoulder_height_cm"
 RIG_SEMANTIC_EVIDENCE_SCHEMA = "controlled_animal_rig_semantic_evidence_v1"
 LEGACY_UNGATED_GENERATED_REVIEW_SCHEMA = (
@@ -137,6 +140,13 @@ JOB_FIELDS = frozenset(
         "animation_decision_sha256",
     }
 )
+TRANSCODED_JOB_FIELDS = JOB_FIELDS | {
+    "upstream_rigged_glb",
+    "upstream_rigged_glb_sha256",
+    "texture_transcode_manifest",
+    "texture_transcode_manifest_sha256",
+    "texture_transcode_manifest_size_bytes",
+}
 RESULT_FIELDS = frozenset(
     {
         "schema",
@@ -284,6 +294,52 @@ APARTMENT_STAGING_ROOT_NAMES = frozenset(
     {
         "specs",
         "spec_manifest.json",
+    }
+)
+APARTMENT_V2_FIELDS = frozenset(
+    {
+        "schema",
+        "generated_at",
+        "usage_scope",
+        "formal_registration_authorized",
+        "trajectory_policy",
+        "audio_policy",
+        "avatar_count",
+        "clip_count",
+        "presentation_evidence",
+        "presentation_automatic_checks",
+        "inputs",
+        "records",
+        "manifest_sha256",
+    }
+)
+APARTMENT_V2_INPUT_FIELDS = frozenset(
+    {
+        "config",
+        "ue_import_jobs",
+        "ue_import_result",
+        "ue_import_preparation",
+        "animation_decision",
+        "animation_decision_freeze_receipt",
+        "emitter_measurement",
+        "template",
+    }
+)
+APARTMENT_V2_RECORD_FIELDS = frozenset(
+    {
+        "base_avatar_id",
+        "asset_id",
+        "tag",
+        "profile_schema_id",
+        "species",
+        "breed",
+        "sampled_attributes",
+        "target_physical_profile",
+        "source_glb",
+        "runtime_lineage",
+        "emitter_measurement",
+        "audio_source_height_offset_m",
+        "actions",
     }
 )
 
@@ -1400,8 +1456,15 @@ def _authenticated_rig_semantic_evidence(
         return None
     outputs = review.get("outputs")
     gates = review.get("automatic_admission_gates")
-    runtime = _direct_file(Path(str(job["rigged_glb"])), "generated animal runtime GLB")
-    runtime_sha256 = str(job["rigged_glb_sha256"])
+    if frozenset(job) in {JOB_FIELDS, TRANSCODED_JOB_FIELDS}:
+        lineage = _authenticate_formal_job_runtime_lineage(job)
+        runtime = lineage["reviewed_runtime"]
+        runtime_sha256 = lineage["reviewed_runtime_sha256"]
+    else:
+        runtime = _direct_file(
+            Path(str(job["rigged_glb"])), "generated animal runtime GLB"
+        )
+        runtime_sha256 = str(job["rigged_glb_sha256"])
     if (
         not isinstance(outputs, Mapping)
         or review.get("status") != "research_candidate_pending_human_review"
@@ -1511,13 +1574,195 @@ def _expected_non_destructive_policy(tag: str) -> str:
     )
 
 
+def _authenticate_formal_job_runtime_lineage(
+    job: Mapping[str, Any],
+) -> dict[str, Any]:
+    fields = frozenset(job)
+    if fields not in {JOB_FIELDS, TRANSCODED_JOB_FIELDS}:
+        raise contracts.ContractError("formal UE import job fields changed")
+    import_raw = Path(str(job.get("rigged_glb", "")))
+    if not import_raw.is_absolute() or _has_symlink_component(import_raw):
+        raise contracts.ContractError("formal UE job runtime GLB path is unsafe")
+    import_runtime = _direct_file(import_raw, "formal UE job runtime GLB")
+    import_sha256 = _require_sha256(
+        job.get("rigged_glb_sha256"),
+        "formal UE job runtime GLB hash",
+    )
+    if _sha256(import_runtime) != import_sha256:
+        raise contracts.ContractError("formal UE job runtime GLB hash changed")
+
+    if fields == JOB_FIELDS:
+        return {
+            "import_runtime": import_runtime,
+            "import_runtime_sha256": import_sha256,
+            "reviewed_runtime": import_runtime,
+            "reviewed_runtime_sha256": import_sha256,
+            "texture_transcode_manifest": None,
+        }
+
+    reviewed_raw = Path(str(job.get("upstream_rigged_glb", "")))
+    if not reviewed_raw.is_absolute() or _has_symlink_component(reviewed_raw):
+        raise contracts.ContractError(
+            "formal UE job upstream reviewed GLB path is unsafe"
+        )
+    reviewed_runtime = _direct_file(
+        reviewed_raw,
+        "formal UE job upstream reviewed GLB",
+    )
+    reviewed_sha256 = _require_sha256(
+        job.get("upstream_rigged_glb_sha256"),
+        "formal UE job upstream reviewed GLB hash",
+    )
+    if _sha256(reviewed_runtime) != reviewed_sha256:
+        raise contracts.ContractError(
+            "formal UE job upstream reviewed GLB hash changed"
+        )
+    manifest_raw = Path(str(job.get("texture_transcode_manifest", "")))
+    if not manifest_raw.is_absolute() or _has_symlink_component(manifest_raw):
+        raise contracts.ContractError(
+            "formal UE job texture transcode manifest path is unsafe"
+        )
+    manifest_path = _direct_file(
+        manifest_raw,
+        "formal UE job texture transcode manifest",
+    )
+    manifest_sha256 = _require_sha256(
+        job.get("texture_transcode_manifest_sha256"),
+        "formal UE job texture transcode manifest hash",
+    )
+    manifest_size = job.get("texture_transcode_manifest_size_bytes")
+    if (
+        isinstance(manifest_size, bool)
+        or not isinstance(manifest_size, int)
+        or manifest_size <= 0
+        or _sha256(manifest_path) != manifest_sha256
+        or manifest_path.stat().st_size != manifest_size
+    ):
+        raise contracts.ContractError(
+            "formal UE job texture transcode manifest descriptor changed"
+        )
+    transcode = preparation_bridge._authenticate_texture_transcode(
+        reviewed_glb=reviewed_runtime,
+        ue_compatible_glb_path=import_runtime,
+        texture_transcode_manifest_path=manifest_path,
+    )
+    if (
+        transcode is None
+        or transcode["ue_compatible_glb"] != import_runtime
+        or transcode["texture_transcode_manifest"] != manifest_path
+        or reviewed_runtime == import_runtime
+        or reviewed_sha256 == import_sha256
+    ):
+        raise contracts.ContractError(
+            "formal UE job texture transcode lineage changed"
+        )
+    return {
+        "import_runtime": import_runtime,
+        "import_runtime_sha256": import_sha256,
+        "reviewed_runtime": reviewed_runtime,
+        "reviewed_runtime_sha256": reviewed_sha256,
+        "texture_transcode_manifest": manifest_path,
+    }
+
+
+def _authenticate_emitter_measurement(
+    path: Path,
+    *,
+    expected_file_sha256: str,
+    reviewed_runtime: Path,
+    reviewed_runtime_sha256: str,
+    actor_scale: float,
+) -> tuple[dict[str, Any], dict[str, Any], float]:
+    """Authenticate one asset-derived emitter and derive SPEAR's scaled height."""
+
+    measurement_path = _authenticate_external_file(
+        path,
+        expected_file_sha256,
+        "generated animal emitter measurement",
+    )
+    measurement = _load(measurement_path)
+    input_descriptor = measurement.get("input")
+    anchor = measurement.get("emitter_anchor")
+    expected_anchor_fields = {
+        "asset_specific_not_species_template",
+        "candidate_vertex_count",
+        "coordinate_system",
+        "emitter_offset_m",
+        "local_forward_axis",
+        "method",
+        "mouth_animation_required",
+        "muzzle_forward_quantile",
+        "selected_vertex_count",
+    }
+    if (
+        set(measurement)
+        != {
+            "schema",
+            "created_at",
+            "input",
+            "canonical_front_axis",
+            "emitter_anchor",
+        }
+        or measurement.get("schema") != EMITTER_MEASUREMENT_SCHEMA
+        or not isinstance(measurement.get("created_at"), str)
+        or not measurement["created_at"]
+        or measurement.get("canonical_front_axis") != "positive-x"
+        or not isinstance(input_descriptor, Mapping)
+        or not _descriptor_binds_file(
+            input_descriptor,
+            reviewed_runtime,
+            reviewed_runtime_sha256,
+        )
+        or not isinstance(anchor, Mapping)
+        or set(anchor) != expected_anchor_fields
+        or anchor.get("asset_specific_not_species_template") is not True
+        or anchor.get("coordinate_system") != EMITTER_COORDINATE_SYSTEM
+        or anchor.get("local_forward_axis") != [1.0, 0.0, 0.0]
+        or anchor.get("method") != EMITTER_METHOD
+        or anchor.get("mouth_animation_required") is not False
+    ):
+        raise contracts.ContractError(
+            "generated animal emitter measurement authority changed"
+        )
+    offset = anchor.get("emitter_offset_m")
+    candidate_count = anchor.get("candidate_vertex_count")
+    selected_count = anchor.get("selected_vertex_count")
+    quantile = anchor.get("muzzle_forward_quantile")
+    if (
+        not isinstance(offset, list)
+        or len(offset) != 3
+        or any(not _finite_number(value) for value in offset)
+        or float(offset[1]) <= 0.0
+        or isinstance(candidate_count, bool)
+        or not isinstance(candidate_count, int)
+        or candidate_count <= 0
+        or isinstance(selected_count, bool)
+        or not isinstance(selected_count, int)
+        or not 0 < selected_count <= candidate_count
+        or not _finite_number(quantile)
+        or not 0.0 < float(quantile) < 1.0
+        or not _finite_number(actor_scale)
+        or float(actor_scale) <= 0.0
+    ):
+        raise contracts.ContractError(
+            "generated animal emitter measurement values are invalid"
+        )
+    height_m = float(offset[1]) * float(actor_scale)
+    if not math.isfinite(height_m) or not 0.0 < height_m <= 5.0:
+        raise contracts.ContractError(
+            "generated animal scaled emitter height is unsafe"
+        )
+    return measurement, _artifact(measurement_path), height_m
+
+
 def _validate_formal_decision(
     decision: Mapping[str, Any],
     *,
     decision_path: Path,
     config: Mapping[str, Any],
     job: Mapping[str, Any],
-    runtime: Path,
+    reviewed_runtime: Path,
+    reviewed_runtime_sha256: str,
 ) -> dict[str, Any]:
     checks = decision.get("checks")
     caveats = decision.get("caveats")
@@ -1562,8 +1807,8 @@ def _validate_formal_decision(
         or gates.get("all_automatic_gates_passed") is not True
         or not _descriptor_binds_file(
             outputs.get("animated_glb"),
-            runtime,
-            str(job["rigged_glb_sha256"]),
+            reviewed_runtime,
+            reviewed_runtime_sha256,
         )
     ):
         raise contracts.ContractError(
@@ -1796,7 +2041,8 @@ def _validate_preparation_anchor(
     decision_path: Path,
     config: Mapping[str, Any],
     job: Mapping[str, Any],
-    runtime: Path,
+    reviewed_runtime: Path,
+    reviewed_runtime_sha256: str,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     preparation_path, descriptor = _validate_absolute_descriptor(
         value,
@@ -1903,7 +2149,7 @@ def _validate_preparation_anchor(
     _, runtime_descriptor = _validate_absolute_descriptor(
         preparation.get("reviewed_animated_glb"),
         "UE import preparation reviewed GLB",
-        expected_path=runtime,
+        expected_path=reviewed_runtime,
     )
     source_asset_path, source_asset_descriptor = _validate_absolute_descriptor(
         preparation.get("source_asset"),
@@ -1920,7 +2166,7 @@ def _validate_preparation_anchor(
         or preparation.get("animation_decision_sha256") != decision["decision_sha256"]
         or review_descriptor["sha256"] != decision["review_sha256"]
         or preparation.get("animation_review_schema") != FORMAL_GENERATED_REVIEW_SCHEMA
-        or runtime_descriptor["sha256"] != job["rigged_glb_sha256"]
+        or runtime_descriptor["sha256"] != reviewed_runtime_sha256
         or source_asset_descriptor["sha256"] != job["source_asset_sha256"]
         or source_registry_descriptor["sha256"] != job["source_registry_sha256"]
         or preparation.get("expected_source_asset_registry_file_sha256")
@@ -2021,7 +2267,7 @@ def _authenticate_formal_v2(
     expected_tag = f"pixal_{config['asset_id']}"
     if (
         not isinstance(job, Mapping)
-        or set(job) != JOB_FIELDS
+        or frozenset(job) not in {JOB_FIELDS, TRANSCODED_JOB_FIELDS}
         or job.get("job_type") != JOB_TYPE
         or CANONICAL_ID_PATTERN.fullmatch(config["asset_id"]) is None
         or len(config["asset_id"]) > 96
@@ -2047,19 +2293,19 @@ def _authenticate_formal_v2(
         "animation_decision_sha256",
     ):
         _require_sha256(job.get(field), f"formal UE job {field}")
-    runtime_raw = Path(str(job.get("rigged_glb", "")))
-    if not runtime_raw.is_absolute() or _has_symlink_component(runtime_raw):
-        raise contracts.ContractError("formal UE job runtime GLB path is unsafe")
-    runtime = _direct_file(runtime_raw, "formal UE job runtime GLB")
-    if _sha256(runtime) != job["rigged_glb_sha256"]:
-        raise contracts.ContractError("formal UE job runtime GLB hash changed")
+    lineage = _authenticate_formal_job_runtime_lineage(job)
+    import_runtime = lineage["import_runtime"]
+    import_runtime_sha256 = lineage["import_runtime_sha256"]
+    reviewed_runtime = lineage["reviewed_runtime"]
+    reviewed_runtime_sha256 = lineage["reviewed_runtime_sha256"]
 
     _validate_formal_decision(
         decision,
         decision_path=decision_path,
         config=config,
         job=job,
-        runtime=runtime,
+        reviewed_runtime=reviewed_runtime,
+        reviewed_runtime_sha256=reviewed_runtime_sha256,
     )
     (
         preparation,
@@ -2077,7 +2323,8 @@ def _authenticate_formal_v2(
         decision_path=decision_path,
         config=config,
         job=job,
-        runtime=runtime,
+        reviewed_runtime=reviewed_runtime,
+        reviewed_runtime_sha256=reviewed_runtime_sha256,
     )
 
     result_list = result.get("results")
@@ -2147,8 +2394,8 @@ def _authenticate_formal_v2(
         or imported.get("job_identity_sha256") != expected_job_identity_sha256
         or not source_raw.is_absolute()
         or _has_symlink_component(source_raw)
-        or source_raw.resolve() != runtime
-        or imported.get("source_sha256") != job["rigged_glb_sha256"]
+        or source_raw.resolve() != import_runtime
+        or imported.get("source_sha256") != import_runtime_sha256
         or imported.get("mesh_content_dir") != mesh_dir
         or not isinstance(skeletal_mesh, str)
         or not skeletal_mesh.startswith(f"{mesh_dir}/")
@@ -2642,6 +2889,8 @@ def _authenticate_build_authority(
     expected_animation_decision_sha256: str,
     animation_decision_freeze_receipt: Path,
     expected_animation_decision_freeze_receipt_sha256: str,
+    emitter_measurement: Path,
+    expected_emitter_measurement_sha256: str,
     template: Path,
 ) -> dict[str, Any]:
     ue_preparation = _authenticate_external_file(
@@ -2669,6 +2918,11 @@ def _authenticate_build_authority(
         expected_animation_decision_freeze_receipt_sha256,
         "animation decision freeze receipt",
     )
+    emitter_measurement = _authenticate_external_file(
+        emitter_measurement,
+        expected_emitter_measurement_sha256,
+        "generated animal emitter measurement",
+    )
     config_path = _direct_file(config_path, "Apartment config")
     template = _direct_file(template, "Apartment template")
     (
@@ -2695,6 +2949,31 @@ def _authenticate_build_authority(
             "Apartment publication requires preparation v3 and freeze receipt v2"
         )
     rig_semantic_evidence = _authenticated_rig_semantic_evidence(decision, job)
+    runtime_lineage = _authenticate_formal_job_runtime_lineage(job)
+    (
+        emitter_measurement_payload,
+        emitter_measurement_descriptor,
+        audio_source_height_offset_m,
+    ) = _authenticate_emitter_measurement(
+        emitter_measurement,
+        expected_file_sha256=expected_emitter_measurement_sha256,
+        reviewed_runtime=runtime_lineage["reviewed_runtime"],
+        reviewed_runtime_sha256=runtime_lineage["reviewed_runtime_sha256"],
+        actor_scale=float(config["actor_scale"]),
+    )
+    if not math.isclose(
+        float(config["audio_source_height_offset_m"]),
+        audio_source_height_offset_m,
+        rel_tol=0.0,
+        abs_tol=1.0e-9,
+    ):
+        raise contracts.ContractError(
+            "config audio_source_height_offset_m contradicts the measured "
+            "emitter up component"
+        )
+    # The measured, scaled value is the sole downstream authority.  The config
+    # field above is retained only as an exact compatibility assertion.
+    config["audio_source_height_offset_m"] = audio_source_height_offset_m
     template_payload = _load(template)
     _validate_template_numeric_contract(template_payload)
 
@@ -2705,14 +2984,19 @@ def _authenticate_build_authority(
         animation_decision,
         ue_preparation,
         animation_decision_freeze_receipt,
+        emitter_measurement,
         template,
         Path(str(preparation["source_asset"]["path"])),
         Path(str(preparation["source_asset_registry"]["path"])),
         Path(str(preparation["animation_review"]["path"])),
         Path(str(preparation["reviewed_animated_glb"]["path"])),
+        runtime_lineage["import_runtime"],
+        runtime_lineage["reviewed_runtime"],
         Path(str(presentation_evidence["presentation_receipt"]["path"])),
         Path(str(presentation_evidence["output_video"]["path"])),
     }
+    if runtime_lineage["texture_transcode_manifest"] is not None:
+        guarded_paths.add(runtime_lineage["texture_transcode_manifest"])
     if rig_semantic_evidence is not None:
         guarded_paths.add(Path(str(rig_semantic_evidence["artifact"]["path"])))
     file_guards = {
@@ -2729,6 +3013,7 @@ def _authenticate_build_authority(
         "animation_decision": animation_decision,
         "ue_preparation": ue_preparation,
         "animation_decision_freeze_receipt": (animation_decision_freeze_receipt),
+        "emitter_measurement": emitter_measurement,
         "template": template,
         "config": config,
         "job": job,
@@ -2737,12 +3022,296 @@ def _authenticate_build_authority(
         "freeze_receipt": freeze_receipt,
         "presentation_evidence": presentation_evidence,
         "rig_semantic_evidence": rig_semantic_evidence,
+        "runtime_lineage": runtime_lineage,
+        "emitter_measurement_payload": emitter_measurement_payload,
+        "emitter_measurement_descriptor": emitter_measurement_descriptor,
+        "audio_source_height_offset_m": audio_source_height_offset_m,
         "template_payload": template_payload,
         "file_guards": file_guards,
         "presentation_directory_guard": _directory_guard(
             presentation_root,
             "owner-review presentation directory",
         ),
+    }
+
+
+def authenticate_apartment_v2_manifest(
+    manifest_path: Path,
+) -> dict[str, Any]:
+    """Reauthenticate a published builder-v2 manifest from its file graph.
+
+    The manifest self-hash is only an index integrity check.  This validator
+    dereferences every authority input and repeats the same decision, review,
+    presentation, runtime-lineage, emitter, and generated-spec checks used at
+    publication time.
+    """
+
+    path = _direct_file(manifest_path, "Apartment v2 manifest")
+    manifest = _load(path)
+    inputs = manifest.get("inputs")
+    records = manifest.get("records")
+    if (
+        set(manifest) != APARTMENT_V2_FIELDS
+        or manifest.get("schema") != OUTPUT_SCHEMA
+        or not isinstance(manifest.get("generated_at"), str)
+        or not manifest["generated_at"]
+        or manifest.get("usage_scope") != "research_candidate"
+        or manifest.get("formal_registration_authorized") is not False
+        or manifest.get("trajectory_policy")
+        != (
+            "Walking uses camera right/rear -> left/front -> one table loop; "
+            "Idle is stationary at left/front"
+        )
+        or manifest.get("audio_policy")
+        != (
+            "species-matched short calls are segmented and repeated with "
+            "silent gaps"
+        )
+        or manifest.get("avatar_count") != 1
+        or manifest.get("clip_count") != 2
+        or not isinstance(inputs, Mapping)
+        or set(inputs) != APARTMENT_V2_INPUT_FIELDS
+        or not isinstance(records, list)
+        or len(records) != 1
+        or manifest.get("manifest_sha256") != contracts.manifest_sha256(manifest)
+        or manifest.get("presentation_automatic_checks")
+        != PRESENTATION_AUTOMATIC_CHECKS
+    ):
+        raise contracts.ContractError(
+            f"invalid published Apartment v2 manifest: {path}"
+        )
+
+    config_path, config_descriptor = _validate_absolute_descriptor(
+        inputs["config"],
+        "Apartment v2 config",
+    )
+    jobs_path, jobs_descriptor = _validate_absolute_descriptor(
+        inputs["ue_import_jobs"],
+        "Apartment v2 UE jobs",
+    )
+    result_path, result_descriptor = _validate_absolute_descriptor(
+        inputs["ue_import_result"],
+        "Apartment v2 UE result",
+    )
+    preparation_path, preparation_descriptor = _validate_absolute_descriptor(
+        inputs["ue_import_preparation"],
+        "Apartment v2 UE preparation",
+        extra_fields=frozenset({"manifest_sha256"}),
+    )
+    decision_path, decision_descriptor = _validate_absolute_descriptor(
+        inputs["animation_decision"],
+        "Apartment v2 animation decision",
+        extra_fields=frozenset({"decision_sha256"}),
+    )
+    receipt_path, receipt_descriptor = _validate_absolute_descriptor(
+        inputs["animation_decision_freeze_receipt"],
+        "Apartment v2 animation decision freeze receipt",
+        extra_fields=frozenset({"receipt_sha256"}),
+    )
+    emitter_path, emitter_descriptor = _validate_absolute_descriptor(
+        inputs["emitter_measurement"],
+        "Apartment v2 emitter measurement",
+    )
+    template_path, template_descriptor = _validate_absolute_descriptor(
+        inputs["template"],
+        "Apartment v2 template",
+    )
+    (
+        config,
+        job,
+        decision,
+        preparation,
+        freeze_receipt,
+        presentation_evidence,
+    ) = _authenticate(
+        config_path=config_path,
+        jobs_path=jobs_path,
+        result_path=result_path,
+        decision_path=decision_path,
+        preparation_path=preparation_path,
+        expected_preparation_file_sha256=preparation_descriptor["sha256"],
+        receipt_path=receipt_path,
+        expected_receipt_file_sha256=receipt_descriptor["sha256"],
+    )
+    if (
+        preparation is None
+        or freeze_receipt is None
+        or presentation_evidence is None
+        or preparation_descriptor["manifest_sha256"]
+        != preparation.get("manifest_sha256")
+        or decision_descriptor["decision_sha256"]
+        != decision.get("decision_sha256")
+        or receipt_descriptor["receipt_sha256"]
+        != freeze_receipt.get("receipt_sha256")
+        or manifest.get("presentation_evidence") != presentation_evidence
+        or presentation_evidence != preparation.get("presentation_evidence")
+        or presentation_evidence != freeze_receipt.get("presentation_evidence")
+    ):
+        raise contracts.ContractError(
+            "Apartment v2 owner-review authority changed"
+        )
+    template = _load(template_path)
+    _validate_template_numeric_contract(template)
+    runtime_lineage = _authenticate_formal_job_runtime_lineage(job)
+    (
+        emitter_payload,
+        authenticated_emitter_descriptor,
+        audio_source_height_offset_m,
+    ) = _authenticate_emitter_measurement(
+        emitter_path,
+        expected_file_sha256=emitter_descriptor["sha256"],
+        reviewed_runtime=runtime_lineage["reviewed_runtime"],
+        reviewed_runtime_sha256=runtime_lineage["reviewed_runtime_sha256"],
+        actor_scale=float(config["actor_scale"]),
+    )
+    if (
+        authenticated_emitter_descriptor != emitter_descriptor
+        or not math.isclose(
+            float(config["audio_source_height_offset_m"]),
+            audio_source_height_offset_m,
+            rel_tol=0.0,
+            abs_tol=1.0e-9,
+        )
+    ):
+        raise contracts.ContractError(
+            "Apartment v2 emitter-derived height authority changed"
+        )
+    config["audio_source_height_offset_m"] = audio_source_height_offset_m
+    rig_semantic_evidence = _authenticated_rig_semantic_evidence(decision, job)
+
+    record = records[0]
+    expected_record_fields = set(APARTMENT_V2_RECORD_FIELDS)
+    if rig_semantic_evidence is not None:
+        expected_record_fields.add("rig_semantic_evidence")
+    if (
+        not isinstance(record, Mapping)
+        or set(record) != expected_record_fields
+        or record.get("base_avatar_id") != config["asset_id"]
+        or record.get("asset_id") != config["asset_id"]
+        or record.get("tag") != config["tag"]
+        or record.get("profile_schema_id") != config["profile_schema_id"]
+        or record.get("species") != config["species"]
+        or record.get("breed") != config["breed"]
+        or record.get("sampled_attributes") != config["sampled_attributes"]
+        or record.get("target_physical_profile")
+        != config["target_physical_profile"]
+        or record.get("source_glb")
+        != {
+            "path": str(runtime_lineage["reviewed_runtime"]),
+            "sha256": runtime_lineage["reviewed_runtime_sha256"],
+        }
+        or record.get("runtime_lineage")
+        != {
+            "reviewed_animated_glb": _artifact(
+                runtime_lineage["reviewed_runtime"]
+            ),
+            "ue_import_glb": _artifact(runtime_lineage["import_runtime"]),
+            "texture_transcode_manifest": (
+                _artifact(runtime_lineage["texture_transcode_manifest"])
+                if runtime_lineage["texture_transcode_manifest"] is not None
+                else None
+            ),
+        }
+        or record.get("emitter_measurement") != emitter_descriptor
+        or not math.isclose(
+            float(record.get("audio_source_height_offset_m", float("nan"))),
+            audio_source_height_offset_m,
+            rel_tol=0.0,
+            abs_tol=1.0e-9,
+        )
+        or (
+            rig_semantic_evidence is not None
+            and record.get("rig_semantic_evidence") != rig_semantic_evidence
+        )
+    ):
+        raise contracts.ContractError(
+            "Apartment v2 record does not match authenticated authority"
+        )
+
+    gate = {
+        "schema": APARTMENT_GATE_SCHEMA,
+        "status": "approved_for_research_candidate_apartment",
+        "asset_id": config["asset_id"],
+        "tag": config["tag"],
+        "animation_decision": decision_descriptor,
+        "animation_decision_freeze_receipt": receipt_descriptor,
+        "ue_import_preparation": preparation_descriptor,
+        "ue_import_result": result_descriptor,
+        "ue_source_sha256": runtime_lineage["import_runtime_sha256"],
+        "user_instruction_authority": copy.deepcopy(USER_INSTRUCTION_AUTHORITY),
+        "presentation_evidence": copy.deepcopy(presentation_evidence),
+        "presentation_automatic_checks": copy.deepcopy(
+            PRESENTATION_AUTOMATIC_CHECKS
+        ),
+        "formal_dataset_registration_authorized": False,
+    }
+    expected_specs = _build_pair(template, config=config, gate=gate)
+    actions = record.get("actions")
+    if not isinstance(actions, Mapping) or set(actions) != {"Walking", "Idle"}:
+        raise contracts.ContractError("Apartment v2 action set changed")
+    output_root = path.parent
+    for action_name, motion in (("Walking", "walking"), ("Idle", "idle")):
+        action = actions[action_name]
+        spec_name = f"camera_pass_table_loop_{motion}.json"
+        expected_spec_path = (
+            output_root / "specs" / str(config["tag"]) / spec_name
+        ).resolve()
+        expected_output_dir = (
+            output_root
+            / "clips"
+            / str(config["tag"])
+            / f"camera_pass_table_loop_{motion}"
+        ).resolve()
+        if (
+            not isinstance(action, Mapping)
+            or set(action)
+            != {"motion", "spec", "spec_evidence", "output_dir", "clip_id"}
+            or action.get("motion") != motion
+            or action.get("spec") != str(expected_spec_path)
+            or action.get("output_dir") != str(expected_output_dir)
+            or action.get("clip_id")
+            != f"{config['tag']}_camera_pass_table_loop_{motion}_v2"
+        ):
+            raise contracts.ContractError(
+                f"Apartment v2 action identity changed: {action_name}"
+            )
+        spec_path, spec_descriptor = _validate_absolute_descriptor(
+            action["spec_evidence"],
+            f"Apartment v2 {action_name} spec",
+            expected_path=expected_spec_path,
+        )
+        if (
+            spec_descriptor["path"] != action["spec"]
+            or _load(spec_path) != expected_specs[action_name]
+        ):
+            raise contracts.ContractError(
+                f"Apartment v2 {action_name} spec authority changed"
+            )
+
+    return {
+        "manifest_path": path,
+        "manifest": copy.deepcopy(manifest),
+        "record": copy.deepcopy(dict(record)),
+        "config": config,
+        "job": job,
+        "decision": decision,
+        "preparation": preparation,
+        "freeze_receipt": freeze_receipt,
+        "presentation_evidence": presentation_evidence,
+        "template": template,
+        "runtime_lineage": runtime_lineage,
+        "emitter_measurement": emitter_payload,
+        "audio_source_height_offset_m": audio_source_height_offset_m,
+        "inputs": {
+            "config": config_descriptor,
+            "ue_import_jobs": jobs_descriptor,
+            "ue_import_result": result_descriptor,
+            "ue_import_preparation": preparation_descriptor,
+            "animation_decision": decision_descriptor,
+            "animation_decision_freeze_receipt": receipt_descriptor,
+            "emitter_measurement": emitter_descriptor,
+            "template": template_descriptor,
+        },
     }
 
 
@@ -2759,6 +3328,8 @@ def build_specs(
     expected_animation_decision_sha256: str,
     animation_decision_freeze_receipt: Path,
     expected_animation_decision_freeze_receipt_sha256: str,
+    emitter_measurement: Path,
+    expected_emitter_measurement_sha256: str,
     template: Path,
     output_root: Path,
 ) -> Path:
@@ -2776,6 +3347,10 @@ def build_specs(
         "expected_animation_decision_freeze_receipt_sha256": (
             expected_animation_decision_freeze_receipt_sha256
         ),
+        "emitter_measurement": emitter_measurement,
+        "expected_emitter_measurement_sha256": (
+            expected_emitter_measurement_sha256
+        ),
         "template": template,
     }
     authority = _authenticate_build_authority(**authority_arguments)
@@ -2785,6 +3360,7 @@ def build_specs(
     animation_decision = authority["animation_decision"]
     ue_preparation = authority["ue_preparation"]
     animation_decision_freeze_receipt = authority["animation_decision_freeze_receipt"]
+    emitter_measurement = authority["emitter_measurement"]
     template = authority["template"]
     config = authority["config"]
     job = authority["job"]
@@ -2793,6 +3369,9 @@ def build_specs(
     freeze_receipt = authority["freeze_receipt"]
     presentation_evidence = authority["presentation_evidence"]
     rig_semantic_evidence = authority["rig_semantic_evidence"]
+    runtime_lineage = authority["runtime_lineage"]
+    emitter_measurement_descriptor = authority["emitter_measurement_descriptor"]
+    audio_source_height_offset_m = authority["audio_source_height_offset_m"]
     template_payload = authority["template_payload"]
     (
         output_root,
@@ -2890,9 +3469,24 @@ def build_specs(
             "sampled_attributes": copy.deepcopy(config["sampled_attributes"]),
             "target_physical_profile": copy.deepcopy(config["target_physical_profile"]),
             "source_glb": {
-                "path": job["rigged_glb"],
-                "sha256": job["rigged_glb_sha256"],
+                "path": str(runtime_lineage["reviewed_runtime"]),
+                "sha256": runtime_lineage["reviewed_runtime_sha256"],
             },
+            "runtime_lineage": {
+                "reviewed_animated_glb": _artifact(
+                    runtime_lineage["reviewed_runtime"]
+                ),
+                "ue_import_glb": _artifact(runtime_lineage["import_runtime"]),
+                "texture_transcode_manifest": (
+                    _artifact(runtime_lineage["texture_transcode_manifest"])
+                    if runtime_lineage["texture_transcode_manifest"] is not None
+                    else None
+                ),
+            },
+            "emitter_measurement": copy.deepcopy(
+                emitter_measurement_descriptor
+            ),
+            "audio_source_height_offset_m": audio_source_height_offset_m,
             "actions": actions,
         }
         if rig_semantic_evidence is not None:
@@ -2917,6 +3511,9 @@ def build_specs(
                 "ue_import_preparation": preparation_artifact,
                 "animation_decision": decision_artifact,
                 "animation_decision_freeze_receipt": receipt_artifact,
+                "emitter_measurement": copy.deepcopy(
+                    emitter_measurement_descriptor
+                ),
                 "template": _artifact(template),
             },
             "records": [record],
@@ -3090,6 +3687,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-animation-decision-sha256")
     parser.add_argument("--animation-decision-freeze-receipt", type=Path)
     parser.add_argument("--expected-animation-decision-freeze-receipt-sha256")
+    parser.add_argument("--emitter-measurement", type=Path)
+    parser.add_argument("--expected-emitter-measurement-sha256")
     parser.add_argument("--template", type=Path)
     parser.add_argument("--output-root", type=Path)
     parser.add_argument(
@@ -3144,6 +3743,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             "--expected-animation-decision-freeze-receipt-sha256": (
                 args.expected_animation_decision_freeze_receipt_sha256
             ),
+            "--emitter-measurement": args.emitter_measurement,
+            "--expected-emitter-measurement-sha256": (
+                args.expected_emitter_measurement_sha256
+            ),
         }
         missing = [name for name, value in required_formal.items() if value is None]
         if missing:
@@ -3165,6 +3768,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             animation_decision_freeze_receipt=(args.animation_decision_freeze_receipt),
             expected_animation_decision_freeze_receipt_sha256=(
                 args.expected_animation_decision_freeze_receipt_sha256
+            ),
+            emitter_measurement=args.emitter_measurement,
+            expected_emitter_measurement_sha256=(
+                args.expected_emitter_measurement_sha256
             ),
             template=args.template,
             output_root=args.output_root,

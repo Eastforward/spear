@@ -13,6 +13,7 @@ import copy
 import ctypes
 import errno
 import hashlib
+import io
 import json
 import math
 import os
@@ -25,6 +26,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+from PIL import Image, UnidentifiedImageError
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -53,6 +56,29 @@ LEGACY_PREPARATION_SCHEMAS = frozenset(
 )
 IMPORT_SCHEMA = "pixal_animal_ue_import_batch_v2"
 IMPORT_JOB_TYPE = "user_approved_generated_animal"
+TEXTURE_TRANSCODE_SCHEMA = "glb_embedded_webp_to_png_transcode_v1"
+TEXTURE_TRANSCODE_PURPOSE = "UE_5.5_interchange_compatibility"
+TEXTURE_TRANSCODE_FIELDS = frozenset(
+    {
+        "schema",
+        "purpose",
+        "geometry_skin_animation_byte_graph_changed",
+        "input",
+        "output",
+        "images",
+    }
+)
+TEXTURE_TRANSCODE_IMAGE_FIELDS = frozenset(
+    {
+        "image_index",
+        "pixel_size",
+        "rgba_sha256",
+        "source_webp_sha256",
+        "source_size_bytes",
+        "png_sha256",
+        "png_size_bytes",
+    }
+)
 DECISION_SCHEMA = "avengine_controlled_animal_animation_decision_v1"
 DECISION_FREEZE_RECEIPT_SCHEMA = (
     "avengine_target_native_generated_animal_animation_decision_freeze_receipt_v2"
@@ -231,6 +257,9 @@ REGISTRY_FIELDS = frozenset(
         "registry_sha256",
     }
 )
+DERIVED_REGISTRY_FIELDS = REGISTRY_FIELDS | frozenset(
+    {"derived_static_decisions"}
+)
 REGISTRY_SOURCE_INDEX_FIELDS = frozenset(
     {
         "asset_id",
@@ -254,6 +283,9 @@ REGISTRY_AUTOMATIC_CHECKS = {
     "all_rights_blockers_preserved": True,
     "overall": "passed",
 }
+DERIVED_REGISTRY_AUTOMATIC_CHECKS = (
+    source_registry.DERIVED_REGISTRY_AUTOMATIC_CHECKS
+)
 PIXAL_BATCH_AUTOMATIC_CHECKS = {
     "all_inputs_reauthenticated": True,
     "all_model_revisions_pinned": True,
@@ -613,10 +645,26 @@ def load_source_registry_anchor(
             "source asset registry does not match externally expected SHA-256"
         )
     registry = _load_strict_json(registry_path, "source asset registry")
+    derived_registry = (
+        isinstance(registry, dict)
+        and registry.get("schema") == source_registry.DERIVED_REGISTRY_SCHEMA
+    )
+    expected_registry_fields = (
+        DERIVED_REGISTRY_FIELDS if derived_registry else REGISTRY_FIELDS
+    )
+    expected_registry_checks = (
+        DERIVED_REGISTRY_AUTOMATIC_CHECKS
+        if derived_registry
+        else REGISTRY_AUTOMATIC_CHECKS
+    )
     if (
         not isinstance(registry, dict)
-        or set(registry) != REGISTRY_FIELDS
-        or registry.get("schema") != source_registry.REGISTRY_SCHEMA
+        or set(registry) != expected_registry_fields
+        or registry.get("schema")
+        not in {
+            source_registry.REGISTRY_SCHEMA,
+            source_registry.DERIVED_REGISTRY_SCHEMA,
+        }
         or registry.get("state_classification") != "research_candidate"
         or registry.get("formal_dataset_registration_authorized") is not False
         or registry.get("registry_sha256")
@@ -625,7 +673,7 @@ def load_source_registry_anchor(
         raise contracts.ContractError("source asset registry contract/hash is invalid")
     _require_exact_automatic_checks(
         registry.get("automatic_checks"),
-        REGISTRY_AUTOMATIC_CHECKS,
+        expected_registry_checks,
         "source asset registry",
     )
 
@@ -813,7 +861,73 @@ def load_source_registry_anchor(
         raise contracts.ContractError(
             "source registry static decision batch identity changed"
         )
-    approved_ids = source_registry.approved_attempt_ids(decisions, attempts)
+    authority_decisions = decisions
+    if derived_registry:
+        if set(decisions) != set(attempts) or any(
+            decision.get("payload", {}).get("decision") != "rejected"
+            for decision in decisions.values()
+        ):
+            raise contracts.ContractError(
+                "derived source registry must preserve complete raw rejections"
+            )
+        derived_indexes = registry.get("derived_static_decisions")
+        if not isinstance(derived_indexes, list) or not derived_indexes:
+            raise contracts.ContractError(
+                "derived source registry decisions are missing"
+            )
+        authority_decisions = {}
+        for index in derived_indexes:
+            if not isinstance(index, Mapping) or set(index) != {
+                "path",
+                "sha256",
+                "decision_sha256",
+            }:
+                raise contracts.ContractError(
+                    "derived source registry decision index is invalid"
+                )
+            path_value = index.get("path")
+            if (
+                not isinstance(path_value, str)
+                or not Path(path_value).is_absolute()
+            ):
+                raise contracts.ContractError(
+                    "derived source registry decision path is invalid"
+                )
+            _require_sha256(
+                index.get("sha256"),
+                "derived static decision file sha256",
+            )
+            _require_sha256(
+                index.get("decision_sha256"),
+                "derived static decision internal sha256",
+            )
+            decision_path = _direct_file(
+                Path(path_value),
+                "derived static decision",
+            )
+            if _sha256_file(decision_path) != index["sha256"]:
+                raise contracts.ContractError("derived static decision changed")
+            payload = source_registry.derived_static_decisions.validate_decision(
+                _load_strict_json(decision_path, "derived static decision")
+            )
+            instance_id = payload.get("instance_id")
+            if (
+                payload.get("decision")
+                != source_registry.derived_static_decisions.APPROVED
+                or payload.get("decision_sha256") != index["decision_sha256"]
+                or instance_id in authority_decisions
+                or instance_id not in attempts
+            ):
+                raise contracts.ContractError(
+                    "derived static decision authority is invalid"
+                )
+            authority_decisions[instance_id] = {
+                "path": decision_path,
+                "payload": payload,
+            }
+        approved_ids = set(authority_decisions)
+    else:
+        approved_ids = source_registry.approved_attempt_ids(decisions, attempts)
 
     entries = registry.get("source_assets")
     if (
@@ -868,7 +982,7 @@ def load_source_registry_anchor(
             "sampled_attributes": payload["sampled_attributes"],
             "state_classification": payload["state_classification"],
         }
-        decision = decisions.get(asset_id)
+        decision = authority_decisions.get(asset_id)
         if (
             any(
                 contracts.canonical_json(entry.get(name))
@@ -921,6 +1035,7 @@ def load_source_asset(
     *,
     request: Mapping[str, Any],
     profile: Mapping[str, Any],
+    require_derived_authority: bool = False,
 ) -> tuple[Path, dict[str, Any], dict[str, Path]]:
     path = _direct_file(path, "source_asset_v2")
     payload = contracts.validate_source_asset_v2(
@@ -946,10 +1061,103 @@ def load_source_asset(
         authenticated[f"license:{index}"] = _resolve_root_artifact(
             license_record, artifact_roots, f"source asset license {index}"
         )
+    derived_required = {
+        "artifact:pixal_raw_glb",
+        "artifact:raw_static_decision",
+        "artifact:derived_repaired_glb",
+        "artifact:derived_geometry_closure",
+        "artifact:derived_repair_manifest",
+        "artifact:derived_geometry_audit",
+        "artifact:derived_static_review_manifest",
+        "artifact:derived_static_decision",
+    }
+    present_derived_roles = derived_required.intersection(authenticated)
+    derived_specific_roles = {
+        role for role in derived_required if role.startswith("artifact:derived_")
+    }
+    if require_derived_authority and present_derived_roles != derived_required:
+        raise contracts.ContractError(
+            "derived source registry selected an asset without complete repair authority"
+        )
+    if derived_specific_roles.intersection(authenticated):
+        if not derived_required.issubset(authenticated):
+            raise contracts.ContractError(
+                "derived source asset authority artifacts are incomplete"
+            )
+        decision = (
+            source_registry.derived_static_decisions.validate_decision(
+                _load_strict_json(
+                    authenticated["artifact:derived_static_decision"],
+                    "derived static decision",
+                )
+            )
+        )
+        review_path = authenticated["artifact:derived_static_review_manifest"]
+        review = source_registry.derived_review_contract.validate_review(
+            _load_strict_json(review_path, "derived static review")
+        )
+        bindings = {
+            "pixal_raw_glb": (
+                review["source_authorities"]["raw_pixal_glb"],
+                authenticated["artifact:pixal_raw_glb"],
+            ),
+            "raw_static_decision": (
+                review["source_authorities"]["raw_static_decision"]["file"],
+                authenticated["artifact:raw_static_decision"],
+            ),
+            "derived_repaired_glb": (
+                review["derived_geometry"]["repaired_glb"],
+                authenticated["artifact:derived_repaired_glb"],
+            ),
+            "derived_geometry_closure": (
+                review["derived_geometry"]["geometry_closure"],
+                authenticated["artifact:derived_geometry_closure"],
+            ),
+            "derived_repair_manifest": (
+                review["derived_geometry"]["repair_manifest"],
+                authenticated["artifact:derived_repair_manifest"],
+            ),
+            "derived_geometry_audit": (
+                review["derived_geometry"]["independent_geometry_audit"],
+                authenticated["artifact:derived_geometry_audit"],
+            ),
+        }
+        for label, (descriptor, expected_path) in bindings.items():
+            observed_path = _direct_file(
+                Path(descriptor["path"]),
+                f"derived source {label}",
+            )
+            if (
+                observed_path != expected_path
+                or observed_path.stat().st_size != descriptor["size_bytes"]
+                or _sha256_file(observed_path) != descriptor["sha256"]
+            ):
+                raise contracts.ContractError(
+                    f"derived source {label} authority changed"
+                )
+        if (
+            decision["decision"]
+            != source_registry.derived_static_decisions.APPROVED
+            or decision["instance_id"] != payload["asset_id"]
+            or decision["review_binding"]["review_file"]["sha256"]
+            != _sha256_file(review_path)
+            or decision["review_binding"]["internal_review_sha256"]
+            != review["review_sha256"]
+            or review["instance_identity"]["instance_id"] != payload["asset_id"]
+            or review["source_authorities"]["raw_static_decision"]["decision"]
+            != "rejected"
+        ):
+            raise contracts.ContractError(
+                "derived source decision/review identity changed"
+            )
     return path, payload, authenticated
 
 
-def _read_glb_document(path: Path) -> dict[str, Any]:
+def _read_glb_document(
+    path: Path,
+    *,
+    include_binary: bool = False,
+) -> dict[str, Any] | tuple[dict[str, Any], bytes]:
     payload = path.read_bytes()
     if len(payload) < 20:
         raise contracts.ContractError("reviewed GLB header is truncated")
@@ -959,6 +1167,7 @@ def _read_glb_document(path: Path) -> dict[str, Any]:
     offset = 12
     raw_document: bytes | None = None
     binary_chunks: list[bytes] = []
+    chunk_types: list[int] = []
     while offset < len(payload):
         if offset + 8 > len(payload):
             raise contracts.ContractError("reviewed GLB chunk header is truncated")
@@ -968,6 +1177,7 @@ def _read_glb_document(path: Path) -> dict[str, Any]:
         if chunk_length <= 0 or chunk_end > len(payload):
             raise contracts.ContractError("reviewed GLB chunk is truncated")
         chunk = payload[offset:chunk_end]
+        chunk_types.append(chunk_type)
         if chunk_type == 0x4E4F534A:
             if raw_document is not None:
                 raise contracts.ContractError("reviewed GLB has multiple JSON chunks")
@@ -975,8 +1185,14 @@ def _read_glb_document(path: Path) -> dict[str, Any]:
         elif chunk_type == 0x004E4942:
             binary_chunks.append(chunk)
         offset = chunk_end
-    if offset != len(payload) or raw_document is None:
-        raise contracts.ContractError("reviewed GLB JSON chunk is missing")
+    if (
+        offset != len(payload)
+        or raw_document is None
+        or chunk_types != [0x4E4F534A, 0x004E4942]
+    ):
+        raise contracts.ContractError(
+            "reviewed GLB lacks a complete embedded skinned-mesh payload"
+        )
     try:
         document = _strict_json_loads(
             raw_document.rstrip(b" \t\r\n\x00").decode("utf-8"),
@@ -1003,6 +1219,8 @@ def _read_glb_document(path: Path) -> dict[str, Any]:
         or buffers[0]["byteLength"] <= 0
         or len(binary_chunks) != 1
         or buffers[0]["byteLength"] > len(binary_chunks[0])
+        or len(binary_chunks[0]) - buffers[0]["byteLength"] > 3
+        or any(binary_chunks[0][buffers[0]["byteLength"] :])
         or not isinstance(buffer_views, list)
         or not buffer_views
         or not isinstance(accessors, list)
@@ -1155,7 +1373,262 @@ def _read_glb_document(path: Path) -> dict[str, Any]:
                 raise contracts.ContractError(
                     "reviewed GLB animation channel target is invalid"
                 )
+    if include_binary:
+        return document, binary_chunks[0][: buffers[0]["byteLength"]]
     return document
+
+
+def _buffer_view_bytes(
+    *,
+    document: Mapping[str, Any],
+    binary: bytes,
+    view_index: Any,
+    label: str,
+) -> bytes:
+    buffer_views = document.get("bufferViews")
+    if (
+        not isinstance(buffer_views, list)
+        or isinstance(view_index, bool)
+        or not isinstance(view_index, int)
+        or not 0 <= view_index < len(buffer_views)
+        or not isinstance(buffer_views[view_index], Mapping)
+    ):
+        raise contracts.ContractError(f"{label} bufferView is invalid")
+    view = buffer_views[view_index]
+    buffer_index = view.get("buffer", 0)
+    byte_offset = view.get("byteOffset", 0)
+    byte_length = view.get("byteLength")
+    if (
+        buffer_index != 0
+        or isinstance(byte_offset, bool)
+        or not isinstance(byte_offset, int)
+        or byte_offset < 0
+        or isinstance(byte_length, bool)
+        or not isinstance(byte_length, int)
+        or byte_length <= 0
+        or byte_offset + byte_length > len(binary)
+    ):
+        raise contracts.ContractError(f"{label} bufferView range is invalid")
+    return binary[byte_offset : byte_offset + byte_length]
+
+
+def _decoded_rgba(
+    payload: bytes,
+    *,
+    expected_format: str,
+    label: str,
+) -> tuple[list[int], bytes]:
+    try:
+        with Image.open(io.BytesIO(payload)) as opened:
+            if opened.format != expected_format:
+                raise contracts.ContractError(
+                    f"{label} payload is not {expected_format}"
+                )
+            opened.load()
+            rgba = opened.convert("RGBA")
+            return list(rgba.size), rgba.tobytes()
+    except (UnidentifiedImageError, OSError, ValueError) as error:
+        raise contracts.ContractError(f"{label} payload cannot be decoded") from error
+
+
+def _without_webp_extension(
+    document: Mapping[str, Any],
+    key: str,
+) -> list[str] | None:
+    values = document.get(key)
+    if values is None:
+        return None
+    if (
+        not isinstance(values, list)
+        or any(not isinstance(value, str) for value in values)
+        or len(values) != len(set(values))
+    ):
+        raise contracts.ContractError(f"reviewed GLB {key} is invalid")
+    filtered = [value for value in values if value != "EXT_texture_webp"]
+    return filtered or None
+
+
+def _authenticate_texture_transcode_graph(
+    *,
+    reviewed_document: dict[str, Any],
+    reviewed_binary: bytes,
+    compatible_document: dict[str, Any],
+    compatible_binary: bytes,
+    image_evidence: Sequence[Mapping[str, Any]],
+) -> None:
+    reviewed_images = reviewed_document.get("images")
+    compatible_images = compatible_document.get("images")
+    reviewed_views = reviewed_document.get("bufferViews")
+    compatible_views = compatible_document.get("bufferViews")
+    reviewed_textures = reviewed_document.get("textures")
+    compatible_textures = compatible_document.get("textures")
+    if (
+        not isinstance(reviewed_images, list)
+        or not reviewed_images
+        or not all(isinstance(image, Mapping) for image in reviewed_images)
+        or not isinstance(compatible_images, list)
+        or len(compatible_images) != len(reviewed_images)
+        or not all(isinstance(image, Mapping) for image in compatible_images)
+        or not isinstance(reviewed_views, list)
+        or not reviewed_views
+        or not all(isinstance(view, Mapping) for view in reviewed_views)
+        or not isinstance(compatible_views, list)
+        or not all(isinstance(view, Mapping) for view in compatible_views)
+        or not isinstance(reviewed_textures, list)
+        or not all(isinstance(texture, Mapping) for texture in reviewed_textures)
+        or not isinstance(compatible_textures, list)
+        or not all(
+            isinstance(texture, Mapping) for texture in compatible_textures
+        )
+    ):
+        raise contracts.ContractError("texture transcode GLB graph is incomplete")
+
+    webp_indices = {
+        index
+        for index, image in enumerate(reviewed_images)
+        if image.get("mimeType") == "image/webp"
+    }
+    evidence_by_index = {
+        image["image_index"]: image
+        for image in image_evidence
+    }
+    if (
+        not webp_indices
+        or set(evidence_by_index) != webp_indices
+        or [image["image_index"] for image in image_evidence]
+        != sorted(webp_indices)
+        or len(compatible_views) != len(reviewed_views) + len(webp_indices)
+        or compatible_views[: len(reviewed_views)] != reviewed_views
+        or len(compatible_textures) != len(reviewed_textures)
+        or compatible_binary[: len(reviewed_binary)] != reviewed_binary
+    ):
+        raise contracts.ContractError(
+            "texture transcode changed the original GLB byte graph"
+        )
+
+    expected_document = copy.deepcopy(reviewed_document)
+    expected_document["bufferViews"] = copy.deepcopy(compatible_views)
+    expected_document["buffers"][0]["byteLength"] = len(compatible_binary)
+    expected_images = expected_document["images"]
+    cursor = len(reviewed_binary)
+    for ordinal, image_index in enumerate(sorted(webp_indices)):
+        evidence = evidence_by_index[image_index]
+        expected_offset = (cursor + 3) & ~3
+        output_view_index = len(reviewed_views) + ordinal
+        output_view = compatible_views[output_view_index]
+        if (
+            set(output_view) != {"buffer", "byteOffset", "byteLength"}
+            or output_view.get("buffer") != 0
+            or output_view.get("byteOffset") != expected_offset
+            or output_view.get("byteLength") != evidence["png_size_bytes"]
+            or any(compatible_binary[cursor:expected_offset])
+        ):
+            raise contracts.ContractError(
+                "texture transcode appended PNG bufferView is invalid"
+            )
+        source_image = reviewed_images[image_index]
+        source_bytes = _buffer_view_bytes(
+            document=reviewed_document,
+            binary=reviewed_binary,
+            view_index=source_image.get("bufferView"),
+            label=f"reviewed WebP image {image_index}",
+        )
+        png_bytes = _buffer_view_bytes(
+            document=compatible_document,
+            binary=compatible_binary,
+            view_index=output_view_index,
+            label=f"compatible PNG image {image_index}",
+        )
+        source_size, source_rgba = _decoded_rgba(
+            source_bytes,
+            expected_format="WEBP",
+            label=f"reviewed WebP image {image_index}",
+        )
+        output_size, output_rgba = _decoded_rgba(
+            png_bytes,
+            expected_format="PNG",
+            label=f"compatible PNG image {image_index}",
+        )
+        rgba_sha256 = hashlib.sha256(source_rgba).hexdigest()
+        if (
+            len(source_bytes) != evidence["source_size_bytes"]
+            or hashlib.sha256(source_bytes).hexdigest()
+            != evidence["source_webp_sha256"]
+            or len(png_bytes) != evidence["png_size_bytes"]
+            or hashlib.sha256(png_bytes).hexdigest() != evidence["png_sha256"]
+            or source_size != evidence["pixel_size"]
+            or output_size != evidence["pixel_size"]
+            or output_rgba != source_rgba
+            or rgba_sha256 != evidence["rgba_sha256"]
+        ):
+            raise contracts.ContractError(
+                "texture transcode image bytes/pixels do not match the manifest"
+            )
+        expected_image = copy.deepcopy(source_image)
+        expected_image["bufferView"] = output_view_index
+        expected_image["mimeType"] = "image/png"
+        expected_images[image_index] = expected_image
+        cursor = expected_offset + len(png_bytes)
+
+    if cursor != len(compatible_binary):
+        raise contracts.ContractError(
+            "texture transcode output has unauthenticated appended bytes"
+        )
+    for index, image in enumerate(reviewed_images):
+        if index not in webp_indices and compatible_images[index] != image:
+            raise contracts.ContractError(
+                "texture transcode changed a non-WebP image"
+            )
+
+    expected_textures = expected_document["textures"]
+    for index, texture in enumerate(expected_textures):
+        extensions = texture.get("extensions")
+        webp = (
+            extensions.get("EXT_texture_webp")
+            if isinstance(extensions, Mapping)
+            else None
+        )
+        if webp is None:
+            continue
+        if (
+            not isinstance(webp, Mapping)
+            or set(webp) != {"source"}
+            or isinstance(webp.get("source"), bool)
+            or webp.get("source") not in webp_indices
+        ):
+            raise contracts.ContractError(
+                "reviewed GLB EXT_texture_webp routing is invalid"
+            )
+        texture["source"] = webp["source"]
+        del extensions["EXT_texture_webp"]
+        if not extensions:
+            texture.pop("extensions", None)
+        expected_textures[index] = texture
+
+    for key in ("extensionsUsed", "extensionsRequired"):
+        filtered = _without_webp_extension(reviewed_document, key)
+        if filtered is None:
+            expected_document.pop(key, None)
+        else:
+            expected_document[key] = filtered
+    if compatible_document != expected_document:
+        raise contracts.ContractError(
+            "texture transcode changed GLB structure or PBR routing"
+        )
+    if (
+        "EXT_texture_webp" in compatible_document.get("extensionsUsed", [])
+        or "EXT_texture_webp"
+        in compatible_document.get("extensionsRequired", [])
+        or any(
+            isinstance(texture, Mapping)
+            and isinstance(texture.get("extensions"), Mapping)
+            and "EXT_texture_webp" in texture["extensions"]
+            for texture in compatible_textures
+        )
+    ):
+        raise contracts.ContractError(
+            "UE-compatible GLB retains EXT_texture_webp"
+        )
 
 
 def _load_finite_json(path: Path, label: str) -> dict[str, Any]:
@@ -1163,6 +1636,136 @@ def _load_finite_json(path: Path, label: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise contracts.ContractError(f"{label} must be a JSON object")
     return payload
+
+
+def _authenticate_texture_transcode(
+    *,
+    reviewed_glb: Path,
+    ue_compatible_glb_path: Path | None,
+    texture_transcode_manifest_path: Path | None,
+) -> dict[str, Any] | None:
+    if (ue_compatible_glb_path is None) != (
+        texture_transcode_manifest_path is None
+    ):
+        raise contracts.ContractError(
+            "UE-compatible GLB and texture transcode manifest must be supplied together"
+        )
+    if ue_compatible_glb_path is None:
+        return None
+
+    reviewed_glb = _direct_file(reviewed_glb, "owner-reviewed animated GLB")
+    ue_compatible_glb = _direct_file(
+        ue_compatible_glb_path,
+        "UE-compatible animated GLB",
+    )
+    texture_transcode_manifest = _direct_file(
+        texture_transcode_manifest_path,
+        "texture transcode manifest",
+    )
+    payload = _load_finite_json(
+        texture_transcode_manifest,
+        "texture transcode manifest",
+    )
+    images = payload.get("images")
+    if (
+        set(payload) != TEXTURE_TRANSCODE_FIELDS
+        or payload.get("schema") != TEXTURE_TRANSCODE_SCHEMA
+        or payload.get("purpose") != TEXTURE_TRANSCODE_PURPOSE
+        or payload.get("geometry_skin_animation_byte_graph_changed") is not False
+        or not isinstance(images, list)
+        or not images
+    ):
+        raise contracts.ContractError("texture transcode manifest contract is invalid")
+    input_glb = _verify_descriptor(
+        payload.get("input"),
+        "texture transcode input",
+        expected_path=reviewed_glb,
+    )
+    output_glb = _verify_descriptor(
+        payload.get("output"),
+        "texture transcode output",
+        expected_path=ue_compatible_glb,
+    )
+    if (
+        input_glb == output_glb
+        or payload["input"]["sha256"] == payload["output"]["sha256"]
+    ):
+        raise contracts.ContractError(
+            "texture transcode output must be a distinct immutable derivative"
+        )
+
+    seen_indices: set[int] = set()
+    for image in images:
+        if (
+            not isinstance(image, Mapping)
+            or set(image) != TEXTURE_TRANSCODE_IMAGE_FIELDS
+        ):
+            raise contracts.ContractError(
+                "texture transcode image evidence fields are invalid"
+            )
+        index = image.get("image_index")
+        pixel_size = image.get("pixel_size")
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or index < 0
+            or index in seen_indices
+            or not isinstance(pixel_size, list)
+            or len(pixel_size) != 2
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value <= 0
+                for value in pixel_size
+            )
+            or isinstance(image.get("source_size_bytes"), bool)
+            or not isinstance(image.get("source_size_bytes"), int)
+            or image["source_size_bytes"] <= 0
+            or isinstance(image.get("png_size_bytes"), bool)
+            or not isinstance(image.get("png_size_bytes"), int)
+            or image["png_size_bytes"] <= 0
+        ):
+            raise contracts.ContractError(
+                "texture transcode image evidence values are invalid"
+            )
+        for field in ("rgba_sha256", "source_webp_sha256", "png_sha256"):
+            _require_sha256(image.get(field), f"texture transcode image {field}")
+        seen_indices.add(index)
+
+    reviewed_document, reviewed_binary = _read_glb_document(
+        input_glb,
+        include_binary=True,
+    )
+    compatible_document, compatible_binary = _read_glb_document(
+        output_glb,
+        include_binary=True,
+    )
+    _authenticate_texture_transcode_graph(
+        reviewed_document=reviewed_document,
+        reviewed_binary=reviewed_binary,
+        compatible_document=compatible_document,
+        compatible_binary=compatible_binary,
+        image_evidence=images,
+    )
+    return {
+        "ue_compatible_glb": ue_compatible_glb,
+        "texture_transcode_manifest": texture_transcode_manifest,
+        "manifest": payload,
+    }
+
+
+def _texture_transcode_job_fields(
+    texture_transcode: Mapping[str, Any],
+) -> dict[str, Any]:
+    manifest_path = _direct_file(
+        Path(texture_transcode["texture_transcode_manifest"]),
+        "texture transcode manifest",
+    )
+    return {
+        "texture_transcode_manifest": str(manifest_path),
+        "texture_transcode_manifest_sha256": _sha256_file(manifest_path),
+        "texture_transcode_manifest_size_bytes": manifest_path.stat().st_size,
+    }
 
 
 def _runner_call(label: str, function, *args, **kwargs):
@@ -1375,6 +1978,17 @@ def _validate_target_rig_lineage(
         observed["lineage"]["raw_pixal_glb"],
         raw_pixal,
         "TokenRig closure raw Pixal source",
+    )
+    tokenrig_input = source_artifacts.get(
+        "artifact:derived_repaired_glb",
+        raw_pixal,
+    )
+    _runner_call(
+        "TokenRig closure target geometry",
+        generated_review.require_file_binding,
+        observed["lineage"]["tokenrig_input"],
+        tokenrig_input,
+        "TokenRig closure target geometry",
     )
     workspace, _workspace_root = _source_workspace(source_asset, source_artifacts)
     if observed.get("asset_id") != workspace:
@@ -2814,6 +3428,10 @@ def _authenticate_import_authority(
         roots,
         request=source_request,
         profile=source_profile,
+        require_derived_authority=(
+            source_registry_payload.get("schema")
+            == source_registry.DERIVED_REGISTRY_SCHEMA
+        ),
     )
     (
         review_path,
@@ -2911,6 +3529,8 @@ def prepare_import(
     expected_animation_decision_freeze_receipt_sha256: str,
     output_root: Path,
     artifact_roots: Mapping[str, Path] | None = None,
+    ue_compatible_glb_path: Path | None = None,
+    texture_transcode_manifest_path: Path | None = None,
 ) -> Path:
     roots = {
         name: _uses_only_exact_tmp_bridge(
@@ -2944,6 +3564,16 @@ def prepare_import(
     review_path = authority["review_path"]
     review = authority["review"]
     animated_glb = authority["animated_glb"]
+    texture_transcode = _authenticate_texture_transcode(
+        reviewed_glb=animated_glb,
+        ue_compatible_glb_path=ue_compatible_glb_path,
+        texture_transcode_manifest_path=texture_transcode_manifest_path,
+    )
+    import_glb = (
+        texture_transcode["ue_compatible_glb"]
+        if texture_transcode is not None
+        else animated_glb
+    )
     review_artifacts = authority["review_artifacts"]
     decision_path = authority["decision_path"]
     decision = authority["decision"]
@@ -2990,6 +3620,32 @@ def prepare_import(
         output_parent_guard = _directory_guard(output_parent, "output parent")
         asset_id = source_asset["asset_id"]
         tag = f"pixal_{asset_id}"
+        import_job = {
+            "job_type": IMPORT_JOB_TYPE,
+            "asset_id": asset_id,
+            "legacy_tag": asset_id,
+            "tag": tag,
+            "profile_schema_id": source_asset["profile_schema_id"],
+            "sampled_attributes": copy.deepcopy(
+                source_asset["sampled_attributes"]
+            ),
+            "expected_actions": ["Idle", "Walking"],
+            "rigged_glb": str(import_glb),
+            "rigged_glb_sha256": _sha256_file(import_glb),
+            "source_registry_sha256": _sha256_file(source_registry_path),
+            "source_asset_sha256": _sha256_file(source_path),
+            "request_sha256": source_asset["request_sha256"],
+            "animation_decision_file_sha256": _sha256_file(decision_path),
+            "animation_decision_sha256": decision["decision_sha256"],
+        }
+        if texture_transcode is not None:
+            import_job.update(
+                {
+                    "upstream_rigged_glb": str(animated_glb),
+                    "upstream_rigged_glb_sha256": _sha256_file(animated_glb),
+                    **_texture_transcode_job_fields(texture_transcode),
+                }
+            )
         import_payload = {
             "schema": IMPORT_SCHEMA,
             "status": "ready_for_new_ue_import",
@@ -2997,26 +3653,7 @@ def prepare_import(
             "formal_dataset_registration_authorized": False,
             "job_type": IMPORT_JOB_TYPE,
             "job_count": 1,
-            "jobs": [
-                {
-                    "job_type": IMPORT_JOB_TYPE,
-                    "asset_id": asset_id,
-                    "legacy_tag": asset_id,
-                    "tag": tag,
-                    "profile_schema_id": source_asset["profile_schema_id"],
-                    "sampled_attributes": copy.deepcopy(
-                        source_asset["sampled_attributes"]
-                    ),
-                    "expected_actions": ["Idle", "Walking"],
-                    "rigged_glb": str(animated_glb),
-                    "rigged_glb_sha256": _sha256_file(animated_glb),
-                    "source_registry_sha256": _sha256_file(source_registry_path),
-                    "source_asset_sha256": _sha256_file(source_path),
-                    "request_sha256": source_asset["request_sha256"],
-                    "animation_decision_file_sha256": _sha256_file(decision_path),
-                    "animation_decision_sha256": decision["decision_sha256"],
-                }
-            ],
+            "jobs": [import_job],
             "non_destructive_policy": (
                 f"new unique gate_{tag} content directories; never rewrite or "
                 "reuse any historical generated-animal UE job/content directory"
@@ -3122,6 +3759,15 @@ def prepare_import(
             raise contracts.ContractError(
                 "UE import preparation authority graph changed during generation"
             )
+        final_texture_transcode = _authenticate_texture_transcode(
+            reviewed_glb=final_authority["animated_glb"],
+            ue_compatible_glb_path=ue_compatible_glb_path,
+            texture_transcode_manifest_path=texture_transcode_manifest_path,
+        )
+        if final_texture_transcode != texture_transcode:
+            raise contracts.ContractError(
+                "texture transcode authority graph changed during generation"
+            )
         if (
             manifest["presentation_evidence"]
             != final_authority["presentation_evidence"]
@@ -3216,6 +3862,22 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument(
+        "--ue-compatible-glb",
+        type=Path,
+        help=(
+            "Existing PNG-textured GLB derivative of the exact owner-reviewed "
+            "animated GLB. Must be paired with --texture-transcode-manifest."
+        ),
+    )
+    parser.add_argument(
+        "--texture-transcode-manifest",
+        type=Path,
+        help=(
+            "Existing transcode_glb_webp_to_png.py manifest. Must be paired "
+            "with --ue-compatible-glb."
+        ),
+    )
+    parser.add_argument(
         "--artifact-root",
         action="append",
         default=[],
@@ -3245,6 +3907,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             output_root=args.output_root,
             artifact_roots=parse_artifact_roots(args.artifact_root),
+            ue_compatible_glb_path=args.ue_compatible_glb,
+            texture_transcode_manifest_path=args.texture_transcode_manifest,
         )
         payload = _load_strict_json(manifest, "UE import preparation output")
     except (contracts.ContractError, OSError) as error:

@@ -16,6 +16,7 @@ Environment:
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -99,6 +100,32 @@ JOB_FIELDS = {
     "request_sha256",
     "animation_decision_file_sha256",
     "animation_decision_sha256",
+}
+TRANSCODED_JOB_FIELDS = JOB_FIELDS | {
+    "upstream_rigged_glb",
+    "upstream_rigged_glb_sha256",
+    "texture_transcode_manifest",
+    "texture_transcode_manifest_sha256",
+    "texture_transcode_manifest_size_bytes",
+}
+TEXTURE_TRANSCODE_SCHEMA = "glb_embedded_webp_to_png_transcode_v1"
+TEXTURE_TRANSCODE_PURPOSE = "UE_5.5_interchange_compatibility"
+TEXTURE_TRANSCODE_FIELDS = {
+    "schema",
+    "purpose",
+    "geometry_skin_animation_byte_graph_changed",
+    "input",
+    "output",
+    "images",
+}
+TEXTURE_TRANSCODE_IMAGE_FIELDS = {
+    "image_index",
+    "pixel_size",
+    "rgba_sha256",
+    "source_webp_sha256",
+    "source_size_bytes",
+    "png_sha256",
+    "png_size_bytes",
 }
 PREPARATION_FIELDS = {
     "schema",
@@ -341,27 +368,67 @@ def _validate_result_target(value: str) -> Path:
     return path
 
 
-def _read_glb_document(path: Path) -> dict:
+def _read_glb_document(
+    path: Path,
+    *,
+    include_binary: bool = False,
+) -> dict | tuple[dict, bytes]:
     raw = path.read_bytes()
     if len(raw) < 20 or raw[:4] != b"glTF":
         raise RuntimeError(f"source is not a GLB 2.0 file: {path}")
     version, declared_size = struct.unpack_from("<II", raw, 4)
-    json_size, json_type = struct.unpack_from("<I4s", raw, 12)
-    if (
-        version != 2
-        or declared_size != len(raw)
-        or json_type != b"JSON"
-        or 20 + json_size > len(raw)
-    ):
+    if version != 2 or declared_size != len(raw):
         raise RuntimeError(f"invalid GLB header or JSON chunk: {path}")
+    offset = 12
+    chunks = []
+    while offset < len(raw):
+        if offset + 8 > len(raw):
+            raise RuntimeError(f"truncated GLB chunk header: {path}")
+        chunk_size, chunk_type = struct.unpack_from("<II", raw, offset)
+        offset += 8
+        chunk_end = offset + chunk_size
+        if chunk_size <= 0 or chunk_end > len(raw):
+            raise RuntimeError(f"truncated GLB chunk: {path}")
+        chunks.append((chunk_type, raw[offset:chunk_end]))
+        offset = chunk_end
+    if (
+        offset != len(raw)
+        or not chunks
+        or chunks[0][0] != 0x4E4F534A
+        or any(chunk_type not in {0x4E4F534A, 0x004E4942} for chunk_type, _ in chunks)
+        or sum(chunk_type == 0x4E4F534A for chunk_type, _ in chunks) != 1
+    ):
+        raise RuntimeError(f"invalid GLB chunk graph: {path}")
     try:
         document = contracts.strict_json_loads(
-            raw[20 : 20 + json_size].rstrip(b" \x00")
+            chunks[0][1].rstrip(b" \t\r\n\x00")
         )
     except contracts.StrictJSONError as error:
         raise RuntimeError(f"invalid GLB JSON document: {path}") from error
     if not isinstance(document, dict):
         raise RuntimeError(f"GLB JSON document is not an object: {path}")
+    if include_binary:
+        if (
+            len(chunks) != 2
+            or chunks[1][0] != 0x004E4942
+            or not isinstance(document.get("buffers"), list)
+            or len(document["buffers"]) != 1
+            or not isinstance(document["buffers"][0], dict)
+            or "uri" in document["buffers"][0]
+        ):
+            raise RuntimeError(f"GLB embedded BIN contract is invalid: {path}")
+        byte_length = document["buffers"][0].get("byteLength")
+        binary_chunk = chunks[1][1]
+        if (
+            isinstance(byte_length, bool)
+            or not isinstance(byte_length, int)
+            or byte_length <= 0
+            or byte_length > len(binary_chunk)
+            or len(binary_chunk) - byte_length > 3
+            or any(binary_chunk[byte_length:])
+        ):
+            raise RuntimeError(f"GLB embedded BIN length is invalid: {path}")
+        return document, binary_chunk[:byte_length]
     return document
 
 
@@ -384,21 +451,45 @@ def _validate_ue_compatible_glb(job: dict, source: Path) -> None:
             f"Walking actions: {source}"
         )
     required_value = document.get("extensionsRequired", [])
+    used_value = document.get("extensionsUsed", [])
     images = document.get("images", [])
+    textures = document.get("textures", [])
     if (
         not isinstance(required_value, list)
         or any(not isinstance(value, str) for value in required_value)
+        or len(required_value) != len(set(required_value))
+        or not isinstance(used_value, list)
+        or any(not isinstance(value, str) for value in used_value)
+        or len(used_value) != len(set(used_value))
         or not isinstance(images, list)
         or any(not isinstance(image, dict) for image in images)
+        or not isinstance(textures, list)
+        or any(not isinstance(texture, dict) for texture in textures)
+        or any(
+            "extensions" in texture
+            and not isinstance(texture["extensions"], dict)
+            for texture in textures
+        )
     ):
         raise RuntimeError(f"GLB extension/image contract is invalid: {source}")
     required = set(required_value)
+    used = set(used_value)
     webp_images = [
         index
         for index, image in enumerate(images)
         if image.get("mimeType") == "image/webp"
     ]
-    if "EXT_texture_webp" in required or webp_images:
+    texture_webp = any(
+        isinstance(texture.get("extensions"), dict)
+        and "EXT_texture_webp" in texture["extensions"]
+        for texture in textures
+    )
+    if (
+        "EXT_texture_webp" in required
+        or "EXT_texture_webp" in used
+        or texture_webp
+        or webp_images
+    ):
         raise RuntimeError(
             "UE 5.5 import source still requires embedded WebP; run "
             f"transcode_glb_webp_to_png.py first: {source}"
@@ -406,18 +497,7 @@ def _validate_ue_compatible_glb(job: dict, source: Path) -> None:
     manifest_value = job.get("texture_transcode_manifest")
     if manifest_value is None:
         return
-    manifest_path = _direct_absolute_file(
-        manifest_value,
-        "texture transcode manifest",
-    )
-    manifest = _load_json_file(manifest_path, "texture transcode manifest")
-    if (
-        manifest.get("schema") != "glb_embedded_webp_to_png_transcode_v1"
-        or manifest.get("geometry_skin_animation_byte_graph_changed") is not False
-        or Path(manifest.get("output", {}).get("path", "")).resolve() != source
-        or manifest.get("output", {}).get("sha256") != _sha256(source)
-    ):
-        raise RuntimeError(f"texture transcode evidence does not authenticate {source}")
+    _load_texture_transcode_manifest(job, source)
 
 
 def _validate_file_descriptor(
@@ -447,6 +527,322 @@ def _validate_file_descriptor(
     ):
         raise RuntimeError(f"{label} descriptor does not authenticate its file")
     return {"path": str(path), "sha256": sha256, "size_bytes": size_bytes}
+
+
+def _load_texture_transcode_manifest(
+    job: dict[str, Any],
+    source: Path,
+) -> dict[str, Any]:
+    manifest_path = _direct_absolute_file(
+        job.get("texture_transcode_manifest"),
+        "texture transcode manifest",
+    )
+    manifest_descriptor = _validate_file_descriptor(
+        {
+            "path": str(manifest_path),
+            "sha256": job.get("texture_transcode_manifest_sha256"),
+            "size_bytes": job.get("texture_transcode_manifest_size_bytes"),
+        },
+        "texture transcode manifest",
+        expected_path=manifest_path,
+    )
+    manifest = _load_json_file(
+        manifest_path,
+        "texture transcode manifest",
+        expected_sha256=manifest_descriptor["sha256"],
+    )
+    if (
+        manifest_path.stat().st_size != manifest_descriptor["size_bytes"]
+        or _sha256(manifest_path) != manifest_descriptor["sha256"]
+    ):
+        raise RuntimeError("texture transcode manifest changed during validation")
+    images = manifest.get("images")
+    if (
+        set(manifest) != TEXTURE_TRANSCODE_FIELDS
+        or manifest.get("schema") != TEXTURE_TRANSCODE_SCHEMA
+        or manifest.get("purpose") != TEXTURE_TRANSCODE_PURPOSE
+        or manifest.get("geometry_skin_animation_byte_graph_changed") is not False
+        or not isinstance(images, list)
+        or not images
+    ):
+        raise RuntimeError("texture transcode manifest contract is invalid")
+    _validate_file_descriptor(
+        manifest.get("output"),
+        "texture transcode output",
+        expected_path=source,
+    )
+    seen_indices = set()
+    for image in images:
+        if not isinstance(image, dict) or set(image) != TEXTURE_TRANSCODE_IMAGE_FIELDS:
+            raise RuntimeError("texture transcode image evidence fields are invalid")
+        index = image.get("image_index")
+        pixel_size = image.get("pixel_size")
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or index < 0
+            or index in seen_indices
+            or not isinstance(pixel_size, list)
+            or len(pixel_size) != 2
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value <= 0
+                for value in pixel_size
+            )
+            or isinstance(image.get("source_size_bytes"), bool)
+            or not isinstance(image.get("source_size_bytes"), int)
+            or image["source_size_bytes"] <= 0
+            or isinstance(image.get("png_size_bytes"), bool)
+            or not isinstance(image.get("png_size_bytes"), int)
+            or image["png_size_bytes"] <= 0
+        ):
+            raise RuntimeError("texture transcode image evidence values are invalid")
+        for field in ("rgba_sha256", "source_webp_sha256", "png_sha256"):
+            _require_sha256(image.get(field), f"texture transcode image {field}")
+        seen_indices.add(index)
+    return manifest
+
+
+def _buffer_view_bytes(
+    *,
+    document: Mapping[str, Any],
+    binary: bytes,
+    view_index: Any,
+    label: str,
+) -> bytes:
+    buffer_views = document.get("bufferViews")
+    if (
+        not isinstance(buffer_views, list)
+        or isinstance(view_index, bool)
+        or not isinstance(view_index, int)
+        or not 0 <= view_index < len(buffer_views)
+        or not isinstance(buffer_views[view_index], dict)
+    ):
+        raise RuntimeError(f"{label} bufferView is invalid")
+    view = buffer_views[view_index]
+    buffer_index = view.get("buffer", 0)
+    byte_offset = view.get("byteOffset", 0)
+    byte_length = view.get("byteLength")
+    if (
+        buffer_index != 0
+        or isinstance(byte_offset, bool)
+        or not isinstance(byte_offset, int)
+        or byte_offset < 0
+        or isinstance(byte_length, bool)
+        or not isinstance(byte_length, int)
+        or byte_length <= 0
+        or byte_offset + byte_length > len(binary)
+    ):
+        raise RuntimeError(f"{label} bufferView range is invalid")
+    return binary[byte_offset : byte_offset + byte_length]
+
+
+def _without_webp_extension(
+    document: Mapping[str, Any],
+    key: str,
+) -> list[str] | None:
+    values = document.get(key)
+    if values is None:
+        return None
+    if (
+        not isinstance(values, list)
+        or any(not isinstance(value, str) for value in values)
+        or len(values) != len(set(values))
+    ):
+        raise RuntimeError(f"reviewed GLB {key} is invalid")
+    filtered = [value for value in values if value != "EXT_texture_webp"]
+    return filtered or None
+
+
+def _validate_texture_transcode_graph(
+    *,
+    reviewed_document: dict[str, Any],
+    reviewed_binary: bytes,
+    compatible_document: dict[str, Any],
+    compatible_binary: bytes,
+    image_evidence: list[dict[str, Any]],
+) -> None:
+    reviewed_images = reviewed_document.get("images")
+    compatible_images = compatible_document.get("images")
+    reviewed_views = reviewed_document.get("bufferViews")
+    compatible_views = compatible_document.get("bufferViews")
+    reviewed_textures = reviewed_document.get("textures")
+    compatible_textures = compatible_document.get("textures")
+    if (
+        not isinstance(reviewed_images, list)
+        or not reviewed_images
+        or not all(isinstance(image, dict) for image in reviewed_images)
+        or not isinstance(compatible_images, list)
+        or len(compatible_images) != len(reviewed_images)
+        or not all(isinstance(image, dict) for image in compatible_images)
+        or not isinstance(reviewed_views, list)
+        or not reviewed_views
+        or not all(isinstance(view, dict) for view in reviewed_views)
+        or not isinstance(compatible_views, list)
+        or not all(isinstance(view, dict) for view in compatible_views)
+        or not isinstance(reviewed_textures, list)
+        or not all(isinstance(texture, dict) for texture in reviewed_textures)
+        or not isinstance(compatible_textures, list)
+        or not all(isinstance(texture, dict) for texture in compatible_textures)
+    ):
+        raise RuntimeError("texture transcode GLB graph is incomplete")
+    webp_indices = {
+        index
+        for index, image in enumerate(reviewed_images)
+        if image.get("mimeType") == "image/webp"
+    }
+    evidence_by_index = {
+        image["image_index"]: image
+        for image in image_evidence
+    }
+    if (
+        not webp_indices
+        or set(evidence_by_index) != webp_indices
+        or [image["image_index"] for image in image_evidence]
+        != sorted(webp_indices)
+        or len(compatible_views) != len(reviewed_views) + len(webp_indices)
+        or compatible_views[: len(reviewed_views)] != reviewed_views
+        or len(compatible_textures) != len(reviewed_textures)
+        or compatible_binary[: len(reviewed_binary)] != reviewed_binary
+    ):
+        raise RuntimeError(
+            "texture transcode changed the original GLB byte graph"
+        )
+
+    expected_document = copy.deepcopy(reviewed_document)
+    expected_document["bufferViews"] = copy.deepcopy(compatible_views)
+    expected_document["buffers"][0]["byteLength"] = len(compatible_binary)
+    expected_images = expected_document["images"]
+    cursor = len(reviewed_binary)
+    for ordinal, image_index in enumerate(sorted(webp_indices)):
+        evidence = evidence_by_index[image_index]
+        expected_offset = (cursor + 3) & ~3
+        output_view_index = len(reviewed_views) + ordinal
+        output_view = compatible_views[output_view_index]
+        if (
+            set(output_view) != {"buffer", "byteOffset", "byteLength"}
+            or output_view.get("buffer") != 0
+            or output_view.get("byteOffset") != expected_offset
+            or output_view.get("byteLength") != evidence["png_size_bytes"]
+            or any(compatible_binary[cursor:expected_offset])
+        ):
+            raise RuntimeError(
+                "texture transcode appended PNG bufferView is invalid"
+            )
+        source_image = reviewed_images[image_index]
+        source_bytes = _buffer_view_bytes(
+            document=reviewed_document,
+            binary=reviewed_binary,
+            view_index=source_image.get("bufferView"),
+            label=f"reviewed WebP image {image_index}",
+        )
+        png_bytes = _buffer_view_bytes(
+            document=compatible_document,
+            binary=compatible_binary,
+            view_index=output_view_index,
+            label=f"compatible PNG image {image_index}",
+        )
+        if (
+            len(source_bytes) != evidence["source_size_bytes"]
+            or hashlib.sha256(source_bytes).hexdigest()
+            != evidence["source_webp_sha256"]
+            or len(png_bytes) != evidence["png_size_bytes"]
+            or hashlib.sha256(png_bytes).hexdigest() != evidence["png_sha256"]
+        ):
+            raise RuntimeError(
+                "texture transcode image bytes do not match the manifest"
+            )
+        expected_image = copy.deepcopy(source_image)
+        expected_image["bufferView"] = output_view_index
+        expected_image["mimeType"] = "image/png"
+        expected_images[image_index] = expected_image
+        cursor = expected_offset + len(png_bytes)
+    if cursor != len(compatible_binary):
+        raise RuntimeError(
+            "texture transcode output has unauthenticated appended bytes"
+        )
+    for index, image in enumerate(reviewed_images):
+        if index not in webp_indices and compatible_images[index] != image:
+            raise RuntimeError("texture transcode changed a non-WebP image")
+
+    expected_textures = expected_document["textures"]
+    for texture in expected_textures:
+        extensions = texture.get("extensions")
+        webp = (
+            extensions.get("EXT_texture_webp")
+            if isinstance(extensions, dict)
+            else None
+        )
+        if webp is None:
+            continue
+        if (
+            not isinstance(webp, dict)
+            or set(webp) != {"source"}
+            or isinstance(webp.get("source"), bool)
+            or webp.get("source") not in webp_indices
+        ):
+            raise RuntimeError("reviewed GLB EXT_texture_webp routing is invalid")
+        texture["source"] = webp["source"]
+        del extensions["EXT_texture_webp"]
+        if not extensions:
+            texture.pop("extensions", None)
+    for key in ("extensionsUsed", "extensionsRequired"):
+        filtered = _without_webp_extension(reviewed_document, key)
+        if filtered is None:
+            expected_document.pop(key, None)
+        else:
+            expected_document[key] = filtered
+    if compatible_document != expected_document:
+        raise RuntimeError(
+            "texture transcode changed GLB structure or PBR routing"
+        )
+
+
+def _validate_texture_transcode_lineage(
+    job: dict[str, Any],
+    *,
+    source: Path,
+    reviewed_source: Path,
+) -> None:
+    manifest = _load_texture_transcode_manifest(job, source)
+    upstream = _direct_absolute_file(
+        job.get("upstream_rigged_glb"),
+        "upstream owner-reviewed GLB",
+    )
+    upstream_sha256 = _require_sha256(
+        job.get("upstream_rigged_glb_sha256"),
+        "upstream owner-reviewed GLB hash",
+    )
+    _validate_file_descriptor(
+        manifest.get("input"),
+        "texture transcode input",
+        expected_path=reviewed_source,
+    )
+    if (
+        upstream != reviewed_source
+        or upstream_sha256 != _sha256(reviewed_source)
+        or source == reviewed_source
+        or job["rigged_glb_sha256"] == upstream_sha256
+    ):
+        raise RuntimeError(
+            "texture transcode job does not bind the reviewed upstream runtime"
+        )
+    reviewed_document, reviewed_binary = _read_glb_document(
+        reviewed_source,
+        include_binary=True,
+    )
+    source_document, source_binary = _read_glb_document(
+        source,
+        include_binary=True,
+    )
+    _validate_texture_transcode_graph(
+        reviewed_document=reviewed_document,
+        reviewed_binary=reviewed_binary,
+        compatible_document=source_document,
+        compatible_binary=source_binary,
+        image_evidence=manifest["images"],
+    )
 
 
 def _resolve_relative_descriptor(
@@ -754,7 +1150,10 @@ def _validate_batch_payload(
     ):
         raise RuntimeError("preparation canonical identity is invalid")
     job = jobs[0]
-    if not isinstance(job, dict) or set(job) != JOB_FIELDS:
+    if (
+        not isinstance(job, dict)
+        or set(job) not in (JOB_FIELDS, TRANSCODED_JOB_FIELDS)
+    ):
         raise RuntimeError("Pixal animal UE job fields are invalid")
     asset_id = job.get("asset_id")
     expected_tag = f"pixal_{asset_id}"
@@ -813,6 +1212,21 @@ def _validate_batch_payload(
     reviewed_glb = _validate_file_descriptor(
         preparation.get("reviewed_animated_glb"), "reviewed animated GLB"
     )
+    source = _direct_absolute_file(job["rigged_glb"], "UE import source")
+    if _sha256(source) != job["rigged_glb_sha256"]:
+        raise RuntimeError("Pixal animal UE job source hash is invalid")
+    if set(job) == TRANSCODED_JOB_FIELDS:
+        _validate_texture_transcode_lineage(
+            job,
+            source=source,
+            reviewed_source=Path(reviewed_glb["path"]),
+        )
+        reviewed_runtime_lineage_valid = True
+    else:
+        reviewed_runtime_lineage_valid = (
+            source == Path(reviewed_glb["path"])
+            and job["rigged_glb_sha256"] == reviewed_glb["sha256"]
+        )
     if (
         job["source_asset_sha256"] != source_asset["sha256"]
         or job["source_registry_sha256"] != source_registry["sha256"]
@@ -823,8 +1237,7 @@ def _validate_batch_payload(
         != animation_decision["sha256"]
         or job["animation_decision_sha256"]
         != preparation.get("animation_decision_sha256")
-        or Path(job["rigged_glb"]).resolve() != Path(reviewed_glb["path"])
-        or job["rigged_glb_sha256"] != reviewed_glb["sha256"]
+        or not reviewed_runtime_lineage_valid
     ):
         raise RuntimeError("Pixal animal UE job artifact lineage is invalid")
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -10,12 +11,18 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from PIL import Image
 
 from tests.tools import (
     test_prepare_user_approved_generated_animal_ue_imports as presentation_support,
 )
 from tools import build_user_approved_generated_animal_apartment_specs as subject
 from tools import controlled_source_asset_schema as contracts
+from tools import (
+    register_controlled_animal_apartment_source_assets as apartment_registration,
+)
+from tools import run_rocketbox_batch_apartment_reviews as apartment_runner
+from tools import transcode_glb_webp_to_png as transcode_tool
 
 
 def _write(path: Path, value) -> Path:
@@ -227,6 +234,106 @@ def _target_physical_profile() -> dict:
     }
 
 
+def _write_webp_runtime(path: Path) -> Path:
+    image = Image.new("RGBA", (4, 3), (31, 63, 95, 255))
+    encoded = io.BytesIO()
+    image.save(encoded, format="WEBP", lossless=True)
+    webp = encoded.getvalue()
+    binary = bytes(512) + webp
+    document = {
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [
+            {"mesh": 0, "skin": 0},
+            {"name": "root"},
+            {"name": "joint_1"},
+            {"name": "joint_2"},
+            {"name": "joint_3"},
+            {"name": "joint_4"},
+        ],
+        "meshes": [
+            {
+                "primitives": [
+                    {
+                        "attributes": {
+                            "POSITION": 0,
+                            "JOINTS_0": 1,
+                            "WEIGHTS_0": 2,
+                        }
+                    }
+                ]
+            }
+        ],
+        "skins": [{"joints": [1, 2, 3, 4, 5], "inverseBindMatrices": 3}],
+        "animations": [
+            {
+                "name": name,
+                "samplers": [{"input": 4, "output": 5}],
+                "channels": [
+                    {
+                        "sampler": 0,
+                        "target": {"node": 1, "path": "rotation"},
+                    }
+                ],
+            }
+            for name in ("Idle", "Walking")
+        ],
+        "buffers": [{"byteLength": len(binary)}],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": 512},
+            {"buffer": 0, "byteOffset": 512, "byteLength": len(webp)},
+        ],
+        "accessors": [
+            {
+                "bufferView": 0,
+                "componentType": component,
+                "count": count,
+                "type": kind,
+            }
+            for component, count, kind in (
+                (5126, 1, "VEC3"),
+                (5123, 1, "VEC4"),
+                (5126, 1, "VEC4"),
+                (5126, 5, "MAT4"),
+                (5126, 1, "SCALAR"),
+                (5126, 1, "VEC4"),
+            )
+        ],
+        "images": [{"bufferView": 1, "mimeType": "image/webp"}],
+        "textures": [{"extensions": {"EXT_texture_webp": {"source": 0}}}],
+        "extensionsUsed": ["EXT_texture_webp"],
+        "extensionsRequired": ["EXT_texture_webp"],
+    }
+    path.write_bytes(transcode_tool.encode_glb(document, binary))
+    return path
+
+
+def _write_texture_transcode(
+    reviewed: Path,
+    output: Path,
+    manifest_path: Path,
+) -> tuple[Path, Path]:
+    document, binary = transcode_tool.read_glb(reviewed)
+    rewritten, rewritten_binary, records = transcode_tool.transcode(
+        document,
+        binary,
+    )
+    output.write_bytes(transcode_tool.encode_glb(rewritten, rewritten_binary))
+    _write(
+        manifest_path,
+        {
+            "schema": subject.preparation_bridge.TEXTURE_TRANSCODE_SCHEMA,
+            "purpose": subject.preparation_bridge.TEXTURE_TRANSCODE_PURPOSE,
+            "geometry_skin_animation_byte_graph_changed": False,
+            "input": _descriptor(reviewed),
+            "output": _descriptor(output),
+            "images": records,
+        },
+    )
+    return output, manifest_path
+
+
 def _weight_repair_evidence(runtime: Path) -> dict:
     return {
         "schema": subject.WEIGHT_REPAIR_SCHEMA,
@@ -281,6 +388,7 @@ def _fixture(
     *,
     review_schema: str = subject.FORMAL_GENERATED_REVIEW_SCHEMA,
     weight_repair_branch: str = "primary",
+    texture_transcode: bool = False,
 ) -> dict[str, Any]:
     asset_id = "horse_candidate_001"
     tag = "pixal_horse_candidate_001"
@@ -291,7 +399,19 @@ def _fixture(
         "life_stage": "adult",
         "size": "medium",
     }
-    runtime = _write(tmp_path / "runtime.glb", b"fake-glb")
+    runtime = (
+        _write_webp_runtime(tmp_path / "runtime.glb")
+        if texture_transcode
+        else _write(tmp_path / "runtime.glb", b"fake-glb")
+    )
+    ue_runtime = runtime
+    texture_transcode_manifest = None
+    if texture_transcode:
+        ue_runtime, texture_transcode_manifest = _write_texture_transcode(
+            runtime,
+            tmp_path / "runtime_png.glb",
+            tmp_path / "texture_transcode_manifest.json",
+        )
     semantic_payload = (
         _retarget_evidence(runtime)
         if weight_repair_branch == "not_needed"
@@ -437,14 +557,30 @@ def _fixture(
         "profile_schema_id": profile,
         "sampled_attributes": sampled,
         "expected_actions": subject.EXPECTED_ACTIONS,
-        "rigged_glb": str(runtime.resolve()),
-        "rigged_glb_sha256": _sha(runtime),
+        "rigged_glb": str(ue_runtime.resolve()),
+        "rigged_glb_sha256": _sha(ue_runtime),
         "source_registry_sha256": _sha(source_registry),
         "source_asset_sha256": _sha(source_asset),
         "request_sha256": "1" * 64,
         "animation_decision_file_sha256": _sha(decision_path),
         "animation_decision_sha256": decision["decision_sha256"],
     }
+    if texture_transcode:
+        job.update(
+            {
+                "upstream_rigged_glb": str(runtime.resolve()),
+                "upstream_rigged_glb_sha256": _sha(runtime),
+                "texture_transcode_manifest": str(
+                    texture_transcode_manifest.resolve()
+                ),
+                "texture_transcode_manifest_sha256": _sha(
+                    texture_transcode_manifest
+                ),
+                "texture_transcode_manifest_size_bytes": (
+                    texture_transcode_manifest.stat().st_size
+                ),
+            }
+        )
     policy = subject._expected_non_destructive_policy(tag)
     jobs = {
         "schema": subject.FORMAL_BATCH_SCHEMA,
@@ -589,8 +725,8 @@ def _fixture(
                     "legacy_tag": asset_id,
                     "tag": tag,
                     "job_identity_sha256": _json_hash(job),
-                    "source": str(runtime.resolve()),
-                    "source_sha256": _sha(runtime),
+                    "source": str(ue_runtime.resolve()),
+                    "source_sha256": _sha(ue_runtime),
                     "mesh_content_dir": mesh_dir,
                     "skeletal_mesh": skeletal_mesh,
                     "walking_animation": walking_animation,
@@ -626,6 +762,26 @@ def _fixture(
             ],
         },
     )
+    emitter_measurement = _write(
+        tmp_path / "emitter_measurement_v2.json",
+        {
+            "schema": subject.EMITTER_MEASUREMENT_SCHEMA,
+            "created_at": "2026-07-28T00:00:00+00:00",
+            "input": _descriptor(runtime),
+            "canonical_front_axis": "positive-x",
+            "emitter_anchor": {
+                "asset_specific_not_species_template": True,
+                "candidate_vertex_count": 1000,
+                "coordinate_system": subject.EMITTER_COORDINATE_SYSTEM,
+                "emitter_offset_m": [2.0, 1.3 / 0.332, 0.0],
+                "local_forward_axis": [1.0, 0.0, 0.0],
+                "method": subject.EMITTER_METHOD,
+                "mouth_animation_required": False,
+                "muzzle_forward_quantile": 0.82,
+                "selected_vertex_count": 200,
+            },
+        },
+    )
     return {
         "config_path": config_path,
         "ue_jobs": jobs_path,
@@ -638,6 +794,8 @@ def _fixture(
         "expected_animation_decision_sha256": _sha(decision_path),
         "animation_decision_freeze_receipt": freeze_receipt_path,
         "expected_animation_decision_freeze_receipt_sha256": _sha(freeze_receipt_path),
+        "emitter_measurement": emitter_measurement,
+        "expected_emitter_measurement_sha256": _sha(emitter_measurement),
         "template": template_path,
         "semantic_evidence": semantic_evidence,
     }
@@ -736,6 +894,23 @@ def test_builds_authenticated_walk_idle_pair(tmp_path: Path) -> None:
     assert source["target_physical_profile"] == _target_physical_profile()
     assert idle["sources"][0]["target_physical_profile"] == _target_physical_profile()
     assert record["target_physical_profile"] == _target_physical_profile()
+    emitter = contracts.load_json(inputs["emitter_measurement"])
+    expected_audio_height = (
+        emitter["emitter_anchor"]["emitter_offset_m"][1] * 0.332
+    )
+    assert record["emitter_measurement"] == _descriptor(
+        inputs["emitter_measurement"]
+    )
+    assert record["audio_source_height_offset_m"] == pytest.approx(
+        expected_audio_height,
+        abs=1.0e-12,
+    )
+    assert source["audio_source_height_offset_m"] == pytest.approx(
+        expected_audio_height,
+        abs=1.0e-12,
+    )
+    authenticated = subject.authenticate_apartment_v2_manifest(manifest_path)
+    assert authenticated["record"] == record
     assert record["rig_semantic_evidence"] == {
         "schema": subject.RIG_SEMANTIC_EVIDENCE_SCHEMA,
         "kind": "motion_aware_weight_repair",
@@ -764,6 +939,140 @@ def test_builds_authenticated_walk_idle_pair(tmp_path: Path) -> None:
     assert "rig_direction_check_windows" in walking
     assert "rig_direction_check_windows" not in idle
     assert idle["sources"][0]["trajectory_m"] == [[2.0, 0.0, 0.0]] * 5
+
+
+def test_builds_authenticated_pair_from_texture_transcode_dual_lineage(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path, texture_transcode=True)
+    inputs.pop("semantic_evidence")
+    jobs = contracts.load_json(inputs["ue_jobs"])
+    job = jobs["jobs"][0]
+
+    manifest_path = subject.build_specs(
+        **inputs,
+        output_root=tmp_path / "output",
+    )
+    manifest = contracts.load_json(manifest_path)
+    record = manifest["records"][0]
+    walking = contracts.load_json(Path(record["actions"]["Walking"]["spec"]))
+    gate = walking["sources"][0]["controlled_animal_gate"]
+
+    assert frozenset(job) == subject.TRANSCODED_JOB_FIELDS
+    assert record["source_glb"] == {
+        "path": job["upstream_rigged_glb"],
+        "sha256": job["upstream_rigged_glb_sha256"],
+    }
+    assert (
+        record["rig_semantic_evidence"]["source_glb_sha256"]
+        == job["upstream_rigged_glb_sha256"]
+    )
+    assert gate["ue_source_sha256"] == job["rigged_glb_sha256"]
+    assert job["rigged_glb_sha256"] != job["upstream_rigged_glb_sha256"]
+    assert record["runtime_lineage"] == {
+        "reviewed_animated_glb": _descriptor(
+            Path(job["upstream_rigged_glb"])
+        ),
+        "ue_import_glb": _descriptor(Path(job["rigged_glb"])),
+        "texture_transcode_manifest": _descriptor(
+            Path(job["texture_transcode_manifest"])
+        ),
+    }
+
+
+def test_builder_rejects_config_height_that_contradicts_emitter_up_component(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    config = contracts.load_json(inputs["config_path"])
+    config["audio_source_height_offset_m"] += 0.01
+    _write(inputs["config_path"], config)
+
+    with pytest.raises(contracts.ContractError, match="contradicts"):
+        subject.build_specs(
+            **inputs,
+            output_root=tmp_path / "output",
+        )
+
+
+def test_builder_rejects_emitter_bound_to_a_different_reviewed_glb(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    other = _write(tmp_path / "other.glb", b"other-reviewed-glb")
+    emitter = contracts.load_json(inputs["emitter_measurement"])
+    emitter["input"] = _descriptor(other)
+    _write(inputs["emitter_measurement"], emitter)
+    inputs["expected_emitter_measurement_sha256"] = _sha(
+        inputs["emitter_measurement"]
+    )
+
+    with pytest.raises(contracts.ContractError, match="authority changed"):
+        subject.build_specs(
+            **inputs,
+            output_root=tmp_path / "output",
+        )
+
+
+def test_runner_accepts_builder_v2_transcode_output(tmp_path: Path) -> None:
+    inputs = _fixture(tmp_path, texture_transcode=True)
+    inputs.pop("semantic_evidence")
+    manifest_path = subject.build_specs(
+        **inputs,
+        output_root=tmp_path / "output",
+    )
+
+    jobs = apartment_runner.build_jobs(manifest_path)
+
+    assert [(job.base_avatar_id, job.action) for job in jobs] == [
+        ("horse_candidate_001", "Idle"),
+        ("horse_candidate_001", "Walking"),
+    ]
+
+
+def test_registration_loader_accepts_builder_v2_transcode_output(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path, texture_transcode=True)
+    inputs.pop("semantic_evidence")
+    manifest_path = subject.build_specs(
+        **inputs,
+        output_root=tmp_path / "output",
+    )
+
+    records = apartment_registration._load_apartment_records([manifest_path])
+
+    assert set(records) == {"horse_candidate_001"}
+
+
+def test_transcode_dual_lineage_rejects_incomplete_job_fields(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path, texture_transcode=True)
+    job = contracts.load_json(inputs["ue_jobs"])["jobs"][0]
+    job.pop("texture_transcode_manifest")
+
+    with pytest.raises(contracts.ContractError, match="fields changed"):
+        subject._authenticate_formal_job_runtime_lineage(job)
+
+
+def test_transcode_dual_lineage_rejects_tampered_manifest(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path, texture_transcode=True)
+    job = contracts.load_json(inputs["ue_jobs"])["jobs"][0]
+    manifest_path = Path(job["texture_transcode_manifest"])
+    manifest = contracts.load_json(manifest_path)
+    manifest["geometry_skin_animation_byte_graph_changed"] = True
+    _write(manifest_path, manifest)
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="descriptor changed|contract is invalid",
+    ):
+        subject._authenticate_formal_job_runtime_lineage(job)
 
 
 def test_builds_from_v4_fallback_b_final_semantic_artifact(
