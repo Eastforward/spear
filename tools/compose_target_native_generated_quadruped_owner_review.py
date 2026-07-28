@@ -259,11 +259,23 @@ class OutputLocation:
 
 @dataclass
 class StagingInventory:
-    """Exact known staging entries; anything else forces quarantine."""
+    """Exact staging and retained-composition evidence held by descriptor."""
 
     top_level_files: dict[str, dict] = dataclass_field(default_factory=dict)
-    snapshot_directory: dict | None = None
+    snapshot_directory: HeldDirectory | None = None
     snapshot_files: dict[str, dict] = dataclass_field(default_factory=dict)
+    snapshot_records: dict[str, dict] = dataclass_field(default_factory=dict)
+    retained_snapshot_directory: HeldDirectory | None = None
+    retained_snapshot_files: dict[str, dict] = dataclass_field(default_factory=dict)
+    retained_snapshot_records: dict[str, dict] = dataclass_field(default_factory=dict)
+
+    def close(self) -> None:
+        for directory in (
+            self.snapshot_directory,
+            self.retained_snapshot_directory,
+        ):
+            if directory is not None:
+                directory.close()
 
 
 def parse_args(argv=None):
@@ -1923,32 +1935,29 @@ def create_private_staging(location: OutputLocation) -> HeldDirectory:
         os.fsync(parent.descriptor)
         return staging
     except Exception:
-        if descriptor is not None and staging is not None:
+        if staging is not None:
             try:
-                if _directory_entry_matches(
-                    parent.descriptor, name, staging
-                ) and not os.listdir(descriptor):
-                    os.rmdir(name, dir_fd=parent.descriptor)
-            except OSError:
+                quarantine_staging(location, staging)
+            except (OSError, PresentationContractError):
                 pass
             finally:
-                os.close(descriptor)
+                staging.close()
         elif descriptor is not None:
             os.close(descriptor)
         raise
 
 
-def _snapshot_directory_guard(
+def _open_snapshot_directory(
     staging: HeldDirectory,
     name: str,
-) -> tuple[dict, int]:
+    path: Path,
+) -> HeldDirectory:
     name = _require_child_name(name, "private snapshot directory")
     current = os.stat(
         name,
         dir_fd=staging.descriptor,
         follow_symlinks=False,
     )
-    guard = _directory_guard(current)
     flags = (
         os.O_RDONLY
         | os.O_DIRECTORY
@@ -1956,12 +1965,23 @@ def _snapshot_directory_guard(
         | getattr(os, "O_NOFOLLOW", 0)
     )
     descriptor = os.open(name, flags, dir_fd=staging.descriptor)
-    if _directory_guard(os.fstat(descriptor)) != guard:
-        os.close(descriptor)
-        raise PresentationContractError(
-            "private snapshot directory changed while it was opened"
+    try:
+        directory = _held_directory(
+            path=path,
+            name=name,
+            descriptor=descriptor,
+            expected=current,
+            label="private snapshot directory",
         )
-    return guard, descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+    if not _directory_entry_matches(staging.descriptor, name, directory):
+        directory.close()
+        raise PresentationContractError(
+            "private snapshot directory entry identity changed"
+        )
+    return directory
 
 
 def register_snapshot_tree(
@@ -1974,6 +1994,10 @@ def register_snapshot_tree(
     if (
         inventory.snapshot_directory is not None
         or inventory.snapshot_files
+        or inventory.snapshot_records
+        or inventory.retained_snapshot_directory is not None
+        or inventory.retained_snapshot_files
+        or inventory.retained_snapshot_records
         or len(videos) != len(MEDIA_LAYOUT)
         or len(snapshot_bindings) != len(MEDIA_LAYOUT)
     ):
@@ -1982,33 +2006,49 @@ def register_snapshot_tree(
         snapshot_root.name,
         "private snapshot directory",
     )
-    directory_guard, descriptor = _snapshot_directory_guard(
+    directory = _open_snapshot_directory(
         staging,
         directory_name,
+        snapshot_root,
     )
     try:
         expected_names = {video.name for video in videos}
-        if set(os.listdir(descriptor)) != expected_names:
+        if set(os.listdir(directory.descriptor)) != expected_names:
             raise PresentationContractError("private snapshot artifact set changed")
         registered = {}
+        records = {}
         for video, binding in zip(videos, snapshot_bindings):
-            expected = binding["private_snapshot_file_guard"]
+            expected_guard = binding["private_snapshot_file_guard"]
             observed = _file_guard_at(
-                descriptor,
+                directory.descriptor,
                 video.name,
                 video,
                 "private snapshot",
             )
-            if observed != expected:
+            if observed != expected_guard:
                 raise PresentationContractError("private snapshot fd binding changed")
+            expected_record = {
+                field: binding["private_snapshot"][field]
+                for field in FILE_RECORD_FIELDS
+            }
+            if (
+                _file_record_at(
+                    directory.descriptor,
+                    video.name,
+                    video,
+                    "private snapshot",
+                )
+                != expected_record
+            ):
+                raise PresentationContractError("private snapshot hash binding changed")
             registered[video.name] = observed
-    finally:
-        os.close(descriptor)
-    inventory.snapshot_directory = {
-        "name": directory_name,
-        **directory_guard,
-    }
+            records[video.name] = expected_record
+    except Exception:
+        directory.close()
+        raise
+    inventory.snapshot_directory = directory
     inventory.snapshot_files = registered
+    inventory.snapshot_records = records
 
 
 def register_top_level_file(
@@ -2029,53 +2069,204 @@ def register_top_level_file(
     return guard
 
 
-def remove_private_snapshots(
+def _require_snapshot_evidence(
+    directory: HeldDirectory,
+    files: dict[str, dict],
+    records: dict[str, dict],
+    label: str,
+) -> None:
+    _require_held_directory(
+        directory,
+        label,
+        expected_mode=directory.mode,
+    )
+    if (
+        len(files) != len(MEDIA_LAYOUT)
+        or set(records) != set(files)
+        or set(os.listdir(directory.descriptor)) != set(files)
+    ):
+        raise PresentationContractError(f"{label} artifact set changed")
+    for filename, guard in files.items():
+        path = Path(guard["path"])
+        _require_file_guard_at(
+            directory.descriptor,
+            filename,
+            path,
+            guard,
+            label,
+        )
+        if (
+            _file_record_at(
+                directory.descriptor,
+                filename,
+                path,
+                label,
+            )
+            != records[filename]
+        ):
+            raise PresentationContractError(f"{label} hash binding changed")
+
+
+def retain_private_snapshots(
+    location: OutputLocation,
     staging: HeldDirectory,
     inventory: StagingInventory,
 ) -> None:
-    directory_guard = inventory.snapshot_directory
-    if directory_guard is None or len(inventory.snapshot_files) != len(MEDIA_LAYOUT):
+    directory = inventory.snapshot_directory
+    if (
+        directory is None
+        or inventory.retained_snapshot_directory is not None
+        or inventory.retained_snapshot_files
+        or inventory.retained_snapshot_records
+    ):
         raise PresentationContractError(
-            "private snapshot cleanup inventory is incomplete"
+            "private snapshot retention inventory is incomplete"
         )
-    name = directory_guard["name"]
-    observed_guard, descriptor = _snapshot_directory_guard(staging, name)
+    if not _directory_entry_matches(
+        staging.descriptor,
+        directory.name,
+        directory,
+    ):
+        raise PresentationContractError(
+            "private snapshot staging entry identity changed"
+        )
+    _require_snapshot_evidence(
+        directory,
+        inventory.snapshot_files,
+        inventory.snapshot_records,
+        "private snapshot",
+    )
+
+    for filename, guard in tuple(inventory.snapshot_files.items()):
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(
+            filename,
+            flags,
+            dir_fd=directory.descriptor,
+        )
+        try:
+            opened = _file_guard_from_stat(Path(guard["path"]), os.fstat(descriptor))
+            if opened != guard:
+                raise PresentationContractError(
+                    "private snapshot changed before retention sealing"
+                )
+            os.fsync(descriptor)
+            os.fchmod(descriptor, 0o444)
+        finally:
+            os.close(descriptor)
+        inventory.snapshot_files[filename] = _file_guard_at(
+            directory.descriptor,
+            filename,
+            Path(guard["path"]),
+            "retained private snapshot",
+        )
+    # Keep the directory itself owner-writable until the cross-parent rename:
+    # Linux requires write permission on a moved directory because its ``..``
+    # entry changes.  The already-authenticated files are sealed first; the
+    # held directory is sealed immediately after the atomic move and before it
+    # is accepted as retained evidence.
+    os.fsync(directory.descriptor)
+    _require_snapshot_evidence(
+        directory,
+        inventory.snapshot_files,
+        inventory.snapshot_records,
+        "file-sealed private snapshot",
+    )
+
+    retained_name = None
+    for _attempt in range(128):
+        candidate = (
+            f".retained.{location.output_name}.{secrets.token_hex(16)}"
+            ".composition-inputs"
+        )
+        if _renameat2_no_replace(
+            staging.descriptor,
+            directory.name,
+            location.parent.descriptor,
+            candidate,
+            target_display=location.parent.path / candidate,
+        ):
+            retained_name = candidate
+            break
+    if retained_name is None:
+        raise PresentationContractError(
+            "could not allocate retained composition-input directory"
+        )
+
+    if not _directory_entry_matches(
+        location.parent.descriptor,
+        retained_name,
+        directory,
+    ):
+        raise PresentationContractError(
+            "retained composition-input directory identity changed after rename"
+        )
     try:
-        if observed_guard != {
-            key: directory_guard[key]
-            for key in ("device", "inode", "owner_uid", "owner_gid", "mode")
-        }:
-            raise PresentationContractError(
-                "private snapshot directory identity changed"
-            )
-        if set(os.listdir(descriptor)) != set(inventory.snapshot_files):
-            raise PresentationContractError(
-                "private snapshot cleanup found unknown artifacts"
-            )
-        for filename, guard in inventory.snapshot_files.items():
-            _require_file_guard_at(
-                descriptor,
-                filename,
-                Path(guard["path"]),
-                guard,
-                "private snapshot",
-            )
-        for filename, guard in inventory.snapshot_files.items():
-            _require_file_guard_at(
-                descriptor,
-                filename,
-                Path(guard["path"]),
-                guard,
-                "private snapshot",
-            )
-            os.unlink(filename, dir_fd=descriptor)
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    os.rmdir(name, dir_fd=staging.descriptor)
+        source_after = os.stat(
+            directory.name,
+            dir_fd=staging.descriptor,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        source_after = None
+    if source_after is not None:
+        raise PresentationContractError(
+            "private snapshot source entry was recreated during retention"
+        )
+
+    directory.name = retained_name
+    directory.path = location.parent.path / retained_name
+    os.fchmod(directory.descriptor, 0o555)
+    directory.mode = 0o555
+    os.fsync(directory.descriptor)
     os.fsync(staging.descriptor)
+    os.fsync(location.parent.descriptor)
+    _require_snapshot_evidence(
+        directory,
+        inventory.snapshot_files,
+        inventory.snapshot_records,
+        "retained private snapshot",
+    )
+    inventory.retained_snapshot_directory = directory
+    inventory.retained_snapshot_files = inventory.snapshot_files
+    inventory.retained_snapshot_records = inventory.snapshot_records
     inventory.snapshot_directory = None
-    inventory.snapshot_files.clear()
+    inventory.snapshot_files = {}
+    inventory.snapshot_records = {}
+
+
+def require_retained_snapshots(
+    location: OutputLocation,
+    inventory: StagingInventory,
+) -> None:
+    directory = inventory.retained_snapshot_directory
+    if directory is None:
+        raise PresentationContractError(
+            "retained composition-input directory is missing"
+        )
+    _require_held_directory(
+        location.parent,
+        "output parent",
+        expected_mode=location.parent.mode,
+    )
+    if not _directory_entry_matches(
+        location.parent.descriptor,
+        directory.name,
+        directory,
+    ):
+        raise PresentationContractError(
+            "retained composition-input parent entry identity changed"
+        )
+    _require_snapshot_evidence(
+        directory,
+        inventory.retained_snapshot_files,
+        inventory.retained_snapshot_records,
+        "retained private snapshot",
+    )
+    if directory.mode != 0o555 or any(
+        guard["mode"] != 0o444 for guard in inventory.retained_snapshot_files.values()
+    ):
+        raise PresentationContractError("retained composition-input modes changed")
 
 
 def write_json_exclusive_at(
@@ -2159,9 +2350,17 @@ def seal_readonly_tree(
         "publication staging root",
         expected_mode=0o700,
     )
-    if inventory.snapshot_directory is not None or inventory.snapshot_files:
+    if (
+        inventory.snapshot_directory is not None
+        or inventory.snapshot_files
+        or inventory.snapshot_records
+        or inventory.retained_snapshot_directory is None
+        or len(inventory.retained_snapshot_files) != len(MEDIA_LAYOUT)
+        or set(inventory.retained_snapshot_records)
+        != set(inventory.retained_snapshot_files)
+    ):
         raise PresentationContractError(
-            "private snapshots remain in publication staging"
+            "composition-input retention state is incomplete"
         )
     if set(inventory.top_level_files) != {OUTPUT_VIDEO_NAME, RECEIPT_NAME}:
         raise PresentationContractError("publication artifact inventory changed")
@@ -2217,6 +2416,11 @@ def require_readonly_publication_fd(
     if (
         inventory.snapshot_directory is not None
         or inventory.snapshot_files
+        or inventory.snapshot_records
+        or inventory.retained_snapshot_directory is None
+        or len(inventory.retained_snapshot_files) != len(MEDIA_LAYOUT)
+        or set(inventory.retained_snapshot_records)
+        != set(inventory.retained_snapshot_files)
         or set(inventory.top_level_files) != {OUTPUT_VIDEO_NAME, RECEIPT_NAME}
         or set(os.listdir(staging.descriptor)) != set(inventory.top_level_files)
     ):
@@ -2258,7 +2462,7 @@ def _renameat2_no_replace(
     target_name: str,
     *,
     target_display: Path,
-) -> None:
+) -> bool:
     source_name = _require_child_name(source_name, "rename source")
     target_name = _require_child_name(target_name, "rename target")
     try:
@@ -2284,12 +2488,10 @@ def _renameat2_no_replace(
         rename_noreplace,
     )
     if result == 0:
-        return
+        return True
     error_number = ctypes.get_errno()
     if error_number == errno.EEXIST:
-        raise PresentationContractError(
-            f"refusing to replace output root: {target_display}"
-        )
+        return False
     if error_number in {errno.ENOSYS, errno.EINVAL, errno.ENOTSUP}:
         raise PresentationContractError(
             "atomic no-replace directory publication is unsupported"
@@ -2317,13 +2519,16 @@ def atomic_publish_no_replace(
         staging,
     ):
         raise PresentationContractError("private staging parent entry identity changed")
-    _renameat2_no_replace(
+    if not _renameat2_no_replace(
         location.parent.descriptor,
         staging.name,
         location.parent.descriptor,
         location.output_name,
         target_display=location.root,
-    )
+    ):
+        raise PresentationContractError(
+            f"refusing to replace output root: {location.root}"
+        )
 
 
 def _find_held_directory_entry(
@@ -2365,18 +2570,21 @@ def quarantine_staging(
         return "quarantined_detached_inode"
     for _attempt in range(128):
         quarantine_name = f".quarantine.{location.output_name}.{secrets.token_hex(16)}"
-        try:
-            _renameat2_no_replace(
-                location.parent.descriptor,
-                entry_name,
-                location.parent.descriptor,
-                quarantine_name,
-                target_display=location.parent.path / quarantine_name,
-            )
-        except PresentationContractError as error:
-            if "refusing to replace output root" in str(error):
-                continue
-            raise
+        if not _renameat2_no_replace(
+            location.parent.descriptor,
+            entry_name,
+            location.parent.descriptor,
+            quarantine_name,
+            target_display=location.parent.path / quarantine_name,
+        ):
+            continue
+        if not _directory_entry_matches(
+            location.parent.descriptor,
+            quarantine_name,
+            staging,
+        ):
+            os.fsync(location.parent.descriptor)
+            return "quarantine_identity_mismatch_retained"
         staging.name = quarantine_name
         staging.path = location.parent.path / quarantine_name
         os.fsync(location.parent.descriptor)
@@ -2384,100 +2592,18 @@ def quarantine_staging(
     return "quarantined_name_allocation_failed"
 
 
-def _preflight_known_staging_cleanup(
-    staging: HeldDirectory,
-    inventory: StagingInventory,
-) -> None:
-    expected_names = set(inventory.top_level_files)
-    if inventory.snapshot_directory is not None:
-        expected_names.add(inventory.snapshot_directory["name"])
-    if set(os.listdir(staging.descriptor)) != expected_names:
-        raise PresentationContractError(
-            "staging cleanup found unknown or missing artifacts"
-        )
-    for name, guard in inventory.top_level_files.items():
-        _require_file_guard_at(
-            staging.descriptor,
-            name,
-            Path(guard["path"]),
-            guard,
-            "known staging artifact",
-        )
-    if inventory.snapshot_directory is None:
-        if inventory.snapshot_files:
-            raise PresentationContractError(
-                "staging cleanup snapshot inventory is inconsistent"
-            )
-        return
-    name = inventory.snapshot_directory["name"]
-    observed_guard, descriptor = _snapshot_directory_guard(staging, name)
-    try:
-        expected_guard = {
-            key: inventory.snapshot_directory[key]
-            for key in ("device", "inode", "owner_uid", "owner_gid", "mode")
-        }
-        if observed_guard != expected_guard:
-            raise PresentationContractError("known snapshot directory identity changed")
-        if set(os.listdir(descriptor)) != set(inventory.snapshot_files):
-            raise PresentationContractError(
-                "snapshot cleanup found unknown or missing artifacts"
-            )
-        for filename, guard in inventory.snapshot_files.items():
-            _require_file_guard_at(
-                descriptor,
-                filename,
-                Path(guard["path"]),
-                guard,
-                "known private snapshot",
-            )
-    finally:
-        os.close(descriptor)
-
-
 def cleanup_unpublished_staging(
     location: OutputLocation,
     staging: HeldDirectory,
-    inventory: StagingInventory,
+    _inventory: StagingInventory,
 ) -> str:
-    """Remove only a completely authenticated known tree, otherwise quarantine."""
+    """Preserve the entire held tree; failed publication never deletes entries."""
 
     try:
         _require_held_directory(staging, "unpublished staging")
-        entry_name = _find_held_directory_entry(location.parent, staging)
-        if entry_name != staging.name:
-            return quarantine_staging(location, staging)
-        _preflight_known_staging_cleanup(staging, inventory)
-        os.fchmod(staging.descriptor, 0o700)
-        staging.mode = 0o700
-        if inventory.snapshot_directory is not None:
-            remove_private_snapshots(staging, inventory)
-        for name, guard in tuple(inventory.top_level_files.items()):
-            _require_file_guard_at(
-                staging.descriptor,
-                name,
-                Path(guard["path"]),
-                guard,
-                "known staging artifact",
-            )
-            os.unlink(name, dir_fd=staging.descriptor)
-            del inventory.top_level_files[name]
-        os.fsync(staging.descriptor)
-        if os.listdir(staging.descriptor):
-            return quarantine_staging(location, staging)
-        if not _directory_entry_matches(
-            location.parent.descriptor,
-            staging.name,
-            staging,
-        ):
-            return quarantine_staging(location, staging)
-        os.rmdir(staging.name, dir_fd=location.parent.descriptor)
-        os.fsync(location.parent.descriptor)
-        return "removed"
+        return quarantine_staging(location, staging)
     except (OSError, PresentationContractError):
-        try:
-            return quarantine_staging(location, staging)
-        except (OSError, PresentationContractError):
-            return "quarantined_in_place"
+        return "quarantined_in_place"
 
 
 def require_published_binding(
@@ -3490,7 +3616,8 @@ def main(argv=None):
                     "presentation changed after its receipt was written"
                 )
 
-            remove_private_snapshots(staging, inventory)
+            retain_private_snapshots(location, staging, inventory)
+            require_retained_snapshots(location, inventory)
             seal_readonly_tree(staging, inventory)
             require_readonly_publication_fd(staging, inventory)
             _require_parent_path_binding(location)
@@ -3509,11 +3636,15 @@ def main(argv=None):
             atomic_publish_no_replace(location, staging)
             published = True
 
-            # From this point onward the final is an immutable publication.  A
-            # post-publication validation or fsync failure must never delete it.
+            # From this point onward a post-publication validation or fsync
+            # failure must never delete the final.  The final pathname and 0444/
+            # 0555 modes are not absolute authority against a continuously
+            # malicious same-UID writer: consumers must reopen the receipt and
+            # video and authenticate them from the external raw receipt SHA-256.
             os.fsync(location.parent.descriptor)
             require_published_binding(location, staging)
             require_readonly_publication_fd(staging, inventory)
+            require_retained_snapshots(location, inventory)
             final_video = location.root / OUTPUT_VIDEO_NAME
             final_receipt_path = location.root / RECEIPT_NAME
             require_receipt_self_hash_at(
@@ -3542,6 +3673,7 @@ def main(argv=None):
                 cleanup_unpublished_staging(location, staging, inventory)
             raise
         finally:
+            inventory.close()
             staging.close()
     finally:
         location.parent.close()

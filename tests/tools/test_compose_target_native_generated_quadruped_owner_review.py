@@ -1199,7 +1199,17 @@ def test_main_dirfd_publish_never_replaces_concurrent_output(
         )
     assert (output_root / "owner").read_bytes() == b"concurrent"
     assert not list(output_parent.glob(".presentation.*.staging"))
-    assert not list(output_parent.glob(".quarantine.presentation.*"))
+    quarantines = list(output_parent.glob(".quarantine.presentation.*"))
+    assert len(quarantines) == 1
+    assert {entry.name for entry in quarantines[0].iterdir()} == {
+        subject.OUTPUT_VIDEO_NAME,
+        subject.RECEIPT_NAME,
+    }
+    retained = list(output_parent.glob(".retained.presentation.*.composition-inputs"))
+    assert len(retained) == 1
+    assert {entry.name for entry in retained[0].iterdir()} == {
+        f"{index:02d}_{label}.mp4" for index, label in enumerate(subject.MEDIA_LABELS)
+    }
 
 
 def test_parent_swap_and_same_inode_move_fail_without_deleting_published_final(
@@ -1320,6 +1330,79 @@ def test_cleanup_substitution_quarantines_owned_inode_without_deleting_replaceme
         assert not output_root.exists()
     finally:
         monkeypatch.setattr(subject, "seal_readonly_tree", original_seal)
+
+
+def test_cleanup_midrename_root_substitution_retains_victim_and_owned_tree(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = build_review_fixture(tmp_path)
+    install_fake_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        subject,
+        "run_ffmpeg",
+        lambda argv: Path(argv[-1]).write_bytes(b"composed-h264-six-view"),
+    )
+    output_parent = tmp_path / "cleanup_midrename_parent"
+    output_parent.mkdir()
+    output_root = output_parent / "presentation"
+    original_rename = subject._renameat2_no_replace
+    detached_owned = output_parent / "detached-owned-staging"
+    injected = False
+
+    def fail_before_publication(_staging, _inventory):
+        raise subject.PresentationContractError("forced cleanup race")
+
+    def replace_root_at_quarantine_boundary(
+        source_directory_descriptor,
+        source_name,
+        target_directory_descriptor,
+        target_name,
+        *,
+        target_display,
+    ):
+        nonlocal injected
+        if target_name.startswith(".quarantine.presentation.") and not injected:
+            injected = True
+            source = output_parent / source_name
+            source.rename(detached_owned)
+            source.mkdir()
+            (source / "external_victim").write_bytes(b"must survive cleanup")
+        return original_rename(
+            source_directory_descriptor,
+            source_name,
+            target_directory_descriptor,
+            target_name,
+            target_display=target_display,
+        )
+
+    monkeypatch.setattr(subject, "seal_readonly_tree", fail_before_publication)
+    monkeypatch.setattr(
+        subject, "_renameat2_no_replace", replace_root_at_quarantine_boundary
+    )
+    with pytest.raises(
+        subject.PresentationContractError,
+        match="forced cleanup race",
+    ):
+        subject.main(
+            [
+                "--review-run",
+                str(fixture["review"]),
+                "--expected-review-run-sha256",
+                fixture["sha256"],
+                "--output-root",
+                str(output_root),
+            ]
+        )
+
+    assert injected is True
+    quarantines = list(output_parent.glob(".quarantine.presentation.*"))
+    assert len(quarantines) == 1
+    assert (quarantines[0] / "external_victim").read_bytes() == (
+        b"must survive cleanup"
+    )
+    assert (detached_owned / subject.OUTPUT_VIDEO_NAME).is_file()
+    assert (detached_owned / subject.RECEIPT_NAME).is_file()
 
 
 def test_staging_restore_race_is_quarantined_before_publication(
