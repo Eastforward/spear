@@ -24,6 +24,7 @@ from collections import deque
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -154,7 +155,12 @@ def extract_weights(mesh, bone_names):
         for membership in vertex.groups:
             name = group_by_index.get(membership.group)
             if name in bone_index:
-                weights[vertex.index, bone_index[name]] = float(membership.weight)
+                value = float(membership.weight)
+                if not math.isfinite(value) or value < 0.0:
+                    raise RuntimeError(
+                        "input contains a non-finite or negative bone weight"
+                    )
+                weights[vertex.index, bone_index[name]] = value
     sums = weights.sum(axis=1)
     if np.any(sums <= 0.0):
         raise RuntimeError("input contains unweighted vertices")
@@ -580,13 +586,16 @@ def install_weights(mesh, weights, bone_names, minimum):
     if missing:
         raise RuntimeError(f"mesh is missing bone vertex groups: {missing}")
     group_indices = [group_by_name[name].index for name in bone_names]
+    bone_group_indices = set(group_indices)
     bm = bmesh.new()
     bm.from_mesh(mesh.data)
     bm.verts.ensure_lookup_table()
     deform = bm.verts.layers.deform.verify()
     for vertex in bm.verts:
         values = vertex[deform]
-        values.clear()
+        for group_index in tuple(values.keys()):
+            if group_index in bone_group_indices:
+                del values[group_index]
         row = weights[vertex.index]
         for bone_index in np.flatnonzero(row >= minimum):
             values[group_indices[int(bone_index)]] = float(row[bone_index])
@@ -601,8 +610,8 @@ def weight_stats(weights, minimum):
     return {
         "vertices": len(weights),
         "maximum_influences": int(counts.max(initial=0)),
-        "minimum_influences": int(counts.min(initial=0)),
-        "minimum_weight_sum": float(sums.min(initial=0.0)),
+        "minimum_influences": int(counts.min()),
+        "minimum_weight_sum": float(sums.min()),
         "maximum_weight_sum": float(sums.max(initial=0.0)),
     }
 
@@ -640,6 +649,8 @@ def main():
         raise SystemExit("--blend must be in (0, 1]")
     if not 1 <= args.top_k <= 8:
         raise SystemExit("--top-k must be in [1, 8]")
+    if not math.isfinite(args.minimum_weight) or not 0.0 < args.minimum_weight <= 1.0:
+        raise SystemExit("--minimum-weight must be finite and in (0, 1]")
     if not 0 <= args.bridge_rings <= 8:
         raise SystemExit("--bridge-rings must be in [0, 8]")
     if not 0.0 < args.bridge_blend <= 1.0:
@@ -891,7 +902,9 @@ def main():
         },
         "hard_joint_seams": {
             "count_before": len(seams_before),
-            "maximum_l1_before": seams_before[0]["weight_l1"],
+            "maximum_l1_before": (
+                seams_before[0]["weight_l1"] if seams_before else 0.0
+            ),
             "sample_before": seams_before[:64],
             "affected_vertices": len(affected),
             "maximum_graph_ring": max(affected.values(), default=0),

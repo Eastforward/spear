@@ -48,6 +48,8 @@ def test_joint_weight_smoothing_restores_bounded_normalized_influences():
     assert "maximum_influences" in text
     assert "minimum_weight_sum" in text
     assert "maximum_weight_sum" in text
+    assert "math.isfinite(args.minimum_weight)" in text
+    assert "if group_index in bone_group_indices" in text
     assert "bmesh" in text
 
 
