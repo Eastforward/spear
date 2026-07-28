@@ -92,7 +92,15 @@ def write_load_audit(path, source, server_marker):
             ("after_clean", inventory([], 0, 0, 0)),
             (
                 "after_import",
-                inventory([{"name": "animal", "type": "MESH"}], 1, 1, 1),
+                inventory(
+                    [
+                        {"name": "animal", "type": "MESH"},
+                        {"name": "world", "type": "EMPTY"},
+                    ],
+                    1,
+                    1,
+                    1,
+                ),
             ),
         ):
             events.append(
@@ -431,6 +439,41 @@ def test_runtime_evidence_requires_two_markers_and_two_clean_loads(
     observed = runner.validate_runtime_evidence(runtime, source.resolve(), server_pid)
     assert len(observed) == 2
 
+    contaminated_events = [
+        json.loads(line)
+        for line in runtime["audit_path"].read_text(encoding="utf-8").splitlines()
+    ]
+    contaminated_events[2]["inventory"]["objects"].append(
+        {"name": "Camera", "type": "CAMERA"}
+    )
+    runtime["audit_path"].write_text(
+        "".join(
+            json.dumps(event, sort_keys=True) + "\n"
+            for event in contaminated_events
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(runner.RunnerError, match="contaminated scene"):
+        runner.validate_runtime_evidence(runtime, source.resolve(), server_pid)
+
+    write_load_audit(runtime["audit_path"], source.resolve(), server_marker)
+    extra_empty_events = [
+        json.loads(line)
+        for line in runtime["audit_path"].read_text(encoding="utf-8").splitlines()
+    ]
+    extra_empty_events[2]["inventory"]["objects"].append(
+        {"name": "hidden", "type": "EMPTY"}
+    )
+    runtime["audit_path"].write_text(
+        "".join(
+            json.dumps(event, sort_keys=True) + "\n" for event in extra_empty_events
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(runner.RunnerError, match="contaminated scene"):
+        runner.validate_runtime_evidence(runtime, source.resolve(), server_pid)
+
+    write_load_audit(runtime["audit_path"], source.resolve(), server_marker)
     runtime["audit_path"].write_text(
         runtime["audit_path"]
         .read_text(encoding="utf-8")
@@ -739,6 +782,24 @@ def test_checked_in_mode_run_log_is_accepted_by_closure(tmp_path, monkeypatch):
     )
     assert observed["spear_execution_identity"] == identity
 
+    closure_events = [
+        json.loads(line) for line in load_audit.read_text(encoding="utf-8").splitlines()
+    ]
+    closure_events[2]["inventory"]["objects"].append(
+        {"name": "hidden", "type": "EMPTY"}
+    )
+    load_audit.write_text(
+        "".join(
+            json.dumps(event, sort_keys=True) + "\n" for event in closure_events
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(closure.ClosureError, match="contaminated"):
+        closure.validate_load_audit(
+            load_audit.resolve(), tokenrig_input.resolve(), server_marker
+        )
+
+    write_load_audit(load_audit, tokenrig_input.resolve(), server_marker)
     with pytest.raises(closure.ClosureError, match="dedicated evidence mode"):
         closure.validate_run_evidence(
             run_log,

@@ -535,11 +535,36 @@ def validate_load_audit(path, source, expected_server):
         if not isinstance(imported, dict) or imported.get("mesh_count") != 1:
             raise RunnerError("TokenRig load audit did not import exactly one mesh")
         objects = imported.get("objects")
+        mesh_objects = (
+            [
+                item
+                for item in objects
+                if isinstance(item, dict) and item.get("type") == "MESH"
+            ]
+            if isinstance(objects, list)
+            else []
+        )
+        empty_objects = (
+            [
+                item
+                for item in objects
+                if isinstance(item, dict) and item.get("type") == "EMPTY"
+            ]
+            if isinstance(objects, list)
+            else []
+        )
         if (
             not isinstance(objects, list)
-            or len(objects) != 1
-            or objects[0].get("type") != "MESH"
-            or objects[0].get("name") in {"Camera", "Cube", "Light"}
+            or len(mesh_objects) != 1
+            or empty_objects != [{"name": "world", "type": "EMPTY"}]
+            or mesh_objects[0].get("name") in {"Camera", "Cube", "Light"}
+            or any(
+                not isinstance(item, dict)
+                or not isinstance(item.get("name"), str)
+                or not item["name"]
+                or item.get("type") not in {"MESH", "EMPTY"}
+                for item in objects
+            )
         ):
             raise RunnerError("TokenRig load audit imported a contaminated scene")
     return events

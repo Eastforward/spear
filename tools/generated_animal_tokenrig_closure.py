@@ -1009,11 +1009,36 @@ def validate_load_audit(
         if not isinstance(imported, dict) or imported.get("mesh_count") != 1:
             raise ClosureError("load audit after_import lacks exactly one mesh")
         objects = imported.get("objects")
+        mesh_objects = (
+            [
+                item
+                for item in objects
+                if isinstance(item, dict) and item.get("type") == "MESH"
+            ]
+            if isinstance(objects, list)
+            else []
+        )
+        empty_objects = (
+            [
+                item
+                for item in objects
+                if isinstance(item, dict) and item.get("type") == "EMPTY"
+            ]
+            if isinstance(objects, list)
+            else []
+        )
         if (
             not isinstance(objects, list)
-            or len(objects) != 1
-            or objects[0].get("type") != "MESH"
-            or objects[0].get("name") in {"Cube", "Camera", "Light"}
+            or len(mesh_objects) != 1
+            or empty_objects != [{"name": "world", "type": "EMPTY"}]
+            or mesh_objects[0].get("name") in {"Cube", "Camera", "Light"}
+            or any(
+                not isinstance(item, dict)
+                or not isinstance(item.get("name"), str)
+                or not item["name"]
+                or item.get("type") not in {"MESH", "EMPTY"}
+                for item in objects
+            )
         ):
             raise ClosureError("load audit after_import inventory is contaminated")
     return events
