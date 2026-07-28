@@ -465,14 +465,17 @@ def base_argv(workspace):
 
 
 def deformation_action(name, *, samples, extension, edge, area, decision):
+    start, end = 0.0, 40.0
     return {
         "requested_action": name,
         "resolved_action": f"{name}_Armature",
-        "frame_range": [0.0, 40.0],
+        "frame_range": [start, end],
         "sampled_frames": [
             {
-                "source_frame": index,
-                "evaluated_frame": index,
+                "source_frame": start + (end - start) * index / (samples - 1),
+                "evaluated_frame": int(
+                    round(start + (end - start) * index / (samples - 1))
+                ),
                 "metrics": {
                     "edge_extension_ratio_of_rest_rotation_invariant_scale": {
                         "maximum": extension
@@ -956,6 +959,108 @@ def test_deformation_gate_recomputes_worst_case_from_every_sample(tmp_path):
         encoding="utf-8",
     )
     with pytest.raises(RuntimeError, match="contradicts sampled frames"):
+        require_deformation_audit(
+            manifest,
+            animated,
+            "deformation audit",
+            expected_samples=4,
+            require_pass=True,
+        )
+
+
+def test_deformation_gate_rejects_repeated_frames_that_do_not_cover_action(
+    tmp_path,
+):
+    animated = tmp_path / "animated.glb"
+    animated.write_bytes(b"animated")
+    actions = [
+        deformation_action(
+            name,
+            samples=4,
+            extension=0.0,
+            edge=0.0,
+            area=0.0,
+            decision="passed_automatic_deformation_measurements",
+        )
+        for name in ("Walking", "Idle")
+    ]
+    for action in actions:
+        first = deepcopy(action["sampled_frames"][0])
+        action["sampled_frames"] = [deepcopy(first) for _index in range(4)]
+    manifest = tmp_path / "deformation.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": DEFORMATION_AUDIT_SCHEMA,
+                "input": str(animated.resolve()),
+                "input_sha256": file_record(animated)["sha256"],
+                "input_size_bytes": animated.stat().st_size,
+                "rest_geometry": {
+                    "vertices": 10,
+                    "edges": 20,
+                    "triangles": 12,
+                    "decision_scale": "centroid_bounding_sphere_diameter",
+                },
+                "thresholds": DEFORMATION_THRESHOLDS,
+                "actions": actions,
+                "overall": "passed",
+                "formal_dataset_registration_authorized": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="sampled frame coverage changed"):
+        require_deformation_audit(
+            manifest,
+            animated,
+            "deformation audit",
+            expected_samples=4,
+            require_pass=True,
+        )
+
+
+def test_deformation_gate_requires_unique_evaluated_frames(tmp_path):
+    animated = tmp_path / "animated.glb"
+    animated.write_bytes(b"animated")
+    actions = [
+        deformation_action(
+            name,
+            samples=4,
+            extension=0.0,
+            edge=0.0,
+            area=0.0,
+            decision="passed_automatic_deformation_measurements",
+        )
+        for name in ("Walking", "Idle")
+    ]
+    for action in actions:
+        action["frame_range"] = [0.0, 1.0]
+        for index, frame in enumerate(action["sampled_frames"]):
+            frame["source_frame"] = index / 3
+            frame["evaluated_frame"] = int(round(index / 3))
+    manifest = tmp_path / "deformation.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": DEFORMATION_AUDIT_SCHEMA,
+                "input": str(animated.resolve()),
+                "input_sha256": file_record(animated)["sha256"],
+                "input_size_bytes": animated.stat().st_size,
+                "rest_geometry": {
+                    "vertices": 10,
+                    "edges": 20,
+                    "triangles": 12,
+                    "decision_scale": "centroid_bounding_sphere_diameter",
+                },
+                "thresholds": DEFORMATION_THRESHOLDS,
+                "actions": actions,
+                "overall": "passed",
+                "formal_dataset_registration_authorized": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="unique evaluated frames"):
         require_deformation_audit(
             manifest,
             animated,

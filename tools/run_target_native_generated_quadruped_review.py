@@ -1846,6 +1846,12 @@ def require_deformation_audit(
     expected_samples: int,
     require_pass: bool,
 ) -> dict:
+    if (
+        not isinstance(expected_samples, int)
+        or isinstance(expected_samples, bool)
+        or expected_samples < 2
+    ):
+        raise RuntimeError(f"{label} requires at least two deformation samples")
     payload = load_json_artifact(path, label)
     if payload.get("schema") != DEFORMATION_AUDIT_SCHEMA:
         raise RuntimeError(f"{label} schema is missing or unsupported")
@@ -1878,12 +1884,22 @@ def require_deformation_audit(
         if not isinstance(action, dict):
             raise RuntimeError(f"{label} action evidence is malformed")
         resolved_action = action.get("resolved_action")
+        frame_range = action.get("frame_range")
         sampled_frames = action.get("sampled_frames")
         worst = action.get("worst_case")
         if (
             action.get("requested_action") != expected_action
             or not isinstance(resolved_action, str)
             or expected_action.lower() not in resolved_action.lower()
+            or not isinstance(frame_range, list)
+            or len(frame_range) != 2
+            or any(
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(value)
+                for value in frame_range
+            )
+            or frame_range[1] <= frame_range[0]
             or not isinstance(sampled_frames, list)
             or len(sampled_frames) != expected_samples
             or any(
@@ -1896,6 +1912,42 @@ def require_deformation_audit(
             raise RuntimeError(
                 f"{label} {expected_action} samples or identity are incomplete"
             )
+        expected_source_frames = [
+            frame_range[0]
+            + (frame_range[1] - frame_range[0])
+            * index
+            / (expected_samples - 1)
+            for index in range(expected_samples)
+        ]
+        expected_evaluated_frames = [
+            int(round(source_frame)) for source_frame in expected_source_frames
+        ]
+        if len(set(expected_evaluated_frames)) != expected_samples:
+            raise RuntimeError(
+                f"{label} {expected_action} frame range cannot provide "
+                f"{expected_samples} unique evaluated frames"
+            )
+        for index, frame in enumerate(sampled_frames):
+            source_frame = frame.get("source_frame")
+            evaluated_frame = frame.get("evaluated_frame")
+            if (
+                set(frame) != {"source_frame", "evaluated_frame", "metrics"}
+                or not isinstance(source_frame, (int, float))
+                or isinstance(source_frame, bool)
+                or not math.isfinite(source_frame)
+                or not math.isclose(
+                    source_frame,
+                    expected_source_frames[index],
+                    rel_tol=1.0e-12,
+                    abs_tol=1.0e-9,
+                )
+                or not isinstance(evaluated_frame, int)
+                or isinstance(evaluated_frame, bool)
+                or evaluated_frame != expected_evaluated_frames[index]
+            ):
+                raise RuntimeError(
+                    f"{label} {expected_action} sampled frame coverage changed"
+                )
         numeric_fields = (
             "maximum_edge_extension_ratio_of_rest_rotation_invariant_scale",
             "maximum_edge_stretch_ratio",
