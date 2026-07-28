@@ -768,6 +768,68 @@ def test_imagegen_adoption_is_create_only_and_static_review_dispatches(tmp_path)
         adopter.adopt_attempt(spec_path, output_root)
 
 
+def _shiba_direct_semantics():
+    return {
+        "taxonomy": {"species": "dog", "breed": "shiba_inu"},
+        "fixed_attributes": {
+            "life_stage": "adult",
+            "coat_length": "short",
+            "coat_pattern": "urajiro",
+            "ear_shape": "upright",
+            "tail_shape": "curled",
+        },
+        "lineage_group_id": "dog_shiba_inu_direct_pixel3d_v1",
+        "acoustic_profile": {
+            "profile_id": "dog_vocalization_v1",
+            "default_event_class": "dog_bark",
+            "allowed_event_classes": ["dog_bark", "dog_growl", "silent"],
+            "selection_attributes": ["species", "breed", "life_stage"],
+        },
+    }
+
+
+def test_direct_source_authority_reauthenticates_adopted_batch(tmp_path):
+    spec_path, _spec = _imagegen_fixture(tmp_path / "source")
+    batch_path = adopter.adopt_attempt(spec_path, tmp_path / "adopted")
+    authority = adopter.build_direct_source_authority(
+        batch_path,
+        **_shiba_direct_semantics(),
+    )
+    authority_path = tmp_path / "source_authority.json"
+    _write_json(authority_path, authority)
+
+    loaded_path, loaded, context = adopter.load_direct_source_authority(
+        authority_path,
+        expected_sha256=adopter._sha256_file(authority_path),
+    )
+
+    assert loaded_path == authority_path.resolve()
+    assert loaded == authority
+    assert loaded["state_classification"] == "research_candidate"
+    assert loaded["formal_dataset_registration_authorized"] is False
+    assert context["adopted_batch_path"] == batch_path.resolve()
+    assert context["attempt"]["instance_id"] == INSTANCE_ID
+    assert context["adoption_context"]["controlled"]["rig_profile"] == _rig()
+
+
+def test_direct_source_authority_rejects_semantic_profile_reseal(tmp_path):
+    spec_path, _spec = _imagegen_fixture(tmp_path / "source")
+    batch_path = adopter.adopt_attempt(spec_path, tmp_path / "adopted")
+    authority = adopter.build_direct_source_authority(
+        batch_path,
+        **_shiba_direct_semantics(),
+    )
+    authority["taxonomy"]["breed"] = "another_breed"
+    authority["authority_sha256"] = adopter._hash_without(
+        authority, "authority_sha256"
+    )
+    authority_path = tmp_path / "resealed_authority.json"
+    _write_json(authority_path, authority)
+
+    with pytest.raises(contracts.ContractError, match="semantic profile hash"):
+        adopter.load_direct_source_authority(authority_path)
+
+
 def test_british_cleanup_accepts_only_exact_frozen_seed(tmp_path):
     spec_path, _spec = _british_fixture(
         tmp_path / "british",

@@ -40,6 +40,10 @@ from tools import run_controlled_animal_pixal_jobs as pixal_runner
 
 SPEC_SCHEMA = "avengine_direct_animal_pixal_adoption_spec_v1"
 BATCH_SCHEMA = "avengine_direct_animal_pixal_adopted_batch_v1"
+SOURCE_AUTHORITY_SCHEMA = "avengine_direct_animal_source_authority_v1"
+DIRECT_PROFILE_IDENTITY_SCHEMA = (
+    "avengine_direct_animal_semantic_profile_identity_v1"
+)
 
 IMAGEGEN_ROUTE = "imagegen_pixal3d_animal_research_v1"
 IMAGEGEN_SOURCE_KIND = "hash_bound_imagegen_isnet_v1"
@@ -138,6 +142,24 @@ _ATTEMPT_FIELDS = frozenset(
     }
 )
 _FILE_FIELDS = frozenset({"path", "sha256", "size_bytes"})
+_SOURCE_AUTHORITY_FIELDS = frozenset(
+    {
+        "schema",
+        "state_classification",
+        "formal_dataset_registration_authorized",
+        "adopted_batch",
+        "source_spec",
+        "instance_id",
+        "profile_schema_id",
+        "profile_sha256",
+        "request_sha256",
+        "taxonomy",
+        "fixed_attributes",
+        "lineage_group_id",
+        "acoustic_profile",
+        "authority_sha256",
+    }
+)
 _MODEL_REVISIONS = {
     "pixal3d": pixal_inputs.PIXAL_MODEL_REVISION,
     "dino": pixal_inputs.DINO_REVISION,
@@ -210,6 +232,16 @@ def _require_canonical_identifier(value: Any, label: str) -> str:
         raise contracts.ContractError(
             f"{label} must be one canonical lower-case identifier segment"
         )
+    return value
+
+
+def _require_sha256(value: Any, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise contracts.ContractError(f"{label} must be a lowercase SHA-256")
     return value
 
 
@@ -1675,6 +1707,308 @@ def load_adopted_batch(path: Path) -> tuple[Path, dict[str, Any]]:
         raise contracts.ContractError("adopted GLB/PBR readback changed")
     _reject_formal_authorization(batch, "adopted batch")
     return path, copy.deepcopy(dict(batch))
+
+
+def _absolute_file_record(path: Path) -> dict[str, Any]:
+    path = Path(path).resolve()
+    return {
+        "path": str(path),
+        "sha256": _sha256_file(path),
+        "size_bytes": path.stat().st_size,
+    }
+
+
+def _direct_profile_sha256(
+    *,
+    profile_schema_id: str,
+    taxonomy: Mapping[str, Any],
+    fixed_attributes: Mapping[str, Any],
+    lineage_group_id: str,
+    rig_profile: Mapping[str, Any],
+    acoustic_profile: Mapping[str, Any],
+) -> str:
+    """Hash the finite semantic profile completed by the direct authority."""
+
+    return _json_sha256(
+        {
+            "schema": DIRECT_PROFILE_IDENTITY_SCHEMA,
+            "profile_schema_id": profile_schema_id,
+            "asset_class": "animal",
+            "lineage_group_id": lineage_group_id,
+            "taxonomy": copy.deepcopy(dict(taxonomy)),
+            "fixed_attributes": copy.deepcopy(dict(fixed_attributes)),
+            "rig_profile": copy.deepcopy(dict(rig_profile)),
+            "acoustic_profile": copy.deepcopy(dict(acoustic_profile)),
+        }
+    )
+
+
+def _validate_direct_semantics(
+    *,
+    profile_schema_id: Any,
+    taxonomy: Any,
+    fixed_attributes: Any,
+    lineage_group_id: Any,
+    acoustic_profile: Any,
+    sampled_attributes: Any,
+    rig_profile: Any,
+) -> str:
+    profile_schema_id = _require_canonical_identifier(
+        profile_schema_id, "direct authority profile_schema_id"
+    )
+    lineage_group_id = _require_canonical_identifier(
+        lineage_group_id, "direct authority lineage_group_id"
+    )
+    taxonomy_value = contracts._validate_attribute_values(
+        taxonomy, "direct authority taxonomy"
+    )
+    if set(taxonomy_value) != {"species", "breed"}:
+        raise contracts.ContractError(
+            "direct authority taxonomy must contain exactly species and breed"
+        )
+    for name, value in taxonomy_value.items():
+        _require_canonical_identifier(
+            value, f"direct authority taxonomy.{name}"
+        )
+    fixed_value = contracts._validate_attribute_values(
+        fixed_attributes, "direct authority fixed_attributes"
+    )
+    sampled_value = contracts._validate_attribute_values(
+        sampled_attributes, "authenticated direct sampled_attributes"
+    )
+    overlap = (
+        (set(taxonomy_value) & set(fixed_value))
+        | (set(taxonomy_value) & set(sampled_value))
+        | (set(fixed_value) & set(sampled_value))
+    )
+    if overlap:
+        raise contracts.ContractError(
+            f"direct authority attribute names overlap: {sorted(overlap)}"
+        )
+    validated_rig = contracts._validate_rig_profile(
+        rig_profile, asset_class="animal"
+    )
+    validated_acoustic = contracts._validate_acoustic_profile(
+        acoustic_profile,
+        available_attributes=(
+            set(taxonomy_value) | set(fixed_value) | set(sampled_value)
+        ),
+    )
+    return _direct_profile_sha256(
+        profile_schema_id=profile_schema_id,
+        taxonomy=taxonomy_value,
+        fixed_attributes=fixed_value,
+        lineage_group_id=lineage_group_id,
+        rig_profile=validated_rig,
+        acoustic_profile=validated_acoustic,
+    )
+
+
+def build_direct_source_authority(
+    adopted_batch_path: Path,
+    *,
+    taxonomy: Mapping[str, Any],
+    fixed_attributes: Mapping[str, Any],
+    lineage_group_id: str,
+    acoustic_profile: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build the small explicit semantic authority for one adopted batch.
+
+    Sampled attributes, the physical target, rig profile, and model revisions
+    intentionally remain in the authenticated adopted batch/source attempt.
+    """
+
+    adopted_batch_path, batch = load_adopted_batch(adopted_batch_path)
+    attempt = batch["attempts"][0]
+    source_spec_record = batch["source_spec"]
+    source_spec_path = _relative_record_path(
+        {name: source_spec_record[name] for name in _FILE_FIELDS},
+        adopted_batch_path.parent,
+        "copied source spec",
+    )
+    _, _spec, adoption_context = load_adoption_spec(source_spec_path)
+    profile_sha256 = _validate_direct_semantics(
+        profile_schema_id=attempt["profile_schema_id"],
+        taxonomy=taxonomy,
+        fixed_attributes=fixed_attributes,
+        lineage_group_id=lineage_group_id,
+        acoustic_profile=acoustic_profile,
+        sampled_attributes=attempt["sampled_attributes"],
+        rig_profile=adoption_context["controlled"]["rig_profile"],
+    )
+    authority: dict[str, Any] = {
+        "schema": SOURCE_AUTHORITY_SCHEMA,
+        "state_classification": "research_candidate",
+        "formal_dataset_registration_authorized": False,
+        "adopted_batch": {
+            "file": _absolute_file_record(adopted_batch_path),
+            "batch_sha256": batch["batch_sha256"],
+        },
+        "source_spec": {
+            "file": _absolute_file_record(source_spec_path),
+            "spec_sha256": source_spec_record["spec_sha256"],
+        },
+        "instance_id": attempt["instance_id"],
+        "profile_schema_id": attempt["profile_schema_id"],
+        "profile_sha256": profile_sha256,
+        "request_sha256": attempt["request_sha256"],
+        "taxonomy": copy.deepcopy(dict(taxonomy)),
+        "fixed_attributes": copy.deepcopy(dict(fixed_attributes)),
+        "lineage_group_id": lineage_group_id,
+        "acoustic_profile": copy.deepcopy(dict(acoustic_profile)),
+    }
+    authority["authority_sha256"] = _hash_without(
+        authority, "authority_sha256"
+    )
+    return authority
+
+
+def load_direct_source_authority(
+    path: Path,
+    *,
+    expected_sha256: str | None = None,
+) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    """Authenticate a direct semantic authority and its complete adopted source."""
+
+    unresolved = Path(path).absolute()
+    if unresolved.is_symlink() or not unresolved.is_file():
+        raise contracts.ContractError(
+            f"direct source authority is missing: {unresolved}"
+        )
+    if expected_sha256 is not None:
+        _require_sha256(expected_sha256, "direct source authority file SHA-256")
+        path = _authenticate_path_hash(
+            str(unresolved),
+            expected_sha256,
+            "direct source authority",
+        )
+    else:
+        path = unresolved.resolve()
+    authority = _require_exact_fields(
+        contracts.load_json(path),
+        _SOURCE_AUTHORITY_FIELDS,
+        "direct source authority",
+    )
+    if (
+        authority.get("schema") != SOURCE_AUTHORITY_SCHEMA
+        or authority.get("state_classification") != "research_candidate"
+        or authority.get("formal_dataset_registration_authorized") is not False
+        or authority.get("authority_sha256")
+        != _hash_without(authority, "authority_sha256")
+    ):
+        raise contracts.ContractError(
+            "direct source authority contract/hash is invalid"
+        )
+    instance_id = _require_canonical_identifier(
+        authority.get("instance_id"), "direct authority instance_id"
+    )
+    _require_sha256(
+        authority.get("profile_sha256"), "direct authority profile_sha256"
+    )
+    _require_sha256(
+        authority.get("request_sha256"), "direct authority request_sha256"
+    )
+
+    batch_authority = _require_exact_fields(
+        authority.get("adopted_batch"),
+        frozenset({"file", "batch_sha256"}),
+        "direct authority adopted_batch",
+    )
+    batch_file = _require_exact_fields(
+        batch_authority.get("file"),
+        _FILE_FIELDS,
+        "direct authority adopted batch file",
+    )
+    if not Path(batch_file["path"]).is_absolute():
+        raise contracts.ContractError(
+            "direct authority adopted batch path must be absolute"
+        )
+    adopted_batch_path = _authenticate_file_record(
+        batch_file, "direct authority adopted batch file"
+    )
+    adopted_batch_path, batch = load_adopted_batch(adopted_batch_path)
+    if batch_authority.get("batch_sha256") != batch.get("batch_sha256"):
+        raise contracts.ContractError(
+            "direct authority adopted batch identity changed"
+        )
+
+    source_authority = _require_exact_fields(
+        authority.get("source_spec"),
+        frozenset({"file", "spec_sha256"}),
+        "direct authority source_spec",
+    )
+    source_file = _require_exact_fields(
+        source_authority.get("file"),
+        _FILE_FIELDS,
+        "direct authority source spec file",
+    )
+    if not Path(source_file["path"]).is_absolute():
+        raise contracts.ContractError(
+            "direct authority source spec path must be absolute"
+        )
+    authority_source_spec_path = _authenticate_file_record(
+        source_file, "direct authority source spec file"
+    )
+    batch_source_record = batch["source_spec"]
+    batch_source_spec_path = _relative_record_path(
+        {name: batch_source_record[name] for name in _FILE_FIELDS},
+        adopted_batch_path.parent,
+        "adopted batch source spec",
+    )
+    if (
+        authority_source_spec_path != batch_source_spec_path
+        or source_file["sha256"] != batch_source_record["sha256"]
+        or source_file["size_bytes"] != batch_source_record["size_bytes"]
+        or source_authority.get("spec_sha256")
+        != batch_source_record.get("spec_sha256")
+    ):
+        raise contracts.ContractError(
+            "direct authority source spec identity changed"
+        )
+    source_spec_path, source_spec, adoption_context = load_adoption_spec(
+        batch_source_spec_path
+    )
+    attempt = batch["attempts"][0]
+    controlled = adoption_context["controlled"]
+    if (
+        instance_id != attempt.get("instance_id")
+        or instance_id != source_spec.get("instance_id")
+        or authority.get("profile_schema_id")
+        != attempt.get("profile_schema_id")
+        or authority.get("profile_schema_id")
+        != controlled.get("profile_schema_id")
+        or authority.get("request_sha256") != attempt.get("request_sha256")
+        or authority.get("request_sha256") != controlled.get("request_sha256")
+    ):
+        raise contracts.ContractError(
+            "direct authority adopted attempt identity changed"
+        )
+    expected_profile_sha256 = _validate_direct_semantics(
+        profile_schema_id=authority["profile_schema_id"],
+        taxonomy=authority["taxonomy"],
+        fixed_attributes=authority["fixed_attributes"],
+        lineage_group_id=authority["lineage_group_id"],
+        acoustic_profile=authority["acoustic_profile"],
+        sampled_attributes=attempt["sampled_attributes"],
+        rig_profile=controlled["rig_profile"],
+    )
+    if authority["profile_sha256"] != expected_profile_sha256:
+        raise contracts.ContractError(
+            "direct authority semantic profile hash changed"
+        )
+    _reject_formal_authorization(authority, "direct source authority")
+    return (
+        path,
+        copy.deepcopy(dict(authority)),
+        {
+            "adopted_batch_path": adopted_batch_path,
+            "adopted_batch": copy.deepcopy(dict(batch)),
+            "attempt": copy.deepcopy(dict(attempt)),
+            "source_spec_path": source_spec_path,
+            "source_spec": copy.deepcopy(dict(source_spec)),
+            "adoption_context": copy.deepcopy(dict(adoption_context)),
+        },
+    )
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
