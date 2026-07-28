@@ -880,6 +880,34 @@ def _validate_direct_source_asset_identity(
         raise contracts.ContractError(
             "direct source asset authority context is invalid"
         )
+    direct_geometry = context.get("direct_geometry_authority")
+    provenance = payload.get("provenance")
+    provenance_models = provenance.get("models", {})
+    artifact_role = source_registry.PHYSICAL_PROFILE_AUTHORITY_ARTIFACT_ROLE
+    request_model = source_registry.PHYSICAL_PROFILE_AUTHORITY_REQUEST_MODEL
+    physical_authority = artifact_role in payload["artifacts"]
+    if physical_authority != (request_model in provenance_models):
+        raise contracts.ContractError("physical-profile authority binding is incomplete")
+    expected_target_physical_profile = attempt.get("target_physical_profile")
+    if physical_authority:
+        attempt_physical = attempt.get("target_physical_profile")
+        restored_physical = payload.get("target_physical_profile")
+        stripped_physical = (
+            {name: value for name, value in restored_physical.items()
+             if name != "reference_provenance"}
+            if isinstance(restored_physical, Mapping) else None
+        )
+        if (
+            not isinstance(direct_geometry, Mapping)
+            or "reference_provenance" in attempt_physical
+            or stripped_physical != attempt_physical
+        ):
+            raise contracts.ContractError("physical-profile authority changed identity")
+        _require_sha256(
+            provenance_models[request_model],
+            "physical-profile authority pinned request sha256",
+        )
+        expected_target_physical_profile = restored_physical
     expected_identity = {
         "asset_id": authority.get("instance_id"),
         "profile_schema_id": authority.get("profile_schema_id"),
@@ -890,9 +918,7 @@ def _validate_direct_source_asset_identity(
         "taxonomy": authority.get("taxonomy"),
         "fixed_attributes": authority.get("fixed_attributes"),
         "sampled_attributes": attempt.get("sampled_attributes"),
-        "target_physical_profile": attempt.get(
-            "target_physical_profile"
-        ),
+        "target_physical_profile": expected_target_physical_profile,
         "rig": controlled.get("rig_profile"),
         "acoustic_profile": authority.get("acoustic_profile"),
     }
@@ -902,10 +928,8 @@ def _validate_direct_source_asset_identity(
         if contracts.canonical_json(payload.get(name))
         != contracts.canonical_json(expected)
     ]
-    provenance = payload.get("provenance")
     expected_models = copy.deepcopy(adopted_batch.get("models"))
     expected_attempt_id: str | None = None
-    direct_geometry = context.get("direct_geometry_authority")
     if direct_geometry is not None:
         replay = (
             direct_geometry.get("geometry_closure_replay")
@@ -962,6 +986,11 @@ def _validate_direct_source_asset_identity(
         expected_attempt_id = (
             f"direct_geometry_{attempt.get('execution_job_id')}"
         )
+    if physical_authority:
+        if not isinstance(expected_models, Mapping) or request_model in expected_models:
+            raise contracts.ContractError("physical authority model role collision")
+        expected_models = copy.deepcopy(dict(expected_models))
+        expected_models[request_model] = provenance_models[request_model]
     if (
         changed
         or not isinstance(provenance, Mapping)
@@ -1879,6 +1908,25 @@ def load_source_asset(
             raise contracts.ContractError(
                 "direct source asset lineage artifacts changed from registry authority"
             )
+    physical_role = source_registry.PHYSICAL_PROFILE_AUTHORITY_ARTIFACT_ROLE
+    physical_profile_authority_path = authenticated.get(f"artifact:{physical_role}")
+    if physical_profile_authority_path is not None:
+        (
+            _authenticated_authority_path,
+            _authority_request,
+            restored_physical_profile,
+        ) = source_registry._authenticate_physical_profile_authority_request_batch(
+            physical_profile_authority_path,
+            payload["artifacts"][physical_role]["sha256"],
+            taxonomy=request["taxonomy"],
+            sampled_attributes=profile["attempt"]["sampled_attributes"],
+            target_physical_profile=profile["attempt"]["target_physical_profile"],
+            expected_request_sha256=payload["provenance"]["models"][
+                source_registry.PHYSICAL_PROFILE_AUTHORITY_REQUEST_MODEL
+            ],
+        )
+        if restored_physical_profile != payload["target_physical_profile"]:
+            raise contracts.ContractError("physical-profile restoration changed identity")
     if require_derived_authority and require_direct_geometry_authority:
         raise contracts.ContractError(
             "source asset cannot claim both legacy derived and direct geometry "
@@ -1891,6 +1939,9 @@ def load_source_asset(
             if isinstance(direct_geometry, Mapping)
             else None
         )
+        if physical_profile_authority_path is not None:
+            expected_artifacts = dict(expected_artifacts)
+            expected_artifacts[physical_role] = physical_profile_authority_path
         closure_descriptor = (
             direct_geometry.get("geometry_closure")
             if isinstance(direct_geometry, Mapping)
@@ -1919,15 +1970,12 @@ def load_source_asset(
             or not isinstance(closure_replay, Mapping)
             or set(closure_replay) != {"manifest", "paths", "repair", "audit"}
             or not isinstance(expected_artifacts, Mapping)
-            or set(expected_artifacts)
-            != DIRECT_GEOMETRY_SOURCE_ARTIFACT_ROLES
-            or set(payload["artifacts"])
-            != DIRECT_GEOMETRY_SOURCE_ARTIFACT_ROLES
+            or set(payload["artifacts"]) != set(expected_artifacts)
         ):
             raise contracts.ContractError(
                 "direct geometry source asset lacks its exact v4 registry authority"
             )
-        for role in sorted(DIRECT_GEOMETRY_SOURCE_ARTIFACT_ROLES):
+        for role in sorted(expected_artifacts):
             expected_path = expected_artifacts.get(role)
             if (
                 not isinstance(expected_path, Path)

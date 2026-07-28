@@ -1191,6 +1191,7 @@ def _direct_geometry_registration_fixture(
     }
     pixal_batch = {
         "batch_sha256": direct_authority["adopted_batch"]["batch_sha256"],
+        "models": {},
     }
     direct_context = {
         "adopted_batch_path": pixal_batch_path,
@@ -1382,6 +1383,7 @@ def _direct_geometry_registration_fixture(
         "closure_call": closure_call,
         "built": built,
         "attempt": attempt,
+        "direct_authority": direct_authority,
         "raw_review": raw_review,
         "original_raw": original_raw,
         "adopted_raw": adopted_raw,
@@ -1463,6 +1465,78 @@ def test_register_direct_geometry_accepts_zero_area_filter(
 
     assert manifest_path.is_file()
     assert _sha256(case["original_raw"]) != _sha256(case["repaired_glb"])
+
+
+def test_register_direct_geometry_restores_request_bound_physical_provenance(
+    tmp_path,
+    monkeypatch,
+    frozen_historical_preflight,
+):
+    case = _direct_geometry_registration_fixture(tmp_path, monkeypatch)
+    _preflight, input_dir = frozen_historical_preflight
+    authority_batch = input_dir / "instance_requests.json"
+    request = contracts.load_json(authority_batch)["requests"][0]
+    target = copy.deepcopy(request["target_physical_profile"])
+    reference_provenance = target.pop("reference_provenance")
+    case["direct_authority"]["taxonomy"] = copy.deepcopy(request["taxonomy"])
+    case["attempt"]["sampled_attributes"] = copy.deepcopy(
+        request["sampled_attributes"]
+    )
+    case["attempt"]["target_physical_profile"] = target
+    case["raw_review"]["sampled_attributes"] = copy.deepcopy(
+        request["sampled_attributes"]
+    )
+    case["raw_review"]["target_physical_profile"] = copy.deepcopy(target)
+
+    registry.register_direct_geometry(
+        case["authority_path"],
+        case["authority_sha256"],
+        case["batch_path"],
+        case["decision_batch_path"],
+        case["closure_path"],
+        case["closure_sha256"],
+        tmp_path / "registered",
+        physical_profile_authority_request_batch_path=authority_batch,
+        expected_physical_profile_authority_request_batch_sha256=_sha256(
+            authority_batch
+        ),
+    )
+
+    built = case["built"]
+    assert built["direct_context"]["attempt"]["target_physical_profile"][
+        "reference_provenance"
+    ] == reference_provenance
+    assert (
+        registry.PHYSICAL_PROFILE_AUTHORITY_ARTIFACT_ROLE
+        in built["artifacts"]
+    )
+    assert built["direct_context"]["adopted_batch"]["models"][
+        registry.PHYSICAL_PROFILE_AUTHORITY_REQUEST_MODEL
+    ] == request["request_sha256"]
+
+
+def test_physical_profile_authority_fails_closed_on_sha_or_field_drift(
+    frozen_historical_preflight,
+):
+    _preflight, input_dir = frozen_historical_preflight
+    authority_batch = input_dir / "instance_requests.json"
+    request = contracts.load_json(authority_batch)["requests"][0]
+    target = copy.deepcopy(request["target_physical_profile"])
+    target.pop("reference_provenance")
+    kwargs = {
+        "taxonomy": request["taxonomy"],
+        "sampled_attributes": request["sampled_attributes"],
+        "target_physical_profile": target,
+    }
+    with pytest.raises(contracts.ContractError, match="batch changed"):
+        registry._authenticate_physical_profile_authority_request_batch(
+            authority_batch, "f" * 64, **kwargs
+        )
+    kwargs["target_physical_profile"]["target_value_cm"] += 1
+    with pytest.raises(contracts.ContractError, match="match is not unique"):
+        registry._authenticate_physical_profile_authority_request_batch(
+            authority_batch, _sha256(authority_batch), **kwargs
+        )
 
 
 def test_register_direct_geometry_rejects_non_copy_adopted_bytes(

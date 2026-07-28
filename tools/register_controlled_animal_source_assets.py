@@ -41,6 +41,12 @@ DIRECT_GEOMETRY_RAW_DECISION_PROVENANCE_MODEL = (
 DIRECT_GEOMETRY_CLOSURE_PROVENANCE_MODEL = (
     "bounded_geometry_closure_manifest_sha256"
 )
+PHYSICAL_PROFILE_AUTHORITY_REQUEST_MODEL = "physical_profile_authority_request_sha256"
+PHYSICAL_PROFILE_AUTHORITY_ARTIFACT_ROLE = "physical_profile_authority_request_batch"
+PHYSICAL_PROFILE_BASE_FIELDS = frozenset(
+    ("control_attribute", "measurement", "mode", "profile_id",
+     "reference_value_cm", "selected_value", "target_value_cm", "tolerance_cm")
+)
 DERIVED_REGISTRY_AUTOMATIC_CHECKS = {
     "all_requests_reauthenticated": True,
     "all_pixal_input_attempt_request_identities_reauthenticated": True,
@@ -132,6 +138,71 @@ def _hash_without(value: Mapping[str, Any], key: str) -> str:
     return _json_sha256(
         {name: copy.deepcopy(item) for name, item in value.items() if name != key}
     )
+
+
+def _authenticate_physical_profile_authority_request_batch(
+    path: Path,
+    expected_file_sha256: str,
+    *,
+    taxonomy: Mapping[str, Any],
+    sampled_attributes: Mapping[str, Any],
+    target_physical_profile: Mapping[str, Any],
+    expected_request_sha256: str | None = None,
+) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    """Recover only missing physical reference provenance from one request."""
+
+    direct_adopter._require_sha256(expected_file_sha256, "authority batch SHA-256")
+    literal = Path(path).absolute()
+    resolved = literal.resolve()
+    if (
+        literal.is_symlink()
+        or not resolved.is_file()
+        or resolved.stat().st_size <= 0
+        or _sha256_file(resolved) != expected_file_sha256
+    ):
+        raise contracts.ContractError("physical-profile authority batch changed")
+    batch = contracts.load_json(resolved)
+    requests = batch.get("requests") if isinstance(batch, Mapping) else None
+    if (not isinstance(batch, Mapping)
+            or batch.get("schema") != contracts.REQUEST_BATCH_SCHEMA
+            or not isinstance(requests, list) or not requests):
+        raise contracts.ContractError("physical-profile authority batch is invalid")
+    matching = []
+    for value in requests:
+        request = contracts.validate_request_integrity(value)
+        physical = request.get("target_physical_profile")
+        if (
+            request.get("taxonomy") == taxonomy
+            and request.get("sampled_attributes") == sampled_attributes
+            and isinstance(physical, Mapping)
+            and all(
+                physical.get(field) == target_physical_profile.get(field)
+                for field in PHYSICAL_PROFILE_BASE_FIELDS
+            )
+        ):
+            matching.append(request)
+    if len(matching) != 1:
+        raise contracts.ContractError("physical-profile authority match is not unique")
+    request = matching[0]
+    if (expected_request_sha256 is not None
+            and request["request_sha256"] != direct_adopter._require_sha256(
+                expected_request_sha256, "authority request SHA-256")):
+        raise contracts.ContractError("physical-profile authority request changed")
+    authority_profile = request.get("target_physical_profile")
+    authority_without_provenance = (copy.deepcopy(dict(authority_profile))
+                                    if isinstance(authority_profile, Mapping) else {})
+    reference_provenance = authority_without_provenance.pop(
+        "reference_provenance", None
+    )
+    if (
+        "reference_provenance" in target_physical_profile
+        or reference_provenance is None
+        or authority_without_provenance != target_physical_profile
+    ):
+        raise contracts.ContractError("authority differs beyond reference_provenance")
+    restored = copy.deepcopy(dict(target_physical_profile))
+    restored["reference_provenance"] = reference_provenance
+    return resolved, request, restored
 
 
 def spear_artifact(path: Path) -> dict[str, Any]:
@@ -1683,6 +1754,9 @@ def register_direct_geometry(
     geometry_closure_path: Path,
     expected_geometry_closure_sha256: str,
     output_root: Path,
+    *,
+    physical_profile_authority_request_batch_path: Path | None = None,
+    expected_physical_profile_authority_request_batch_sha256: str | None = None,
 ) -> Path:
     """Register one direct asset from its preserved raw approval and v2 closure.
 
@@ -1730,6 +1804,19 @@ def register_direct_geometry(
     ):
         raise contracts.ContractError(
             "direct authority adopted attempt identity changed"
+        )
+    if (physical_profile_authority_request_batch_path is None) != (
+        expected_physical_profile_authority_request_batch_sha256 is None
+    ):
+        raise contracts.ContractError("physical-profile authority pair is incomplete")
+    physical_profile_authority = None
+    if physical_profile_authority_request_batch_path is not None:
+        physical_profile_authority = _authenticate_physical_profile_authority_request_batch(
+            physical_profile_authority_request_batch_path,
+            expected_physical_profile_authority_request_batch_sha256,
+            taxonomy=direct_authority["taxonomy"],
+            sampled_attributes=attempt["sampled_attributes"],
+            target_physical_profile=attempt["target_physical_profile"],
         )
 
     decision_batch_path, decision_batch, raw_decisions = load_decision_batch(
@@ -2018,9 +2105,25 @@ def register_direct_geometry(
             direct_context["source_spec_path"]
         ),
     }
+    effective_direct_context = copy.deepcopy(direct_context)
+    if physical_profile_authority is not None:
+        (
+            physical_authority_path,
+            physical_authority_request,
+            restored_physical_profile,
+        ) = physical_profile_authority
+        artifacts[PHYSICAL_PROFILE_AUTHORITY_ARTIFACT_ROLE] = spear_artifact(
+            physical_authority_path)
+        effective_direct_context["attempt"]["target_physical_profile"] = (
+            restored_physical_profile)
+        models = effective_direct_context["adopted_batch"]["models"]
+        if PHYSICAL_PROFILE_AUTHORITY_REQUEST_MODEL in models:
+            raise contracts.ContractError("physical authority model role collision")
+        models[PHYSICAL_PROFILE_AUTHORITY_REQUEST_MODEL] = (
+            physical_authority_request["request_sha256"])
     source_asset = _build_direct_source_asset_v2(
         authority=direct_authority,
-        direct_context=direct_context,
+        direct_context=effective_direct_context,
         artifacts=artifacts,
         canonical_raw_decision=raw_payload,
         bounded_geometry_closure=closure_manifest,
@@ -2631,6 +2734,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-derived-static-decision-sha256")
     parser.add_argument("--geometry-closure", type=Path)
     parser.add_argument("--expected-geometry-closure-sha256")
+    parser.add_argument("--physical-profile-authority-request-batch", type=Path)
+    parser.add_argument("--expected-physical-profile-authority-request-batch-sha256")
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument(
         "--frozen-historical-preflight",
@@ -2664,6 +2769,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise contracts.ContractError(
                 "geometry closure path and expected SHA-256 must be supplied together"
             )
+        authority_batch = args.physical_profile_authority_request_batch
+        authority_batch_sha = (
+            args.expected_physical_profile_authority_request_batch_sha256)
+        if (authority_batch is None) != (authority_batch_sha is None):
+            raise contracts.ContractError("physical-profile authority pair is incomplete")
+        if authority_batch is not None and args.geometry_closure is None:
+            raise contracts.ContractError("physical-profile authority requires geometry")
         if (
             args.derived_static_decision is not None
             and args.geometry_closure is not None
@@ -2689,6 +2801,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.geometry_closure,
                 args.expected_geometry_closure_sha256,
                 args.output_root,
+                physical_profile_authority_request_batch_path=authority_batch,
+                expected_physical_profile_authority_request_batch_sha256=authority_batch_sha,
             )
         elif args.derived_static_decision is None:
             if args.preflight is None:

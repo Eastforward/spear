@@ -1847,6 +1847,8 @@ def _direct_registry_reader_fixture(tmp_path, monkeypatch):
         "registry_path": registry_path,
         "source_asset": source_asset,
         "source_path": source_path,
+        "canonical_request": request,
+        "request_batch_path": tmp_path / "inputs" / "instance_requests.json",
     }
 
 
@@ -2207,6 +2209,53 @@ def test_direct_geometry_v4_registry_round_trip_replays_closure_and_source_asset
     assert authenticated["artifact:derived_repaired_glb"] == (
         fixture["artifact_paths"]["derived_repaired_glb"].resolve()
     )
+    assert set(anchor[3]["direct_geometry_authority"]["source_artifacts"]) == (
+        preparation.DIRECT_GEOMETRY_SOURCE_ARTIFACT_ROLES
+    )
+
+
+def test_direct_geometry_v4_reauthenticates_physical_profile_authority(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = _direct_geometry_v4_reader_fixture(tmp_path, monkeypatch)
+    role = source_registry.PHYSICAL_PROFILE_AUTHORITY_ARTIFACT_ROLE
+    model = source_registry.PHYSICAL_PROFILE_AUTHORITY_REQUEST_MODEL
+    authority_batch = fixture["artifact_root"] / "physical_authority_batch.json"
+    shutil.copyfile(fixture["request_batch_path"], authority_batch)
+    fixture["context"]["attempt"]["target_physical_profile"].pop(
+        "reference_provenance"
+    )
+    fixture["decisions"][fixture["authority"]["instance_id"]][
+        "static_review"
+    ]["payload"]["target_physical_profile"].pop("reference_provenance")
+    fixture["source_asset"]["artifacts"][role] = _root_record(
+        "direct_fixture_root",
+        authority_batch,
+        fixture["artifact_root"],
+    )
+    fixture["source_asset"]["provenance"]["models"][model] = fixture[
+        "canonical_request"
+    ]["request_sha256"]
+    fixture["artifact_paths"][role] = authority_batch
+    _write_json(fixture["source_path"], fixture["source_asset"])
+    registry = contracts.load_json(fixture["registry_path"])
+    registry["source_assets"][0]["source_asset"] = _relative_record(
+        fixture["source_path"],
+        fixture["registry_path"].parent,
+    )
+    registry["registry_sha256"] = source_registry._hash_without(
+        registry,
+        "registry_sha256",
+    )
+    _write_json(fixture["registry_path"], registry)
+
+    anchor, (_path, source_asset, authenticated) = (
+        _load_direct_geometry_v4_fixture(fixture)
+    )
+
+    assert source_asset["target_physical_profile"]["reference_provenance"]
+    assert authenticated[f"artifact:{role}"] == authority_batch.resolve()
     assert set(anchor[3]["direct_geometry_authority"]["source_artifacts"]) == (
         preparation.DIRECT_GEOMETRY_SOURCE_ARTIFACT_ROLES
     )
