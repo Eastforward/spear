@@ -27,6 +27,83 @@ def test_position_indexed_topology_ignores_duplicate_gltf_seam_vertices():
     assert result["position_unique_vertices"] == 4
     assert result["boundary_edges"] == 0
     assert result["nonmanifold_edges_over_two_faces"] == 0
+    assert result["unpaired_oriented_edges"] == 0
+
+
+def test_position_indexed_topology_accepts_balanced_closed_multicover():
+    vertices = np.array(
+        [
+            [0, 0, 0],
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+        ],
+        dtype=float,
+    )
+    closed_tetrahedron = np.array(
+        [[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]],
+        dtype=int,
+    )
+
+    result = audit.position_indexed_topology(
+        vertices,
+        np.concatenate((closed_tetrahedron, closed_tetrahedron), axis=0),
+    )
+
+    assert result["nonmanifold_edges_over_two_faces"] == 6
+    assert result["balanced_oriented_multicover_edges_over_two_faces"] == 6
+    assert result["unbalanced_edges_over_two_faces"] == 0
+    assert result["unpaired_oriented_edges"] == 0
+    assert result["unpaired_oriented_edge_occurrences"] == 0
+
+
+def test_position_indexed_topology_rejects_unpaired_multicover_occurrence():
+    vertices = np.array(
+        [
+            [0, 0, 0],
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+        ],
+        dtype=float,
+    )
+    closed_tetrahedron = np.array(
+        [[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]],
+        dtype=int,
+    )
+    faces = np.concatenate(
+        (closed_tetrahedron, closed_tetrahedron, closed_tetrahedron[:1]),
+        axis=0,
+    )
+
+    result = audit.position_indexed_topology(vertices, faces)
+
+    assert result["unpaired_oriented_edges"] == 3
+    assert result["unpaired_oriented_edge_occurrences"] == 3
+    assert result["unbalanced_edges_over_two_faces"] == 3
+
+
+def test_position_indexed_topology_canonicalizes_signed_zero():
+    vertices = np.array(
+        [
+            [-0.0, 0, 0],
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [+0.0, 0, 0],
+        ],
+        dtype=float,
+    )
+    faces = np.array(
+        [[4, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]],
+        dtype=int,
+    )
+
+    result = audit.position_indexed_topology(vertices, faces)
+
+    assert result["position_unique_vertices"] == 4
+    assert result["boundary_edges"] == 0
+    assert result["unpaired_oriented_edges"] == 0
 
 
 def _synthetic_torso(center_z):
@@ -70,7 +147,7 @@ def test_torso_midline_detects_curvature_after_removing_rigid_yaw():
 def test_decision_does_not_reject_rigid_yaw_but_rejects_nonmanifold_ratio():
     result = audit.decision(
         {
-            "nonmanifold_edge_ratio_per_triangle": 0.002,
+            "unpaired_oriented_edge_ratio_per_triangle": 0.002,
         },
         {
             "yaw_degrees": 17.0,
@@ -82,14 +159,14 @@ def test_decision_does_not_reject_rigid_yaw_but_rejects_nonmanifold_ratio():
 
     assert result["status"] == "reject_before_lod_and_binding"
     assert result["rejection_reasons"] == [
-        "nonmanifold_edge_ratio_exceeds_0_001"
+        "unpaired_oriented_edge_ratio_exceeds_0_001"
     ]
     assert result["global_yaw_is_a_rejection_criterion"] is False
 
 
 def test_decision_rejects_real_centerline_bend():
     result = audit.decision(
-        {"nonmanifold_edge_ratio_per_triangle": 0.0},
+        {"unpaired_oriented_edge_ratio_per_triangle": 0.0},
         {
             "yaw_degrees": 0.0,
             "global_axis_yaw_degrees": 0.0,
@@ -106,7 +183,7 @@ def test_decision_rejects_real_centerline_bend():
 
 def test_decision_sends_high_tangent_bend_with_small_displacement_to_human():
     result = audit.decision(
-        {"nonmanifold_edge_ratio_per_triangle": 0.0},
+        {"unpaired_oriented_edge_ratio_per_triangle": 0.0},
         {
             "yaw_degrees": 25.0,
             "global_axis_yaw_degrees": 25.0,

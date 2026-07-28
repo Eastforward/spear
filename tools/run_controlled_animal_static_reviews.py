@@ -21,6 +21,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import controlled_source_asset_schema as contracts
+from tools import adopt_direct_animal_pixal_attempt as direct_adopter
 from tools import rocketbox_native_material_canary as immutable
 from tools import run_controlled_animal_pixal_jobs as pixal_runner
 
@@ -60,10 +61,7 @@ def _relative(path: Path, root: Path) -> dict[str, Any]:
     }
 
 
-def load_pixal_batch(path: Path) -> tuple[Path, dict[str, Any]]:
-    path = Path(path).resolve()
-    if path.is_symlink() or not path.is_file():
-        raise contracts.ContractError(f"Pixal batch is missing: {path}")
+def _load_legacy_pixal_batch(path: Path) -> tuple[Path, dict[str, Any]]:
     payload = contracts.load_json(path)
     if (
         not isinstance(payload, dict)
@@ -77,23 +75,65 @@ def load_pixal_batch(path: Path) -> tuple[Path, dict[str, Any]]:
     root = path.parent
     identifiers = set()
     for attempt in payload["attempts"]:
-        instance_id = attempt.get("instance_id")
-        if not instance_id or instance_id in identifiers:
+        instance_id = direct_adopter._require_canonical_identifier(
+            attempt.get("instance_id"), "legacy Pixal attempt instance_id"
+        )
+        if instance_id in identifiers:
             raise contracts.ContractError("Pixal attempts contain duplicate IDs")
         identifiers.add(instance_id)
-        output = (root / attempt["output"]["path"]).resolve()
+        relative = direct_adopter._canonical_relative_path(
+            attempt["output"]["path"], f"legacy Pixal output {instance_id}"
+        )
+        unresolved_output = root / relative
+        if unresolved_output.is_symlink():
+            raise contracts.ContractError(
+                f"Pixal output must not be a leaf symlink: {instance_id}"
+            )
+        output = unresolved_output.resolve()
         try:
-            output.relative_to(root)
+            output.relative_to(root.resolve())
         except ValueError as error:
             raise contracts.ContractError("Pixal output escaped its batch root") from error
         if (
-            output.is_symlink()
-            or not output.is_file()
+            not output.is_file()
             or output.stat().st_size != attempt["output"]["size_bytes"]
             or _sha256_file(output) != attempt["output"]["sha256"]
         ):
             raise contracts.ContractError(f"Pixal output changed: {instance_id}")
     return path, payload
+
+
+def load_pixal_batch(path: Path) -> tuple[Path, dict[str, Any]]:
+    unresolved = Path(path).absolute()
+    if unresolved.is_symlink() or not unresolved.is_file():
+        raise contracts.ContractError(f"Pixal batch is missing: {unresolved}")
+    path = unresolved.resolve()
+    payload = contracts.load_json(path)
+    if not isinstance(payload, dict):
+        raise contracts.ContractError("Pixal batch must be an object")
+    schema = payload.get("schema")
+    if schema == pixal_runner.BATCH_SCHEMA:
+        return _load_legacy_pixal_batch(path)
+    if schema == direct_adopter.BATCH_SCHEMA:
+        return direct_adopter.load_adopted_batch(path)
+    raise contracts.ContractError(f"unsupported Pixal batch schema: {schema!r}")
+
+
+def _reference_label_for_batch(batch: Mapping[str, Any]) -> str:
+    schema = batch.get("schema")
+    if schema == pixal_runner.BATCH_SCHEMA:
+        return "approved FLUX.2"
+    if schema == direct_adopter.BATCH_SCHEMA:
+        route = batch.get("route")
+        contract = direct_adopter.ROUTE_CONTRACTS.get(route)
+        if (
+            contract is None
+            or batch.get("source_kind") != contract["source_kind"]
+            or batch.get("reference_label") != contract["reference_label"]
+        ):
+            raise contracts.ContractError("adopted Pixal reference route/label differs")
+        return str(contract["reference_label"])
+    raise contracts.ContractError("unsupported Pixal batch reference label")
 
 
 def _panel(image: Image.Image, label: str) -> Image.Image:
@@ -106,13 +146,18 @@ def _panel(image: Image.Image, label: str) -> Image.Image:
     return panel
 
 
-def build_contact_sheet(reference_path: Path, view_root: Path, output: Path) -> None:
+def build_contact_sheet(
+    reference_path: Path,
+    view_root: Path,
+    output: Path,
+    reference_label: str = "approved FLUX.2",
+) -> None:
     with Image.open(reference_path) as opened:
         opened.load()
         reference = opened.convert("RGBA")
     backdrop = Image.new("RGB", reference.size, (205, 205, 205))
     backdrop.paste(reference.convert("RGB"), mask=reference.getchannel("A"))
-    panels = [("approved FLUX.2", backdrop)]
+    panels = [(reference_label, backdrop)]
     for view in VIEWS:
         with Image.open(view_root / f"{view}.png") as opened:
             opened.load()
@@ -124,14 +169,35 @@ def build_contact_sheet(reference_path: Path, view_root: Path, output: Path) -> 
 
 
 def _render_one(
-    attempt: dict[str, Any], pixal_root: Path, staging: Path
+    attempt: dict[str, Any],
+    pixal_root: Path,
+    staging: Path,
+    reference_label: str,
 ) -> dict[str, Any]:
-    instance_id = attempt["instance_id"]
-    destination = staging / instance_id
+    instance_id = direct_adopter._require_canonical_identifier(
+        attempt.get("instance_id"), "static-review instance_id"
+    )
+    destination = direct_adopter._contained_destination(
+        staging, Path(instance_id), "static-review destination"
+    )
     views = destination / "views"
     log_path = destination / "blender.log"
     destination.mkdir(parents=True, exist_ok=False)
-    glb = (pixal_root / attempt["output"]["path"]).resolve()
+    glb_relative = direct_adopter._canonical_relative_path(
+        attempt["output"]["path"], f"Pixal output {instance_id}"
+    )
+    unresolved_glb = pixal_root / glb_relative
+    if unresolved_glb.is_symlink():
+        raise contracts.ContractError(
+            f"Pixal output must not be a leaf symlink: {instance_id}"
+        )
+    glb = unresolved_glb.resolve()
+    try:
+        glb.relative_to(pixal_root.resolve())
+    except ValueError as error:
+        raise contracts.ContractError(
+            f"Pixal output escaped its batch root: {instance_id}"
+        ) from error
     command = [
         str(BLENDER),
         "-b",
@@ -193,16 +259,39 @@ def _render_one(
             opened.load()
             if opened.size != (480, 480):
                 raise contracts.ContractError("static view resolution changed")
-    reference_path = Path(attempt["pixal_input"]["path"]).resolve()
+    reference_value = Path(attempt["pixal_input"]["path"])
+    if reference_value.is_absolute():
+        unresolved_reference = reference_value
+    else:
+        reference_relative = direct_adopter._canonical_relative_path(
+            attempt["pixal_input"]["path"], f"Pixal reference {instance_id}"
+        )
+        unresolved_reference = pixal_root / reference_relative
+    if unresolved_reference.is_symlink():
+        raise contracts.ContractError(
+            f"Pixal reference must not be a leaf symlink: {instance_id}"
+        )
+    reference_path = unresolved_reference.resolve()
+    if not reference_value.is_absolute():
+        try:
+            reference_path.relative_to(pixal_root.resolve())
+        except ValueError as error:
+            raise contracts.ContractError(
+                f"Pixal reference escaped its batch root: {instance_id}"
+            ) from error
     if (
-        reference_path.is_symlink()
-        or not reference_path.is_file()
+        not reference_path.is_file()
         or reference_path.stat().st_size != attempt["pixal_input"]["size_bytes"]
         or _sha256_file(reference_path) != attempt["pixal_input"]["sha256"]
     ):
-        raise contracts.ContractError(f"approved FLUX/Pixal input changed: {instance_id}")
+        raise contracts.ContractError(f"authenticated Pixal input changed: {instance_id}")
     contact_path = destination / "contact_sheet.png"
-    build_contact_sheet(reference_path, views, contact_path)
+    build_contact_sheet(
+        reference_path,
+        views,
+        contact_path,
+        reference_label=reference_label,
+    )
     review: dict[str, Any] = {
         "schema": REVIEW_SCHEMA,
         "instance_id": instance_id,
@@ -249,6 +338,7 @@ def run_reviews(
     pixal_batch_path: Path, output_root: Path, workers: int
 ) -> Path:
     pixal_batch_path, batch = load_pixal_batch(pixal_batch_path)
+    reference_label = _reference_label_for_batch(batch)
     if not 1 <= workers <= 4:
         raise contracts.ContractError("workers must be in [1, 4]")
     if not BLENDER.is_file() or not RENDERER.is_file():
@@ -266,7 +356,13 @@ def run_reviews(
         reviews = []
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
-                executor.submit(_render_one, attempt, pixal_batch_path.parent, staging):
+                executor.submit(
+                    _render_one,
+                    attempt,
+                    pixal_batch_path.parent,
+                    staging,
+                    reference_label,
+                ):
                 attempt["instance_id"]
                 for attempt in batch["attempts"]
             }

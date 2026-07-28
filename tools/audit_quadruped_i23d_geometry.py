@@ -23,7 +23,7 @@ import numpy as np
 import trimesh
 
 
-SCHEMA = "avengine_quadruped_i23d_geometry_audit_v3"
+SCHEMA = "avengine_quadruped_i23d_geometry_audit_v4"
 BEND_PASS_DEG = 5.0
 BEND_REVIEW_DEG = 10.0
 BEND_REJECT_LATERAL_PEAK_RATIO = 0.05
@@ -64,8 +64,32 @@ def load_mesh(path: Path) -> tuple[np.ndarray, np.ndarray]:
 
 
 def position_indexed_topology(vertices: np.ndarray, faces: np.ndarray) -> dict[str, Any]:
-    """Count physical topology after exact glTF seam copies share an index."""
-    unique_vertices, inverse = np.unique(vertices, axis=0, return_inverse=True)
+    """Count oriented physical sheets after exact glTF seam copies coincide.
+
+    Pixel3D can emit more than one closed, consistently oriented sheet at the
+    same exact geometric edge.  A raw ``>2`` incidence count calls that
+    non-manifold even when every forward occurrence has one reverse partner.
+    Such an oriented multicover has no crack and can be partitioned into closed
+    sheets without moving a vertex.  The fail-closed defect is therefore an
+    *unpaired directed occurrence*, not multiplicity greater than two by
+    itself.
+
+    IEEE signed zero is canonicalized before position indexing.  ``-0.0`` and
+    ``+0.0`` are the same geometric coordinate and must not manufacture a
+    boundary at a glTF representation split.
+    """
+    vertices = np.asarray(vertices, dtype=np.float64)
+    faces = np.asarray(faces, dtype=np.int64)
+    if vertices.ndim != 2 or vertices.shape[1] != 3 or not np.isfinite(vertices).all():
+        raise ValueError("topology vertices must be finite Nx3 coordinates")
+    if faces.ndim != 2 or faces.shape[1] != 3:
+        raise ValueError("topology faces must be triangular")
+    if np.any(faces < 0) or np.any(faces >= len(vertices)):
+        raise ValueError("topology face index is outside the vertex domain")
+    canonical_vertices = np.where(vertices == 0.0, 0.0, vertices)
+    unique_vertices, inverse = np.unique(
+        canonical_vertices, axis=0, return_inverse=True
+    )
     indexed_faces = inverse[faces]
     nondegenerate = (
         (indexed_faces[:, 0] != indexed_faces[:, 1])
@@ -73,7 +97,7 @@ def position_indexed_topology(vertices: np.ndarray, faces: np.ndarray) -> dict[s
         & (indexed_faces[:, 2] != indexed_faces[:, 0])
     )
     valid_faces = indexed_faces[nondegenerate]
-    edges = np.concatenate(
+    directed_edges = np.concatenate(
         (
             valid_faces[:, [0, 1]],
             valid_faces[:, [1, 2]],
@@ -81,10 +105,27 @@ def position_indexed_topology(vertices: np.ndarray, faces: np.ndarray) -> dict[s
         ),
         axis=0,
     )
-    edges.sort(axis=1)
-    _, multiplicity = np.unique(edges, axis=0, return_counts=True)
+    undirected_edges = np.sort(directed_edges, axis=1)
+    _, edge_inverse, multiplicity = np.unique(
+        undirected_edges,
+        axis=0,
+        return_inverse=True,
+        return_counts=True,
+    )
+    forward = directed_edges[:, 0] == undirected_edges[:, 0]
+    forward_count = np.bincount(
+        edge_inverse,
+        weights=forward.astype(np.int64),
+        minlength=len(multiplicity),
+    ).astype(np.int64)
+    reverse_count = multiplicity - forward_count
+    orientation_balance = forward_count - reverse_count
+    balanced = orientation_balance == 0
     face_count = int(len(valid_faces))
-    nonmanifold = int(np.count_nonzero(multiplicity > 2))
+    over_two = multiplicity > 2
+    unpaired = ~balanced
+    unpaired_edge_count = int(np.count_nonzero(unpaired))
+    unpaired_occurrence_count = int(np.abs(orientation_balance).sum())
     return {
         "imported_vertices": int(len(vertices)),
         "position_unique_vertices": int(len(unique_vertices)),
@@ -94,11 +135,34 @@ def position_indexed_topology(vertices: np.ndarray, faces: np.ndarray) -> dict[s
             len(faces) - face_count
         ),
         "boundary_edges": int(np.count_nonzero(multiplicity == 1)),
-        "manifold_two_face_edges": int(np.count_nonzero(multiplicity == 2)),
-        "nonmanifold_edges_over_two_faces": nonmanifold,
+        "manifold_two_face_edges": int(
+            np.count_nonzero((multiplicity == 2) & balanced)
+        ),
+        "two_face_orientation_mismatch_edges": int(
+            np.count_nonzero((multiplicity == 2) & unpaired)
+        ),
+        "nonmanifold_edges_over_two_faces": int(np.count_nonzero(over_two)),
+        "balanced_oriented_multicover_edges_over_two_faces": int(
+            np.count_nonzero(over_two & balanced)
+        ),
+        "unbalanced_edges_over_two_faces": int(
+            np.count_nonzero(over_two & unpaired)
+        ),
+        "unpaired_oriented_edges": unpaired_edge_count,
+        "unpaired_oriented_edge_occurrences": unpaired_occurrence_count,
+        "paired_oriented_sheet_edge_occurrences": int(
+            (2 * np.minimum(forward_count, reverse_count)).sum()
+        ),
         "maximum_edge_face_multiplicity": int(multiplicity.max(initial=0)),
         "nonmanifold_edge_ratio_per_triangle": (
-            float(nonmanifold / face_count) if face_count else 1.0
+            float(np.count_nonzero(over_two) / face_count) if face_count else 1.0
+        ),
+        "unpaired_oriented_edge_ratio_per_triangle": (
+            float(unpaired_edge_count / face_count) if face_count else 1.0
+        ),
+        "topology_acceptance_semantics": (
+            "every_exact_position_directed_edge_occurrence_has_one_"
+            "oppositely_oriented_partner"
         ),
     }
 
@@ -214,7 +278,7 @@ def torso_midline_yaw(
 def decision(topology: dict[str, Any], midline: dict[str, Any]) -> dict[str, Any]:
     bend = abs(float(midline["centerline_bend_p95_degrees"]))
     lateral_peak_ratio = abs(float(midline["centerline_lateral_peak_ratio"]))
-    ratio = float(topology["nonmanifold_edge_ratio_per_triangle"])
+    ratio = float(topology["unpaired_oriented_edge_ratio_per_triangle"])
     rejected = []
     review = []
     # A tangent angle alone is unstable on short, noisy centerlines: a small
@@ -232,9 +296,9 @@ def decision(topology: dict[str, Any], midline: dict[str, Any]) -> dict[str, Any
     elif bend > BEND_PASS_DEG:
         review.append("torso_centerline_shape_requires_manual_top_view_review")
     if ratio > NONMANIFOLD_REJECT_RATIO:
-        rejected.append("nonmanifold_edge_ratio_exceeds_0_001")
+        rejected.append("unpaired_oriented_edge_ratio_exceeds_0_001")
     elif ratio > NONMANIFOLD_PASS_RATIO:
-        review.append("nonmanifold_edge_ratio_between_0_0001_and_0_001")
+        review.append("unpaired_oriented_edge_ratio_between_0_0001_and_0_001")
     if rejected:
         status = "reject_before_lod_and_binding"
     elif review:
@@ -253,8 +317,10 @@ def decision(topology: dict[str, Any], midline: dict[str, Any]) -> dict[str, Any
             "torso_centerline_lateral_peak_reject_above_ratio": (
                 BEND_REJECT_LATERAL_PEAK_RATIO
             ),
-            "nonmanifold_pass_max_ratio": NONMANIFOLD_PASS_RATIO,
-            "nonmanifold_reject_above_ratio": NONMANIFOLD_REJECT_RATIO,
+            "unpaired_oriented_edge_pass_max_ratio": NONMANIFOLD_PASS_RATIO,
+            "unpaired_oriented_edge_reject_above_ratio": (
+                NONMANIFOLD_REJECT_RATIO
+            ),
         },
     }
 
