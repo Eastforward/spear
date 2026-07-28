@@ -41,7 +41,15 @@ CANDIDATE_MATCH_TOLERANCE_DEG = 15.0
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--asset-workspace", required=True)
+    parser.add_argument(
+        "--asset-workspace",
+        required=True,
+        help=(
+            "Workspace identifier. For inputs below "
+            "SPEAR_ROOT/tmp/new_animal_assets, this must exactly match the "
+            "input path's top-level workspace directory."
+        ),
+    )
     parser.add_argument("--input-glb", type=Path, required=True)
     parser.add_argument("--estimate-json", type=Path)
     parser.add_argument("--confirmed-front-yaw-deg", type=float, required=True)
@@ -75,11 +83,36 @@ def angular_difference(a: float, b: float) -> float:
     return abs((a - b + 180.0) % 360.0 - 180.0)
 
 
+def require_production_workspace_binding(
+    asset_workspace: str,
+    input_glb: Path,
+) -> None:
+    generated_assets_root = (SPEAR_ROOT / "tmp/new_animal_assets").resolve()
+    resolved_input = Path(input_glb).resolve()
+    try:
+        relative_input = resolved_input.relative_to(generated_assets_root)
+    except ValueError:
+        return
+    if len(relative_input.parts) < 2:
+        raise SystemExit(
+            "production input GLB must be nested below one top-level "
+            "generated-animal workspace"
+        )
+    physical_workspace = relative_input.parts[0]
+    if asset_workspace != physical_workspace:
+        raise SystemExit(
+            "--asset-workspace does not match the input GLB's physical "
+            "generated-animal workspace "
+            f"(expected={physical_workspace!r}, observed={asset_workspace!r})"
+        )
+
+
 def main(argv=None):
     args = parse_args(argv)
     output = args.output.resolve()
     if output.exists() or output.is_symlink():
         raise SystemExit(f"refusing to replace declaration: {output}")
+    require_production_workspace_binding(args.asset_workspace, args.input_glb)
 
     estimate = None
     if args.estimate_json is not None:

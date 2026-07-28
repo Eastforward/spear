@@ -69,3 +69,56 @@ def test_cli_default_remains_the_registered_dog_donor(tmp_path: Path) -> None:
     )
     assert declaration["target_species"] == "dog"
     assert declaration["motion_donor_tag"] == DOG_MOTION_DONOR_ID
+
+
+def test_cli_accepts_matching_physical_generated_animal_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spear_root = tmp_path / "SPEAR"
+    workspace = (
+        spear_root
+        / "tmp/new_animal_assets"
+        / "physical_generated_animal_workspace"
+    )
+    workspace.mkdir(parents=True)
+    input_glb = workspace / "tokenrig" / "tokenrig_native.glb"
+    input_glb.parent.mkdir()
+    input_glb.write_bytes(b"production generated target fixture")
+    monkeypatch.setattr(subject, "SPEAR_ROOT", spear_root)
+    args = _base_args(tmp_path)
+    args[args.index("--asset-workspace") + 1] = workspace.name
+    args[args.index("--input-glb") + 1] = str(input_glb)
+
+    assert subject.main(args) == 0
+
+    declaration = json.loads(
+        (tmp_path / "forward_declaration.json").read_text(encoding="utf-8")
+    )
+    assert declaration["asset_workspace"] == workspace.name
+
+
+def test_cli_rejects_source_asset_id_in_place_of_physical_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spear_root = tmp_path / "SPEAR"
+    workspace = (
+        spear_root
+        / "tmp/new_animal_assets"
+        / "physical_generated_animal_workspace"
+    )
+    workspace.mkdir(parents=True)
+    input_glb = workspace / "tokenrig" / "tokenrig_native.glb"
+    input_glb.parent.mkdir()
+    input_glb.write_bytes(b"production generated target fixture")
+    monkeypatch.setattr(subject, "SPEAR_ROOT", spear_root)
+    args = _base_args(tmp_path)
+    args[args.index("--asset-workspace") + 1] = "dog_registry_identity_v1"
+    args[args.index("--input-glb") + 1] = str(input_glb)
+    output = tmp_path / "forward_declaration.json"
+
+    with pytest.raises(SystemExit, match="physical generated-animal workspace"):
+        subject.main(args)
+
+    assert not output.exists()
