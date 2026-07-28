@@ -78,7 +78,17 @@ PRESENTATION_AUTOMATIC_CHECKS = copy.deepcopy(
     preparation_bridge.PRESENTATION_AUTOMATIC_CHECKS
 )
 SOURCE_REGISTRY_VALIDATION_MODES = frozenset(
-    {"frozen_historical_preflight_v1", "current_exact_rebuild"}
+    {
+        "frozen_historical_preflight_v1",
+        "current_exact_rebuild",
+        "direct_source_authority_v1",
+    }
+)
+DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE = (
+    preparation_bridge.DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE
+)
+DIRECT_SOURCE_AUTHORITY_DESCRIPTOR_FIELDS = (
+    preparation_bridge.DIRECT_SOURCE_AUTHORITY_DESCRIPTOR_FIELDS
 )
 JOB_TYPE = "user_approved_generated_animal"
 EXPECTED_ACTIONS = ["Idle", "Walking"]
@@ -1854,9 +1864,40 @@ def _validate_source_registry_identity(
         raise contracts.ContractError(
             "UE import preparation canonical source asset identity changed"
         )
+    validation_mode = preparation.get("source_asset_registry_validation_mode")
+    registry_schema = registry.get("schema")
+    direct_registry = "direct_source_authority" in registry
+    derived_registry = registry_schema in {
+        source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
+        source_registry.DERIVED_REGISTRY_SCHEMA,
+    }
+    legacy_derived_registry = (
+        registry_schema == source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA
+    )
+    if direct_registry:
+        expected_registry_fields = preparation_bridge.DIRECT_DERIVED_REGISTRY_FIELDS
+        expected_registry_checks = (
+            source_registry.DIRECT_DERIVED_REGISTRY_AUTOMATIC_CHECKS
+        )
+        expected_registry_schemas = {source_registry.DERIVED_REGISTRY_SCHEMA}
+    elif derived_registry:
+        expected_registry_fields = preparation_bridge.DERIVED_REGISTRY_FIELDS
+        expected_registry_checks = (
+            preparation_bridge.LEGACY_DERIVED_REGISTRY_AUTOMATIC_CHECKS
+            if legacy_derived_registry
+            else preparation_bridge.DERIVED_REGISTRY_AUTOMATIC_CHECKS
+        )
+        expected_registry_schemas = {
+            source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
+            source_registry.DERIVED_REGISTRY_SCHEMA,
+        }
+    else:
+        expected_registry_fields = preparation_bridge.REGISTRY_FIELDS
+        expected_registry_checks = preparation_bridge.REGISTRY_AUTOMATIC_CHECKS
+        expected_registry_schemas = {source_registry.REGISTRY_SCHEMA}
     if (
-        set(registry) != preparation_bridge.REGISTRY_FIELDS
-        or registry.get("schema") != source_registry.REGISTRY_SCHEMA
+        set(registry) != expected_registry_fields
+        or registry_schema not in expected_registry_schemas
         or registry.get("state_classification") != "research_candidate"
         or registry.get("formal_dataset_registration_authorized") is not False
         or registry.get("registry_sha256")
@@ -1864,21 +1905,74 @@ def _validate_source_registry_identity(
         or registry.get("registry_sha256")
         != preparation.get("source_asset_registry_sha256")
         or registry.get("automatic_checks")
-        != preparation_bridge.REGISTRY_AUTOMATIC_CHECKS
+        != expected_registry_checks
     ):
         raise contracts.ContractError(
             "UE import preparation source registry identity changed"
         )
-    validation_mode = preparation.get("source_asset_registry_validation_mode")
-    preflight = registry.get("preflight")
-    if (
-        validation_mode not in SOURCE_REGISTRY_VALIDATION_MODES
-        or not isinstance(preflight, Mapping)
-        or preflight.get("validation_mode") != validation_mode
-    ):
-        raise contracts.ContractError(
-            "UE import preparation source registry validation mode changed"
+    if direct_registry:
+        direct_authority = registry.get("direct_source_authority")
+        if (
+            validation_mode != DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE
+            or not isinstance(direct_authority, Mapping)
+            or set(direct_authority)
+            != DIRECT_SOURCE_AUTHORITY_DESCRIPTOR_FIELDS
+            or not isinstance(direct_authority.get("path"), str)
+            or not Path(direct_authority["path"]).is_absolute()
+            or isinstance(direct_authority.get("size_bytes"), bool)
+            or not isinstance(direct_authority.get("size_bytes"), int)
+            or direct_authority["size_bytes"] <= 0
+        ):
+            raise contracts.ContractError(
+                "UE import preparation direct source authority changed"
+            )
+        direct_authority_path = _direct_file(
+            Path(direct_authority["path"]),
+            "direct source authority",
         )
+        direct_authority_sha256 = _require_sha256(
+            direct_authority.get("sha256"),
+            "direct source authority file hash",
+        )
+        authority_sha256 = _require_sha256(
+            direct_authority.get("authority_sha256"),
+            "direct source authority internal hash",
+        )
+        authority = _load(direct_authority_path)
+        if (
+            direct_authority_path.stat().st_size
+            != direct_authority["size_bytes"]
+            or _sha256(direct_authority_path) != direct_authority_sha256
+            or authority.get("authority_sha256") != authority_sha256
+            or authority_sha256
+            != _canonical_hash_without(authority, "authority_sha256")
+            or authority.get("schema")
+            != "avengine_direct_animal_source_authority_v1"
+            or authority.get("state_classification") != "research_candidate"
+            or authority.get("formal_dataset_registration_authorized") is not False
+            or authority.get("instance_id") != source_asset.get("asset_id")
+            or authority.get("profile_schema_id")
+            != source_asset.get("profile_schema_id")
+            or authority.get("profile_sha256") != source_asset.get("profile_sha256")
+            or authority.get("request_sha256") != source_asset.get("request_sha256")
+            or authority.get("taxonomy") != source_asset.get("taxonomy")
+            or authority.get("fixed_attributes")
+            != source_asset.get("fixed_attributes")
+        ):
+            raise contracts.ContractError(
+                "UE import preparation direct source authority identity changed"
+            )
+    else:
+        preflight = registry.get("preflight")
+        if (
+            validation_mode not in SOURCE_REGISTRY_VALIDATION_MODES
+            or validation_mode == DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE
+            or not isinstance(preflight, Mapping)
+            or preflight.get("validation_mode") != validation_mode
+        ):
+            raise contracts.ContractError(
+                "UE import preparation source registry validation mode changed"
+            )
     entries = registry.get("source_assets")
     matching = (
         [

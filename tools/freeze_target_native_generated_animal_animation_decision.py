@@ -772,6 +772,16 @@ def authenticate_review(
         roots,
         request=source_request,
         profile=source_profile,
+        require_derived_authority=(
+            registry.get("schema")
+            in {
+                bridge.source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
+                bridge.source_registry.DERIVED_REGISTRY_SCHEMA,
+            }
+        ),
+        expected_raw_static_decision_batch=registry.get(
+            "static_decision_batch"
+        ),
     )
     (
         authenticated_review_path,

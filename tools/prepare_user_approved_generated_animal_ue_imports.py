@@ -32,6 +32,7 @@ from PIL import Image, UnidentifiedImageError
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tools import adopt_direct_animal_pixal_attempt as direct_adopter
 from tools import compose_target_native_generated_quadruped_owner_review as presentation
 from tools import controlled_source_asset_schema as contracts
 from tools import register_controlled_animal_source_assets as source_registry
@@ -260,6 +261,18 @@ REGISTRY_FIELDS = frozenset(
 DERIVED_REGISTRY_FIELDS = REGISTRY_FIELDS | frozenset(
     {"derived_static_decisions"}
 )
+DIRECT_DERIVED_REGISTRY_FIELDS = (
+    DERIVED_REGISTRY_FIELDS - frozenset({"preflight"})
+) | frozenset({"direct_source_authority"})
+DIRECT_SOURCE_AUTHORITY_DESCRIPTOR_FIELDS = frozenset(
+    {
+        "path",
+        "sha256",
+        "size_bytes",
+        "authority_sha256",
+    }
+)
+DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE = "direct_source_authority_v1"
 REGISTRY_SOURCE_INDEX_FIELDS = frozenset(
     {
         "asset_id",
@@ -285,6 +298,9 @@ REGISTRY_AUTOMATIC_CHECKS = {
 }
 DERIVED_REGISTRY_AUTOMATIC_CHECKS = (
     source_registry.DERIVED_REGISTRY_AUTOMATIC_CHECKS
+)
+LEGACY_DERIVED_REGISTRY_AUTOMATIC_CHECKS = (
+    source_registry.LEGACY_DERIVED_REGISTRY_AUTOMATIC_CHECKS
 )
 PIXAL_BATCH_AUTOMATIC_CHECKS = {
     "all_inputs_reauthenticated": True,
@@ -626,6 +642,122 @@ def _resolve_root_artifact(value: Any, roots: Mapping[str, Path], label: str) ->
     return resolved
 
 
+def _load_direct_registry_source_authority(
+    registry: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    descriptor = registry.get("direct_source_authority")
+    if (
+        not isinstance(descriptor, Mapping)
+        or set(descriptor) != DIRECT_SOURCE_AUTHORITY_DESCRIPTOR_FIELDS
+        or not isinstance(descriptor.get("path"), str)
+        or not Path(descriptor["path"]).is_absolute()
+        or isinstance(descriptor.get("size_bytes"), bool)
+        or not isinstance(descriptor.get("size_bytes"), int)
+        or descriptor["size_bytes"] <= 0
+    ):
+        raise contracts.ContractError(
+            "source asset registry direct source authority descriptor is invalid"
+        )
+    _require_sha256(
+        descriptor.get("sha256"),
+        "source registry direct source authority file sha256",
+    )
+    _require_sha256(
+        descriptor.get("authority_sha256"),
+        "source registry direct source authority internal sha256",
+    )
+    authority_path = _direct_file(
+        Path(descriptor["path"]),
+        "source registry direct source authority",
+    )
+    if (
+        authority_path.stat().st_size != descriptor["size_bytes"]
+        or _sha256_file(authority_path) != descriptor["sha256"]
+    ):
+        raise contracts.ContractError(
+            "source registry direct source authority changed"
+        )
+    (
+        authenticated_path,
+        authority,
+        context,
+    ) = direct_adopter.load_direct_source_authority(
+        authority_path,
+        expected_sha256=descriptor["sha256"],
+    )
+    if (
+        authenticated_path != authority_path
+        or authority.get("authority_sha256")
+        != descriptor["authority_sha256"]
+    ):
+        raise contracts.ContractError(
+            "source registry direct source authority identity changed"
+        )
+    bound_context = copy.deepcopy(dict(context))
+    bound_context["direct_source_authority_path"] = authority_path
+    bound_context["direct_source_authority_descriptor"] = dict(descriptor)
+    return dict(descriptor), authority, bound_context
+
+
+def _validate_direct_source_asset_identity(
+    payload: Mapping[str, Any],
+    authority: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> None:
+    attempt = context.get("attempt")
+    adopted_batch = context.get("adopted_batch")
+    adoption_context = context.get("adoption_context")
+    controlled = (
+        adoption_context.get("controlled")
+        if isinstance(adoption_context, Mapping)
+        else None
+    )
+    if (
+        authority.get("schema") != direct_adopter.SOURCE_AUTHORITY_SCHEMA
+        or authority.get("state_classification") != "research_candidate"
+        or authority.get("formal_dataset_registration_authorized") is not False
+        or not isinstance(attempt, Mapping)
+        or not isinstance(adopted_batch, Mapping)
+        or not isinstance(controlled, Mapping)
+    ):
+        raise contracts.ContractError(
+            "direct source asset authority context is invalid"
+        )
+    expected_identity = {
+        "asset_id": authority.get("instance_id"),
+        "profile_schema_id": authority.get("profile_schema_id"),
+        "profile_sha256": authority.get("profile_sha256"),
+        "request_sha256": authority.get("request_sha256"),
+        "asset_class": "animal",
+        "lineage_group_id": authority.get("lineage_group_id"),
+        "taxonomy": authority.get("taxonomy"),
+        "fixed_attributes": authority.get("fixed_attributes"),
+        "sampled_attributes": attempt.get("sampled_attributes"),
+        "target_physical_profile": attempt.get(
+            "target_physical_profile"
+        ),
+        "rig": controlled.get("rig_profile"),
+        "acoustic_profile": authority.get("acoustic_profile"),
+    }
+    changed = [
+        name
+        for name, expected in expected_identity.items()
+        if contracts.canonical_json(payload.get(name))
+        != contracts.canonical_json(expected)
+    ]
+    provenance = payload.get("provenance")
+    if (
+        changed
+        or not isinstance(provenance, Mapping)
+        or contracts.canonical_json(provenance.get("models"))
+        != contracts.canonical_json(adopted_batch.get("models"))
+    ):
+        suffix = f": {', '.join(changed)}" if changed else ""
+        raise contracts.ContractError(
+            f"source asset does not match its direct source authority{suffix}"
+        )
+
+
 def load_source_registry_anchor(
     registry_path: Path,
     source_asset_path: Path,
@@ -645,15 +777,36 @@ def load_source_registry_anchor(
             "source asset registry does not match externally expected SHA-256"
         )
     registry = _load_strict_json(registry_path, "source asset registry")
-    derived_registry = (
-        isinstance(registry, dict)
-        and registry.get("schema") == source_registry.DERIVED_REGISTRY_SCHEMA
+    registry_schema = (
+        registry.get("schema") if isinstance(registry, dict) else None
+    )
+    derived_registry = registry_schema in {
+        source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
+        source_registry.DERIVED_REGISTRY_SCHEMA,
+    }
+    legacy_derived_registry = (
+        registry_schema == source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA
+    )
+    direct_derived_registry = (
+        registry_schema == source_registry.DERIVED_REGISTRY_SCHEMA
+        and isinstance(registry, dict)
+        and "direct_source_authority" in registry
     )
     expected_registry_fields = (
-        DERIVED_REGISTRY_FIELDS if derived_registry else REGISTRY_FIELDS
+        DIRECT_DERIVED_REGISTRY_FIELDS
+        if direct_derived_registry
+        else DERIVED_REGISTRY_FIELDS
+        if derived_registry
+        else REGISTRY_FIELDS
     )
     expected_registry_checks = (
-        DERIVED_REGISTRY_AUTOMATIC_CHECKS
+        source_registry.DIRECT_DERIVED_REGISTRY_AUTOMATIC_CHECKS
+        if direct_derived_registry
+        else (
+            LEGACY_DERIVED_REGISTRY_AUTOMATIC_CHECKS
+            if legacy_derived_registry
+            else DERIVED_REGISTRY_AUTOMATIC_CHECKS
+        )
         if derived_registry
         else REGISTRY_AUTOMATIC_CHECKS
     )
@@ -663,6 +816,7 @@ def load_source_registry_anchor(
         or registry.get("schema")
         not in {
             source_registry.REGISTRY_SCHEMA,
+            source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
             source_registry.DERIVED_REGISTRY_SCHEMA,
         }
         or registry.get("state_classification") != "research_candidate"
@@ -677,43 +831,69 @@ def load_source_registry_anchor(
         "source asset registry",
     )
 
-    preflight_descriptor = registry.get("preflight")
-    expected_preflight_fields = {
-        "path",
-        "sha256",
-        "preflight_sha256",
-        "validation_mode",
-    }
-    if (
-        not isinstance(preflight_descriptor, Mapping)
-        or set(preflight_descriptor) != expected_preflight_fields
-        or not isinstance(preflight_descriptor.get("path"), str)
-        or not Path(preflight_descriptor["path"]).is_absolute()
-        or preflight_descriptor.get("validation_mode")
-        not in {"frozen_historical_preflight_v1", "current_exact_rebuild"}
-    ):
-        raise contracts.ContractError(
-            "source asset registry preflight descriptor is invalid"
+    direct_source_authority: dict[str, Any] | None = None
+    direct_source_context: dict[str, Any] | None = None
+    if direct_derived_registry:
+        (
+            _direct_authority_descriptor,
+            direct_source_authority,
+            direct_source_context,
+        ) = _load_direct_registry_source_authority(registry)
+        requests: dict[str, Any] = {}
+        profiles: dict[str, Any] = {}
+        source_registry_validation_mode = (
+            DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE
         )
-    _require_sha256(
-        preflight_descriptor.get("sha256"), "source registry preflight sha256"
-    )
-    _require_sha256(
-        preflight_descriptor.get("preflight_sha256"),
-        "source registry internal preflight sha256",
-    )
-    preflight_path = _direct_file(
-        Path(preflight_descriptor["path"]), "source registry preflight"
-    )
-    if _sha256_file(preflight_path) != preflight_descriptor["sha256"]:
-        raise contracts.ContractError("source registry preflight changed")
-    _load_strict_json(preflight_path, "source registry preflight")
-    frozen = preflight_descriptor["validation_mode"] == "frozen_historical_preflight_v1"
-    preflight, requests, profiles = source_registry.load_source_contract(
-        preflight_path, frozen_historical_preflight=frozen
-    )
-    if preflight.get("preflight_sha256") != preflight_descriptor["preflight_sha256"]:
-        raise contracts.ContractError("source registry preflight identity changed")
+    else:
+        preflight_descriptor = registry.get("preflight")
+        expected_preflight_fields = {
+            "path",
+            "sha256",
+            "preflight_sha256",
+            "validation_mode",
+        }
+        if (
+            not isinstance(preflight_descriptor, Mapping)
+            or set(preflight_descriptor) != expected_preflight_fields
+            or not isinstance(preflight_descriptor.get("path"), str)
+            or not Path(preflight_descriptor["path"]).is_absolute()
+            or preflight_descriptor.get("validation_mode")
+            not in {"frozen_historical_preflight_v1", "current_exact_rebuild"}
+        ):
+            raise contracts.ContractError(
+                "source asset registry preflight descriptor is invalid"
+            )
+        _require_sha256(
+            preflight_descriptor.get("sha256"),
+            "source registry preflight sha256",
+        )
+        _require_sha256(
+            preflight_descriptor.get("preflight_sha256"),
+            "source registry internal preflight sha256",
+        )
+        preflight_path = _direct_file(
+            Path(preflight_descriptor["path"]), "source registry preflight"
+        )
+        if _sha256_file(preflight_path) != preflight_descriptor["sha256"]:
+            raise contracts.ContractError("source registry preflight changed")
+        _load_strict_json(preflight_path, "source registry preflight")
+        frozen = (
+            preflight_descriptor["validation_mode"]
+            == "frozen_historical_preflight_v1"
+        )
+        preflight, requests, profiles = source_registry.load_source_contract(
+            preflight_path, frozen_historical_preflight=frozen
+        )
+        if (
+            preflight.get("preflight_sha256")
+            != preflight_descriptor["preflight_sha256"]
+        ):
+            raise contracts.ContractError(
+                "source registry preflight identity changed"
+            )
+        source_registry_validation_mode = preflight_descriptor[
+            "validation_mode"
+        ]
 
     pixal_descriptor = registry.get("pixal_batch")
     expected_pixal_fields = {"path", "sha256", "batch_sha256"}
@@ -738,66 +918,139 @@ def load_source_registry_anchor(
     )
     if _sha256_file(pixal_path) != pixal_descriptor["sha256"]:
         raise contracts.ContractError("source registry Pixal batch changed")
-    pixal_payload = _load_strict_json(pixal_path, "source registry Pixal batch")
-    if (
-        not isinstance(pixal_payload, dict)
-        or pixal_payload.get("schema") != source_registry.pixal_runner.BATCH_SCHEMA
-        or pixal_payload.get("status") != "passed_generation_and_glb_readback"
-        or pixal_payload.get("state_classification") != "research_candidate"
-        or pixal_payload.get("formal_dataset_registration_authorized") is not False
-        or pixal_payload.get("batch_sha256")
-        != source_registry._hash_without(pixal_payload, "batch_sha256")
-        or pixal_payload.get("batch_sha256") != pixal_descriptor["batch_sha256"]
-    ):
-        raise contracts.ContractError(
-            "source registry Pixal batch contract/hash is invalid"
+    if direct_derived_registry:
+        if (
+            not isinstance(direct_source_authority, Mapping)
+            or not isinstance(direct_source_context, Mapping)
+        ):
+            raise contracts.ContractError(
+                "source registry direct source context is missing"
+            )
+        adopted_batch_path = direct_source_context.get("adopted_batch_path")
+        pixal_payload = direct_source_context.get("adopted_batch")
+        attempt = direct_source_context.get("attempt")
+        adoption_context = direct_source_context.get("adoption_context")
+        adopted_batch_authority = direct_source_authority.get(
+            "adopted_batch"
         )
-    _require_exact_automatic_checks(
-        pixal_payload.get("automatic_checks"),
-        PIXAL_BATCH_AUTOMATIC_CHECKS,
-        "source registry Pixal batch",
-    )
-    pixal_inputs_descriptor = pixal_payload.get("pixal_inputs")
-    if (
-        not isinstance(pixal_inputs_descriptor, Mapping)
-        or set(pixal_inputs_descriptor) != {"path", "sha256", "manifest_sha256"}
-        or not isinstance(pixal_inputs_descriptor.get("path"), str)
-        or not Path(pixal_inputs_descriptor["path"]).is_absolute()
-    ):
-        raise contracts.ContractError(
-            "source registry Pixal inputs descriptor is invalid"
+        authority_batch_file = (
+            adopted_batch_authority.get("file")
+            if isinstance(adopted_batch_authority, Mapping)
+            else None
         )
-    _require_sha256(
-        pixal_inputs_descriptor.get("sha256"),
-        "source registry Pixal inputs file sha256",
-    )
-    _require_sha256(
-        pixal_inputs_descriptor.get("manifest_sha256"),
-        "source registry internal Pixal inputs sha256",
-    )
-    pixal_inputs_path = _direct_file(
-        Path(pixal_inputs_descriptor["path"]),
-        "source registry Pixal inputs manifest",
-    )
-    if _sha256_file(pixal_inputs_path) != pixal_inputs_descriptor["sha256"]:
-        raise contracts.ContractError("source registry Pixal inputs manifest changed")
-    _load_strict_json(
-        pixal_inputs_path,
-        "source registry Pixal inputs manifest",
-    )
-    (
-        authenticated_pixal_inputs_path,
-        pixal_inputs_manifest,
-    ) = source_registry.pixal_runner.load_pixal_inputs(pixal_inputs_path)
-    if (
-        authenticated_pixal_inputs_path != pixal_inputs_path
-        or pixal_inputs_manifest.get("manifest_sha256")
-        != pixal_inputs_descriptor["manifest_sha256"]
-    ):
-        raise contracts.ContractError("source registry Pixal inputs identity changed")
-    input_jobs, attempts = source_registry.validate_pixal_request_identity(
-        pixal_payload, pixal_inputs_manifest, requests
-    )
+        if (
+            adopted_batch_path != pixal_path
+            or not isinstance(pixal_payload, Mapping)
+            or not isinstance(attempt, Mapping)
+            or not isinstance(adoption_context, Mapping)
+            or not isinstance(adoption_context.get("job"), Mapping)
+            or not isinstance(adopted_batch_authority, Mapping)
+            or not isinstance(authority_batch_file, Mapping)
+            or authority_batch_file.get("path") != str(pixal_path)
+            or authority_batch_file.get("sha256")
+            != pixal_descriptor["sha256"]
+            or authority_batch_file.get("size_bytes")
+            != pixal_path.stat().st_size
+            or adopted_batch_authority.get("batch_sha256")
+            != pixal_descriptor["batch_sha256"]
+            or pixal_payload.get("batch_sha256")
+            != pixal_descriptor["batch_sha256"]
+        ):
+            raise contracts.ContractError(
+                "source registry direct adopted Pixal batch identity changed"
+            )
+        instance_id = attempt.get("instance_id")
+        if (
+            not isinstance(instance_id, str)
+            or instance_id != direct_source_authority.get("instance_id")
+        ):
+            raise contracts.ContractError(
+                "source registry direct adopted attempt identity changed"
+            )
+        attempts = {instance_id: dict(attempt)}
+        input_jobs = {
+            instance_id: copy.deepcopy(dict(adoption_context["job"]))
+        }
+    else:
+        pixal_payload = _load_strict_json(
+            pixal_path, "source registry Pixal batch"
+        )
+        if (
+            not isinstance(pixal_payload, dict)
+            or pixal_payload.get("schema")
+            != source_registry.pixal_runner.BATCH_SCHEMA
+            or pixal_payload.get("status")
+            != "passed_generation_and_glb_readback"
+            or pixal_payload.get("state_classification")
+            != "research_candidate"
+            or pixal_payload.get("formal_dataset_registration_authorized")
+            is not False
+            or pixal_payload.get("batch_sha256")
+            != source_registry._hash_without(
+                pixal_payload, "batch_sha256"
+            )
+            or pixal_payload.get("batch_sha256")
+            != pixal_descriptor["batch_sha256"]
+        ):
+            raise contracts.ContractError(
+                "source registry Pixal batch contract/hash is invalid"
+            )
+        _require_exact_automatic_checks(
+            pixal_payload.get("automatic_checks"),
+            PIXAL_BATCH_AUTOMATIC_CHECKS,
+            "source registry Pixal batch",
+        )
+        pixal_inputs_descriptor = pixal_payload.get("pixal_inputs")
+        if (
+            not isinstance(pixal_inputs_descriptor, Mapping)
+            or set(pixal_inputs_descriptor)
+            != {"path", "sha256", "manifest_sha256"}
+            or not isinstance(pixal_inputs_descriptor.get("path"), str)
+            or not Path(pixal_inputs_descriptor["path"]).is_absolute()
+        ):
+            raise contracts.ContractError(
+                "source registry Pixal inputs descriptor is invalid"
+            )
+        _require_sha256(
+            pixal_inputs_descriptor.get("sha256"),
+            "source registry Pixal inputs file sha256",
+        )
+        _require_sha256(
+            pixal_inputs_descriptor.get("manifest_sha256"),
+            "source registry internal Pixal inputs sha256",
+        )
+        pixal_inputs_path = _direct_file(
+            Path(pixal_inputs_descriptor["path"]),
+            "source registry Pixal inputs manifest",
+        )
+        if (
+            _sha256_file(pixal_inputs_path)
+            != pixal_inputs_descriptor["sha256"]
+        ):
+            raise contracts.ContractError(
+                "source registry Pixal inputs manifest changed"
+            )
+        _load_strict_json(
+            pixal_inputs_path,
+            "source registry Pixal inputs manifest",
+        )
+        (
+            authenticated_pixal_inputs_path,
+            pixal_inputs_manifest,
+        ) = source_registry.pixal_runner.load_pixal_inputs(pixal_inputs_path)
+        if (
+            authenticated_pixal_inputs_path != pixal_inputs_path
+            or pixal_inputs_manifest.get("manifest_sha256")
+            != pixal_inputs_descriptor["manifest_sha256"]
+        ):
+            raise contracts.ContractError(
+                "source registry Pixal inputs identity changed"
+            )
+        input_jobs, attempts = (
+            source_registry.validate_pixal_request_identity(
+                pixal_payload, pixal_inputs_manifest, requests
+            )
+        )
 
     decision_descriptor = registry.get("static_decision_batch")
     expected_decision_fields = {"path", "sha256", "decision_batch_sha256"}
@@ -863,12 +1116,16 @@ def load_source_registry_anchor(
         )
     authority_decisions = decisions
     if derived_registry:
-        if set(decisions) != set(attempts) or any(
+        if set(decisions) != set(attempts):
+            raise contracts.ContractError(
+                "derived source registry must preserve complete raw decisions"
+            )
+        if legacy_derived_registry and any(
             decision.get("payload", {}).get("decision") != "rejected"
             for decision in decisions.values()
         ):
             raise contracts.ContractError(
-                "derived source registry must preserve complete raw rejections"
+                "legacy derived source registry must preserve complete raw rejections"
             )
         derived_indexes = registry.get("derived_static_decisions")
         if not isinstance(derived_indexes, list) or not derived_indexes:
@@ -957,24 +1214,42 @@ def load_source_registry_anchor(
             registry_path.parent,
             f"source asset registry entry {asset_id}",
         )
-        request = requests.get(asset_id)
-        if not isinstance(request, Mapping):
-            raise contracts.ContractError(
-                "source asset registry request identity is missing"
-            )
-        profile = profiles.get(request.get("profile_schema_id"))
-        if not isinstance(profile, Mapping):
-            raise contracts.ContractError(
-                "source asset registry profile identity is missing"
-            )
-        payload = contracts.validate_source_asset_v2(
-            _load_strict_json(
-                indexed_path,
-                f"source asset registry entry {asset_id}",
-            ),
-            request=request,
-            profile=profile,
+        source_payload = _load_strict_json(
+            indexed_path,
+            f"source asset registry entry {asset_id}",
         )
+        if direct_derived_registry:
+            if (
+                not isinstance(direct_source_authority, Mapping)
+                or not isinstance(direct_source_context, Mapping)
+            ):
+                raise contracts.ContractError(
+                    "source asset registry direct identity is missing"
+                )
+            request = direct_source_authority
+            profile = direct_source_context
+            payload = contracts.validate_source_asset_v2(source_payload)
+            _validate_direct_source_asset_identity(
+                payload,
+                request,
+                profile,
+            )
+        else:
+            request = requests.get(asset_id)
+            if not isinstance(request, Mapping):
+                raise contracts.ContractError(
+                    "source asset registry request identity is missing"
+                )
+            profile = profiles.get(request.get("profile_schema_id"))
+            if not isinstance(profile, Mapping):
+                raise contracts.ContractError(
+                    "source asset registry profile identity is missing"
+                )
+            payload = contracts.validate_source_asset_v2(
+                source_payload,
+                request=request,
+                profile=profile,
+            )
         indexed_identity = {
             "asset_id": payload["asset_id"],
             "profile_schema_id": payload["profile_schema_id"],
@@ -1025,7 +1300,7 @@ def load_source_registry_anchor(
         registry,
         dict(selected_request),
         dict(selected_profile),
-        preflight_descriptor["validation_mode"],
+        source_registry_validation_mode,
     )
 
 
@@ -1036,17 +1311,31 @@ def load_source_asset(
     request: Mapping[str, Any],
     profile: Mapping[str, Any],
     require_derived_authority: bool = False,
+    expected_raw_static_decision_batch: Mapping[str, Any] | None = None,
 ) -> tuple[Path, dict[str, Any], dict[str, Path]]:
     path = _direct_file(path, "source_asset_v2")
-    payload = contracts.validate_source_asset_v2(
-        _load_strict_json(path, "source_asset_v2"),
-        request=request,
-        profile=profile,
+    source_payload = _load_strict_json(path, "source_asset_v2")
+    direct_source_identity = (
+        request.get("schema") == direct_adopter.SOURCE_AUTHORITY_SCHEMA
     )
+    if direct_source_identity:
+        payload = contracts.validate_source_asset_v2(source_payload)
+        _validate_direct_source_asset_identity(payload, request, profile)
+    else:
+        payload = contracts.validate_source_asset_v2(
+            source_payload,
+            request=request,
+            profile=profile,
+        )
     if (
         payload["asset_class"] != "animal"
         or payload["state_classification"] != "research_candidate"
-        or not payload["asset_id"].endswith(payload["request_sha256"][:12])
+        or (
+            not direct_source_identity
+            and not payload["asset_id"].endswith(
+                payload["request_sha256"][:12]
+            )
+        )
         or set(payload["rig"]["actions"]) != {"Idle", "Walking"}
     ):
         raise contracts.ContractError(
@@ -1061,6 +1350,35 @@ def load_source_asset(
         authenticated[f"license:{index}"] = _resolve_root_artifact(
             license_record, artifact_roots, f"source asset license {index}"
         )
+    if direct_source_identity:
+        direct_required = {
+            "artifact:direct_source_authority",
+            "artifact:adopted_pixal_batch",
+            "artifact:direct_adoption_spec",
+        }
+        if not direct_required.issubset(authenticated):
+            raise contracts.ContractError(
+                "direct source asset lineage artifacts are incomplete"
+            )
+        expected_direct_paths = {
+            "artifact:direct_source_authority": profile.get(
+                "direct_source_authority_path"
+            ),
+            "artifact:adopted_pixal_batch": profile.get(
+                "adopted_batch_path"
+            ),
+            "artifact:direct_adoption_spec": profile.get(
+                "source_spec_path"
+            ),
+        }
+        if any(
+            not isinstance(expected, Path)
+            or authenticated[role] != expected.resolve()
+            for role, expected in expected_direct_paths.items()
+        ):
+            raise contracts.ContractError(
+                "direct source asset lineage artifacts changed from registry authority"
+            )
     derived_required = {
         "artifact:pixal_raw_glb",
         "artifact:raw_static_decision",
@@ -1096,6 +1414,23 @@ def load_source_asset(
         review = source_registry.derived_review_contract.validate_review(
             _load_strict_json(review_path, "derived static review")
         )
+        try:
+            repair = (
+                source_registry.derived_review_contract
+                .validate_bounded_repair_manifest(
+                    _load_strict_json(
+                        authenticated["artifact:derived_repair_manifest"],
+                        "derived repair manifest",
+                    )
+                )
+            )
+        except (
+            source_registry.derived_review_contract
+            .DerivedStaticReviewContractError
+        ) as error:
+            raise contracts.ContractError(
+                f"derived repair manifest contract changed: {error}"
+            ) from error
         bindings = {
             "pixal_raw_glb": (
                 review["source_authorities"]["raw_pixal_glb"],
@@ -1135,6 +1470,100 @@ def load_source_asset(
                 raise contracts.ContractError(
                     f"derived source {label} authority changed"
                 )
+        repair_method = repair["implementation_contract"]
+        expected_raw_decision = (
+            "rejected"
+            if repair_method
+            == source_registry.derived_review_contract.REPAIR_IMPLEMENTATION_CONTRACT
+            else "approved_for_lod_and_binding"
+        )
+        repair_bindings = {
+            "raw Pixal GLB": (
+                repair["lineage"]["pixal_source"],
+                authenticated["artifact:pixal_raw_glb"],
+            ),
+            "raw static decision": (
+                repair["lineage"]["static_decision"],
+                authenticated["artifact:raw_static_decision"],
+            ),
+            "repaired GLB": (
+                repair["output"],
+                authenticated["artifact:derived_repaired_glb"],
+            ),
+        }
+        for label, (descriptor, expected_path) in repair_bindings.items():
+            observed_path = _direct_file(
+                Path(descriptor["path"]),
+                f"derived repair {label}",
+            )
+            if (
+                observed_path != expected_path
+                or observed_path.stat().st_size != descriptor["size_bytes"]
+                or _sha256_file(observed_path) != descriptor["sha256"]
+            ):
+                raise contracts.ContractError(
+                    f"derived repair {label} authority changed"
+                )
+        if require_derived_authority:
+            expected_batch = expected_raw_static_decision_batch
+            review_batch = review["source_authorities"].get(
+                "raw_static_decision_batch"
+            )
+            if (
+                not isinstance(expected_batch, Mapping)
+                or set(expected_batch)
+                != {"path", "sha256", "decision_batch_sha256"}
+                or not isinstance(review_batch, Mapping)
+                or set(review_batch)
+                != {"file", "decision_batch_sha256"}
+            ):
+                raise contracts.ContractError(
+                    "derived source lacks its registry-bound raw decision batch"
+                )
+            registry_batch_path = _direct_file(
+                Path(str(expected_batch["path"])),
+                "registry raw static decision batch",
+            )
+            if (
+                _sha256_file(registry_batch_path) != expected_batch["sha256"]
+                or review_batch["decision_batch_sha256"]
+                != expected_batch["decision_batch_sha256"]
+            ):
+                raise contracts.ContractError(
+                    "derived registry raw decision batch authority changed"
+                )
+            review_batch_path = _direct_file(
+                Path(review_batch["file"]["path"]),
+                "review raw static decision batch",
+            )
+            if (
+                review_batch_path != registry_batch_path
+                or review_batch["file"]["sha256"] != expected_batch["sha256"]
+                or review_batch["file"]["size_bytes"]
+                != registry_batch_path.stat().st_size
+            ):
+                raise contracts.ContractError(
+                    "derived review raw decision batch was rebound"
+                )
+            if (
+                repair_method
+                == source_registry.derived_review_contract
+                .ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+            ):
+                repair_batch_path = _direct_file(
+                    Path(repair["lineage"]["static_decision_batch"]["path"]),
+                    "oriented repair raw static decision batch",
+                )
+                repair_batch = repair["lineage"]["static_decision_batch"]
+                if (
+                    repair_batch_path != registry_batch_path
+                    or repair_batch["sha256"] != expected_batch["sha256"]
+                    or repair_batch["size_bytes"]
+                    != registry_batch_path.stat().st_size
+                ):
+                    raise contracts.ContractError(
+                        "oriented repair raw decision batch was rebound"
+                    )
         if (
             decision["decision"]
             != source_registry.derived_static_decisions.APPROVED
@@ -1144,8 +1573,9 @@ def load_source_asset(
             or decision["review_binding"]["internal_review_sha256"]
             != review["review_sha256"]
             or review["instance_identity"]["instance_id"] != payload["asset_id"]
+            or review["derived_geometry"]["repair_method"] != repair_method
             or review["source_authorities"]["raw_static_decision"]["decision"]
-            != "rejected"
+            != expected_raw_decision
         ):
             raise contracts.ContractError(
                 "derived source decision/review identity changed"
@@ -1979,10 +2409,22 @@ def _validate_target_rig_lineage(
         raw_pixal,
         "TokenRig closure raw Pixal source",
     )
-    tokenrig_input = source_artifacts.get(
-        "artifact:derived_repaired_glb",
-        raw_pixal,
+    derived_tokenrig_input = source_artifacts.get(
+        "artifact:derived_repaired_glb"
     )
+    tokenrig_input = (
+        derived_tokenrig_input
+        if derived_tokenrig_input is not None
+        else raw_pixal
+    )
+    if (
+        derived_tokenrig_input is not None
+        and observed["lineage"].get("upstream_kind")
+        != "bounded_geometry_closure"
+    ):
+        raise contracts.ContractError(
+            "derived TokenRig input must come from a bounded geometry closure"
+        )
     _runner_call(
         "TokenRig closure target geometry",
         generated_review.require_file_binding,
@@ -3430,7 +3872,13 @@ def _authenticate_import_authority(
         profile=source_profile,
         require_derived_authority=(
             source_registry_payload.get("schema")
-            == source_registry.DERIVED_REGISTRY_SCHEMA
+            in {
+                source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
+                source_registry.DERIVED_REGISTRY_SCHEMA,
+            }
+        ),
+        expected_raw_static_decision_batch=source_registry_payload.get(
+            "static_decision_batch"
         ),
     )
     (

@@ -66,6 +66,7 @@ USER_INSTRUCTION_AUTHORITY = {
 SOURCE_REGISTRY_VALIDATION_MODES = {
     "frozen_historical_preflight_v1",
     "current_exact_rebuild",
+    "direct_source_authority_v1",
 }
 RESULT_SCHEMA = "pixal_animal_ue_import_result_v2"
 JOB_TYPE = "user_approved_generated_animal"

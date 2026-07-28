@@ -126,11 +126,21 @@ def authenticated_review(tmp_path, monkeypatch):
             "current_exact_rebuild",
         )
 
-    def load_source(path, roots, *, request, profile):
+    def load_source(
+        path,
+        roots,
+        *,
+        request,
+        profile,
+        require_derived_authority,
+        expected_raw_static_decision_batch,
+    ):
         assert Path(path) == source_path
         assert roots
         assert request == {"fixture": "request"}
         assert profile == {"fixture": "profile"}
+        assert require_derived_authority is False
+        assert expected_raw_static_decision_batch is None
         return (
             source_path,
             copy.deepcopy(source_asset),
@@ -336,6 +346,78 @@ def test_freezes_exact_approved_record_and_external_hash_receipt(
     assert stat.S_IMODE(decision_path.parent.stat().st_mode) == 0o555
     assert {path.name for path in decision_path.parent.iterdir()} == (
         freezer.PUBLISHED_FILE_NAMES
+    )
+
+
+def test_freeze_reauthenticates_direct_derived_source_authority(
+    authenticated_review,
+    tmp_path,
+    monkeypatch,
+):
+    decision_batch = {
+        "path": str((tmp_path / "direct_static_decisions.json").resolve()),
+        "sha256": "1" * 64,
+        "decision_batch_sha256": "2" * 64,
+    }
+
+    def load_registry(path, selected_source, *, expected_file_sha256):
+        assert Path(path) == authenticated_review["registry_path"]
+        assert Path(selected_source) == authenticated_review["source_path"]
+        assert expected_file_sha256 == authenticated_review["registry_sha256"]
+        return (
+            authenticated_review["registry_path"],
+            {
+                "schema": freezer.bridge.source_registry.DERIVED_REGISTRY_SCHEMA,
+                "direct_source_authority": {"fixture": "direct"},
+                "static_decision_batch": decision_batch,
+            },
+            {"fixture": "direct authority"},
+            {"fixture": "direct context"},
+            freezer.bridge.DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE,
+        )
+
+    def load_source(
+        path,
+        roots,
+        *,
+        request,
+        profile,
+        require_derived_authority,
+        expected_raw_static_decision_batch,
+    ):
+        assert Path(path) == authenticated_review["source_path"]
+        assert roots
+        assert request == {"fixture": "direct authority"}
+        assert profile == {"fixture": "direct context"}
+        assert require_derived_authority is True
+        assert expected_raw_static_decision_batch == decision_batch
+        return (
+            authenticated_review["source_path"],
+            copy.deepcopy(authenticated_review["source_asset"]),
+            {
+                "artifact:raw": authenticated_review["source_artifact"]
+            },
+        )
+
+    monkeypatch.setattr(
+        freezer.bridge,
+        "load_source_registry_anchor",
+        load_registry,
+    )
+    monkeypatch.setattr(freezer.bridge, "load_source_asset", load_source)
+
+    decision_path = _freeze(
+        authenticated_review,
+        tmp_path / "frozen_direct_derived_decision",
+    )
+    receipt = json.loads(
+        (decision_path.parent / "decision_freeze_receipt.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert receipt["source_asset_registry_validation_mode"] == (
+        freezer.bridge.DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE
     )
 
 

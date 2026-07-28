@@ -226,7 +226,12 @@ def _stubbed_presentation_evidence(tmp_path, batch, animation_review):
     return evidence, output_video, loader_calls
 
 
-def _build_v3_contract(tmp_path, batch):
+def _build_v3_contract(
+    tmp_path,
+    batch,
+    *,
+    source_registry_validation_mode="current_exact_rebuild",
+):
     asset_id = "animal_british_shorthair_v1"
     tag = f"pixal_{asset_id}"
     source_asset = tmp_path / "source_asset.json"
@@ -278,7 +283,7 @@ def _build_v3_contract(tmp_path, batch):
         "formal_dataset_registration_authorized": False,
         "source_asset_registry": _record(source_registry),
         "expected_source_asset_registry_file_sha256": _sha256(source_registry),
-        "source_asset_registry_validation_mode": "current_exact_rebuild",
+        "source_asset_registry_validation_mode": source_registry_validation_mode,
         "source_asset": _record(source_asset),
         "animation_review": _record(animation_review),
         "expected_animation_review_file_sha256": _sha256(animation_review),
@@ -363,7 +368,7 @@ def _build_v3_contract(tmp_path, batch):
         "source_asset_registry": _record(source_registry),
         "source_asset_registry_sha256": "4" * 64,
         "expected_source_asset_registry_file_sha256": _sha256(source_registry),
-        "source_asset_registry_validation_mode": "current_exact_rebuild",
+        "source_asset_registry_validation_mode": source_registry_validation_mode,
         "source_artifact_roots": {"generated_animal": str(tmp_path)},
         "authenticated_source_artifact_count": 1,
         "animation_review": _record(animation_review),
@@ -924,6 +929,51 @@ def test_preparation_and_manifest_anchor_mutations_fail_closed(tmp_path, monkeyp
                 fixture["manifest_path"],
                 _sha256(fixture["manifest_path"]),
             )
+
+
+def test_import_executor_accepts_direct_source_mode_and_rejects_unknown_mode(
+    tmp_path,
+    monkeypatch,
+):
+    batch = _load_module(
+        BATCH_IMPORT,
+        "_test_import_pixal_direct_source_validation_mode",
+        monkeypatch,
+    )
+    direct_root = tmp_path / "direct"
+    direct_root.mkdir()
+    direct = _build_v3_contract(
+        direct_root,
+        batch,
+        source_registry_validation_mode="direct_source_authority_v1",
+    )
+    preparation, _preparation_descriptor, _manifest_descriptor = (
+        batch._validate_preparation_anchor(
+            direct["preparation_path"],
+            _sha256(direct["preparation_path"]),
+            direct["manifest_path"],
+            _sha256(direct["manifest_path"]),
+        )
+    )
+    assert (
+        preparation["source_asset_registry_validation_mode"]
+        == "direct_source_authority_v1"
+    )
+
+    invalid_root = tmp_path / "invalid"
+    invalid_root.mkdir()
+    invalid = _build_v3_contract(
+        invalid_root,
+        batch,
+        source_registry_validation_mode="unrecognized_source_authority_v1",
+    )
+    with pytest.raises(RuntimeError, match="authority is invalid"):
+        batch._validate_preparation_anchor(
+            invalid["preparation_path"],
+            _sha256(invalid["preparation_path"]),
+            invalid["manifest_path"],
+            _sha256(invalid["manifest_path"]),
+        )
 
 
 @pytest.mark.parametrize(

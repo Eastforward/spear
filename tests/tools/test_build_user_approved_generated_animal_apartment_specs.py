@@ -389,6 +389,7 @@ def _fixture(
     review_schema: str = subject.FORMAL_GENERATED_REVIEW_SCHEMA,
     weight_repair_branch: str = "primary",
     texture_transcode: bool = False,
+    direct_registry: bool = False,
 ) -> dict[str, Any]:
     asset_id = "horse_candidate_001"
     tag = "pixal_horse_candidate_001"
@@ -494,16 +495,19 @@ def _fixture(
         "state_classification": "research_candidate",
         "next_gate": "lod_then_species_rig_binding",
     }
+    registry_validation_mode = (
+        subject.DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE
+        if direct_registry
+        else "current_exact_rebuild"
+    )
     source_registry_payload = {
-        "schema": subject.source_registry.REGISTRY_SCHEMA,
+        "schema": (
+            subject.source_registry.DERIVED_REGISTRY_SCHEMA
+            if direct_registry
+            else subject.source_registry.REGISTRY_SCHEMA
+        ),
         "state_classification": "research_candidate",
         "formal_dataset_registration_authorized": False,
-        "preflight": {
-            "path": str((tmp_path / "fixture_preflight.json").resolve()),
-            "sha256": "4" * 64,
-            "preflight_sha256": "5" * 64,
-            "validation_mode": "current_exact_rebuild",
-        },
         "pixal_batch": {
             "path": str((tmp_path / "fixture_pixal_batch.json").resolve()),
             "sha256": "6" * 64,
@@ -517,9 +521,88 @@ def _fixture(
         "source_asset_count": 1,
         "source_assets": [registry_entry],
         "automatic_checks": copy.deepcopy(
-            subject.preparation_bridge.REGISTRY_AUTOMATIC_CHECKS
+            subject.source_registry.DIRECT_DERIVED_REGISTRY_AUTOMATIC_CHECKS
+            if direct_registry
+            else subject.preparation_bridge.REGISTRY_AUTOMATIC_CHECKS
         ),
     }
+    if direct_registry:
+        adopted_batch = _write(
+            tmp_path / "direct_adopted_batch.json",
+            {"schema": "direct_adopted_batch_fixture_v1"},
+        )
+        source_spec = _write(
+            tmp_path / "direct_source_spec.json",
+            {"schema": "direct_source_spec_fixture_v1"},
+        )
+        direct_authority = {
+            "schema": "avengine_direct_animal_source_authority_v1",
+            "state_classification": "research_candidate",
+            "formal_dataset_registration_authorized": False,
+            "adopted_batch": {
+                "file": _descriptor(adopted_batch),
+                "batch_sha256": "a" * 64,
+            },
+            "source_spec": {
+                "file": _descriptor(source_spec),
+                "spec_sha256": "b" * 64,
+            },
+            "instance_id": asset_id,
+            "profile_schema_id": profile,
+            "profile_sha256": "2" * 64,
+            "request_sha256": "1" * 64,
+            "taxonomy": {"species": "horse", "breed": "bay_horse"},
+            "fixed_attributes": {},
+            "lineage_group_id": "fixture_direct_lineage_v1",
+            "acoustic_profile": {"fixture": "direct"},
+        }
+        direct_authority["authority_sha256"] = _hash_without(
+            direct_authority,
+            "authority_sha256",
+        )
+        direct_authority_path = _write(
+            tmp_path / "direct_source_authority.json",
+            direct_authority,
+        )
+        derived_decision = {
+            "schema": "derived_static_decision_fixture_v1",
+            "instance_id": asset_id,
+            "decision": "approved_for_lod_and_binding",
+        }
+        derived_decision["decision_sha256"] = _hash_without(
+            derived_decision,
+            "decision_sha256",
+        )
+        derived_decision_path = _write(
+            tmp_path / "derived_static_decision.json",
+            derived_decision,
+        )
+        source_registry_payload.update(
+            {
+                "direct_source_authority": {
+                    **_descriptor(direct_authority_path),
+                    "authority_sha256": direct_authority[
+                        "authority_sha256"
+                    ],
+                },
+                "derived_static_decisions": [
+                    {
+                        "path": str(derived_decision_path.resolve()),
+                        "sha256": _sha(derived_decision_path),
+                        "decision_sha256": derived_decision[
+                            "decision_sha256"
+                        ],
+                    }
+                ],
+            }
+        )
+    else:
+        source_registry_payload["preflight"] = {
+            "path": str((tmp_path / "fixture_preflight.json").resolve()),
+            "sha256": "4" * 64,
+            "preflight_sha256": "5" * 64,
+            "validation_mode": registry_validation_mode,
+        }
     source_registry_payload["registry_sha256"] = _hash_without(
         source_registry_payload,
         "registry_sha256",
@@ -609,7 +692,7 @@ def _fixture(
         "formal_dataset_registration_authorized": False,
         "source_asset_registry": _descriptor(source_registry),
         "expected_source_asset_registry_file_sha256": _sha(source_registry),
-        "source_asset_registry_validation_mode": "current_exact_rebuild",
+        "source_asset_registry_validation_mode": registry_validation_mode,
         "source_asset": _descriptor(source_asset),
         "animation_review": _descriptor(review),
         "expected_animation_review_file_sha256": _sha(review),
@@ -663,7 +746,7 @@ def _fixture(
         "source_asset_registry": _descriptor(source_registry),
         "source_asset_registry_sha256": source_registry_payload["registry_sha256"],
         "expected_source_asset_registry_file_sha256": _sha(source_registry),
-        "source_asset_registry_validation_mode": "current_exact_rebuild",
+        "source_asset_registry_validation_mode": registry_validation_mode,
         "source_artifact_roots": {"new_animal_assets": str(tmp_path.resolve())},
         "authenticated_source_artifact_count": 1,
         "animation_review": _descriptor(review),
@@ -939,6 +1022,38 @@ def test_builds_authenticated_walk_idle_pair(tmp_path: Path) -> None:
     assert "rig_direction_check_windows" in walking
     assert "rig_direction_check_windows" not in idle
     assert idle["sources"][0]["trajectory_m"] == [[2.0, 0.0, 0.0]] * 5
+
+
+def test_builds_authenticated_walk_idle_pair_from_direct_v3_registry(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path, direct_registry=True)
+    inputs.pop("semantic_evidence")
+
+    manifest_path = subject.build_specs(
+        **inputs,
+        output_root=tmp_path / "output",
+    )
+    authenticated = subject.authenticate_apartment_v2_manifest(manifest_path)
+    preparation = contracts.load_json(inputs["ue_preparation"])
+    registry = contracts.load_json(
+        Path(preparation["source_asset_registry"]["path"])
+    )
+
+    assert (
+        preparation["source_asset_registry_validation_mode"]
+        == subject.DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE
+    )
+    assert registry["schema"] == subject.source_registry.DERIVED_REGISTRY_SCHEMA
+    assert "direct_source_authority" in registry
+    assert "preflight" not in registry
+    assert (
+        registry["automatic_checks"]
+        == subject.source_registry.DIRECT_DERIVED_REGISTRY_AUTOMATIC_CHECKS
+    )
+    assert authenticated["job"]["source_registry_sha256"] == _sha(
+        Path(preparation["source_asset_registry"]["path"])
+    )
 
 
 def test_builds_authenticated_pair_from_texture_transcode_dual_lineage(

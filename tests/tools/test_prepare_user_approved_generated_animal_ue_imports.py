@@ -1234,6 +1234,658 @@ def test_derived_registry_cannot_fall_back_to_a_raw_only_source_asset(
         )
 
 
+def _derived_source_reader_fixture(tmp_path, monkeypatch):
+    artifact_root = tmp_path / "artifacts"
+    artifact_root.mkdir()
+    paths = {}
+    for role in (
+        "pixal_raw_glb",
+        "raw_static_decision",
+        "derived_repaired_glb",
+        "derived_geometry_closure",
+        "derived_repair_manifest",
+        "derived_geometry_audit",
+        "derived_static_review_manifest",
+        "derived_static_decision",
+    ):
+        suffix = ".glb" if role.endswith("glb") else ".json"
+        path = artifact_root / f"{role}{suffix}"
+        if suffix == ".json":
+            _write_json(path, {"role": role})
+        else:
+            path.write_bytes(role.encode("utf-8"))
+        paths[role] = path
+    decision_batch = tmp_path / "raw_static_decision_batch.json"
+    _write_json(decision_batch, {"decision_batch_sha256": "c" * 64})
+    request_sha256 = "a" * 64
+    asset_id = f"dog_fixture_{request_sha256[:12]}"
+    source_path = tmp_path / "source_asset_v2.json"
+    _write_json(source_path, {"schema": contracts.SOURCE_ASSET_SCHEMA})
+    source_asset = {
+        "asset_id": asset_id,
+        "request_sha256": request_sha256,
+        "asset_class": "animal",
+        "state_classification": "research_candidate",
+        "rig": {"actions": ["Idle", "Walking"]},
+        "artifacts": {
+            role: _root_record("fixture_root", path, artifact_root)
+            for role, path in paths.items()
+        },
+        "rights": {"licenses": []},
+    }
+    raw_authority = {
+        "decision": "approved_for_lod_and_binding",
+        "file": _record(paths["raw_static_decision"]),
+    }
+    review = {
+        "review_sha256": "b" * 64,
+        "instance_identity": {"instance_id": asset_id},
+        "source_authorities": {
+            "raw_pixal_glb": _record(paths["pixal_raw_glb"]),
+            "raw_static_decision": raw_authority,
+            "raw_static_decision_batch": {
+                "file": _record(decision_batch),
+                "decision_batch_sha256": "c" * 64,
+            },
+        },
+        "derived_geometry": {
+            "repaired_glb": _record(paths["derived_repaired_glb"]),
+            "geometry_closure": _record(paths["derived_geometry_closure"]),
+            "repair_manifest": _record(paths["derived_repair_manifest"]),
+            "independent_geometry_audit": _record(
+                paths["derived_geometry_audit"]
+            ),
+            "repair_method": (
+                source_registry.derived_review_contract
+                .ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+            ),
+        },
+    }
+    decision = {
+        "decision": source_registry.derived_static_decisions.APPROVED,
+        "instance_id": asset_id,
+        "review_binding": {
+            "review_file": {
+                "sha256": _sha256(
+                    paths["derived_static_review_manifest"]
+                )
+            },
+            "internal_review_sha256": review["review_sha256"],
+        },
+    }
+    repair = {
+        "implementation_contract": (
+            source_registry.derived_review_contract
+            .ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+        ),
+        "lineage": {
+            "pixal_source": _record(paths["pixal_raw_glb"]),
+            "static_decision": _record(paths["raw_static_decision"]),
+            "static_decision_batch": _record(decision_batch),
+        },
+        "output": _record(paths["derived_repaired_glb"]),
+    }
+    monkeypatch.setattr(
+        preparation.contracts,
+        "validate_source_asset_v2",
+        lambda _value, **_kwargs: copy.deepcopy(source_asset),
+    )
+    monkeypatch.setattr(
+        source_registry.derived_static_decisions,
+        "validate_decision",
+        lambda _value: copy.deepcopy(decision),
+    )
+    monkeypatch.setattr(
+        source_registry.derived_review_contract,
+        "validate_review",
+        lambda _value: copy.deepcopy(review),
+    )
+    monkeypatch.setattr(
+        source_registry.derived_review_contract,
+        "validate_bounded_repair_manifest",
+        lambda _value: copy.deepcopy(repair),
+    )
+    return {
+        "artifact_root": artifact_root,
+        "source_path": source_path,
+        "source_asset": source_asset,
+        "review": review,
+        "repair": repair,
+        "decision_batch": {
+            "path": str(decision_batch.resolve()),
+            "sha256": _sha256(decision_batch),
+            "decision_batch_sha256": "c" * 64,
+        },
+    }
+
+
+def test_ue_reader_accepts_oriented_sheet_approved_raw_decision(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = _derived_source_reader_fixture(tmp_path, monkeypatch)
+
+    _path, payload, authenticated = preparation.load_source_asset(
+        fixture["source_path"],
+        {"fixture_root": fixture["artifact_root"]},
+        request={},
+        profile={},
+        require_derived_authority=True,
+        expected_raw_static_decision_batch=fixture["decision_batch"],
+    )
+
+    assert payload["asset_id"] == fixture["source_asset"]["asset_id"]
+    assert "artifact:derived_repaired_glb" in authenticated
+
+
+def test_ue_reader_rejects_cross_mode_raw_decision(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = _derived_source_reader_fixture(tmp_path, monkeypatch)
+    mirror = (
+        source_registry.derived_review_contract.REPAIR_IMPLEMENTATION_CONTRACT
+    )
+    fixture["repair"]["implementation_contract"] = mirror
+    fixture["review"]["derived_geometry"]["repair_method"] = mirror
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="decision/review identity changed",
+    ):
+        preparation.load_source_asset(
+            fixture["source_path"],
+            {"fixture_root": fixture["artifact_root"]},
+            request={},
+            profile={},
+            require_derived_authority=True,
+            expected_raw_static_decision_batch=fixture["decision_batch"],
+        )
+
+
+def test_ue_reader_rejects_oriented_raw_decision_batch_path_rebind(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = _derived_source_reader_fixture(tmp_path, monkeypatch)
+    canonical_batch = Path(fixture["decision_batch"]["path"])
+    rebound_batch = tmp_path / "rebound_raw_static_decision_batch.json"
+    rebound_batch.write_bytes(canonical_batch.read_bytes())
+    fixture["repair"]["lineage"]["static_decision_batch"] = _record(
+        rebound_batch
+    )
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="oriented repair raw decision batch was rebound",
+    ):
+        preparation.load_source_asset(
+            fixture["source_path"],
+            {"fixture_root": fixture["artifact_root"]},
+            request={},
+            profile={},
+            require_derived_authority=True,
+            expected_raw_static_decision_batch=fixture["decision_batch"],
+        )
+
+
+def test_legacy_derived_registry_requires_complete_derived_source_authority(
+    tmp_path,
+    monkeypatch,
+):
+    registry_path = tmp_path / "legacy_derived_registry.json"
+    source_path = tmp_path / "source_asset_v2.json"
+    decision_batch = {
+        "path": str((tmp_path / "raw_decisions.json").resolve()),
+        "sha256": "a" * 64,
+        "decision_batch_sha256": "b" * 64,
+    }
+
+    monkeypatch.setattr(
+        preparation,
+        "load_source_registry_anchor",
+        lambda *_args, **_kwargs: (
+            registry_path.resolve(),
+            {
+                "schema": source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
+                "static_decision_batch": decision_batch,
+            },
+            {},
+            {},
+            "frozen_preflight_v1",
+        ),
+    )
+
+    class DerivedAuthorityObserved(Exception):
+        pass
+
+    def load_source_asset(
+        _path,
+        _roots,
+        *,
+        request,
+        profile,
+        require_derived_authority,
+        expected_raw_static_decision_batch,
+    ):
+        assert request == {}
+        assert profile == {}
+        assert require_derived_authority is True
+        assert expected_raw_static_decision_batch == decision_batch
+        raise DerivedAuthorityObserved
+
+    monkeypatch.setattr(preparation, "load_source_asset", load_source_asset)
+
+    with pytest.raises(DerivedAuthorityObserved):
+        preparation._authenticate_import_authority(
+            source_registry_manifest_path=registry_path,
+            expected_source_registry_sha256="c" * 64,
+            source_asset_path=source_path,
+            animation_review_path=tmp_path / "animation_review.json",
+            animation_decision_path=tmp_path / "animation_decision.json",
+            expected_animation_decision_sha256="d" * 64,
+            animation_decision_freeze_receipt_path=(
+                tmp_path / "animation_decision_freeze_receipt.json"
+            ),
+            expected_animation_decision_freeze_receipt_sha256="e" * 64,
+            roots={},
+        )
+
+
+def _direct_registry_reader_fixture(tmp_path, monkeypatch):
+    artifact_root = tmp_path / "direct_artifacts"
+    artifact_root.mkdir()
+    raw_glb = artifact_root / "pixal_raw.glb"
+    raw_glb.write_bytes(b"direct adopted Pixel3D GLB")
+    license_path = artifact_root / "LICENSE"
+    license_path.write_bytes(b"research license")
+    _preflight_path, _preflight, _profile, request = (
+        _build_frozen_preflight(tmp_path)
+    )
+    source_asset = contracts.build_source_asset_v2(
+        request,
+        artifacts={
+            "pixal_raw_glb": _root_record(
+                "direct_fixture_root",
+                raw_glb,
+                artifact_root,
+            )
+        },
+        physical_measurements={"status": "pending"},
+        provenance={
+            "attempt_id": "direct_fixture_attempt_v1",
+            "request_sha256": request["request_sha256"],
+            "models": copy.deepcopy(
+                request["generation_plan"]["model_revisions"]
+            ),
+        },
+        rights={
+            "status": "review_required",
+            "licenses": [
+                _root_record(
+                    "direct_fixture_root",
+                    license_path,
+                    artifact_root,
+                )
+            ],
+            "blockers": ["research_candidate_only"],
+        },
+        qa={
+            "reference_2d": "passed",
+            "static_mesh": "passed",
+            "binding": "pending",
+            "walking": "pending",
+            "idle": "pending",
+            "ue_import_readback": "pending",
+            "apartment_media": "pending",
+            "audio": "pending",
+        },
+        state_classification="research_candidate",
+    )
+    direct_asset_id = "dog_direct_adopted_noncanonical_v1"
+    direct_request_sha256 = "1" * 64
+    source_asset["asset_id"] = direct_asset_id
+    source_asset["request_sha256"] = direct_request_sha256
+    source_asset["provenance"]["request_sha256"] = direct_request_sha256
+
+    registry_root = tmp_path / "direct_registry"
+    source_root = registry_root / "source_assets"
+    source_root.mkdir(parents=True)
+    source_path = source_root / f"{direct_asset_id}.json"
+    _write_json(source_path, source_asset)
+
+    pixal_path = artifact_root / "direct_adopted_pixal_batch.json"
+    _write_json(pixal_path, {"fixture": "authenticated by adopter loader"})
+    batch_sha256 = "2" * 64
+    adopted_batch = {
+        "batch_sha256": batch_sha256,
+        "models": copy.deepcopy(source_asset["provenance"]["models"]),
+    }
+    attempt = {
+        "instance_id": direct_asset_id,
+        "execution_job_id": "direct_fixture_execution_v1",
+        "profile_schema_id": source_asset["profile_schema_id"],
+        "request_sha256": direct_request_sha256,
+        "sampled_attributes": copy.deepcopy(
+            source_asset["sampled_attributes"]
+        ),
+        "target_physical_profile": copy.deepcopy(
+            source_asset["target_physical_profile"]
+        ),
+    }
+    authority_sha256 = "3" * 64
+    authority_path = artifact_root / "direct_source_authority.json"
+    _write_json(authority_path, {"fixture": "authenticated direct authority"})
+    source_spec_path = artifact_root / "adoption_spec.json"
+    _write_json(source_spec_path, {"fixture": "source spec"})
+    authority = {
+        "schema": preparation.direct_adopter.SOURCE_AUTHORITY_SCHEMA,
+        "state_classification": "research_candidate",
+        "formal_dataset_registration_authorized": False,
+        "adopted_batch": {
+            "file": _record(pixal_path),
+            "batch_sha256": batch_sha256,
+        },
+        "source_spec": {"fixture": "loader-authenticated"},
+        "instance_id": direct_asset_id,
+        "profile_schema_id": source_asset["profile_schema_id"],
+        "profile_sha256": source_asset["profile_sha256"],
+        "request_sha256": direct_request_sha256,
+        "taxonomy": copy.deepcopy(source_asset["taxonomy"]),
+        "fixed_attributes": copy.deepcopy(source_asset["fixed_attributes"]),
+        "lineage_group_id": source_asset["lineage_group_id"],
+        "acoustic_profile": copy.deepcopy(
+            source_asset["acoustic_profile"]
+        ),
+        "authority_sha256": authority_sha256,
+    }
+    context = {
+        "adopted_batch_path": pixal_path.resolve(),
+        "adopted_batch": adopted_batch,
+        "attempt": attempt,
+        "source_spec_path": source_spec_path.resolve(),
+        "source_spec": {"fixture": "source spec"},
+        "adoption_context": {
+            "controlled": {
+                "rig_profile": copy.deepcopy(source_asset["rig"])
+            },
+            "job": {"fixture": "direct job"},
+        },
+    }
+    source_asset["artifacts"].update(
+        {
+            "direct_source_authority": _root_record(
+                "direct_fixture_root",
+                authority_path,
+                artifact_root,
+            ),
+            "adopted_pixal_batch": _root_record(
+                "direct_fixture_root",
+                pixal_path,
+                artifact_root,
+            ),
+            "direct_adoption_spec": _root_record(
+                "direct_fixture_root",
+                source_spec_path,
+                artifact_root,
+            ),
+        }
+    )
+    _write_json(source_path, source_asset)
+
+    def load_direct_authority(path, *, expected_sha256=None):
+        assert Path(path) == authority_path.resolve()
+        assert expected_sha256 == _sha256(authority_path)
+        return (
+            authority_path.resolve(),
+            copy.deepcopy(authority),
+            copy.deepcopy(context),
+        )
+
+    monkeypatch.setattr(
+        preparation.direct_adopter,
+        "load_direct_source_authority",
+        load_direct_authority,
+    )
+
+    static_batch = {
+        "schema": source_registry.static_decisions.DECISION_BATCH_SCHEMA,
+        "status": "completed",
+        "automatic_checks": copy.deepcopy(
+            preparation.STATIC_DECISION_BATCH_AUTOMATIC_CHECKS
+        ),
+    }
+    static_batch["decision_batch_sha256"] = source_registry._hash_without(
+        static_batch,
+        "decision_batch_sha256",
+    )
+    static_batch_path = tmp_path / "direct_static_decision_batch.json"
+    _write_json(static_batch_path, static_batch)
+    attribute_evidence = {
+        name: "passed_static_visual"
+        for name in source_asset["sampled_attributes"]
+    }
+    raw_decisions = {
+        direct_asset_id: {
+            "payload": {
+                "decision": "approved_for_lod_and_binding",
+                "attribute_evidence": copy.deepcopy(attribute_evidence),
+            }
+        }
+    }
+
+    def load_decision_batch(path):
+        assert path == static_batch_path.resolve()
+        return (
+            path,
+            copy.deepcopy(static_batch),
+            copy.deepcopy(raw_decisions),
+        )
+
+    monkeypatch.setattr(
+        source_registry,
+        "load_decision_batch",
+        load_decision_batch,
+    )
+    derived_decision_path = tmp_path / "derived_static_decision.json"
+    _write_json(derived_decision_path, {"fixture": "derived decision"})
+    derived_decision = {
+        "decision": source_registry.derived_static_decisions.APPROVED,
+        "instance_id": direct_asset_id,
+        "decision_sha256": "4" * 64,
+        "attribute_evidence": copy.deepcopy(attribute_evidence),
+    }
+    monkeypatch.setattr(
+        source_registry.derived_static_decisions,
+        "validate_decision",
+        lambda _value: copy.deepcopy(derived_decision),
+    )
+    direct_checks = copy.deepcopy(
+        source_registry.DIRECT_DERIVED_REGISTRY_AUTOMATIC_CHECKS
+    )
+    source_index = {
+        "asset_id": direct_asset_id,
+        "profile_schema_id": source_asset["profile_schema_id"],
+        "request_sha256": direct_request_sha256,
+        "sampled_attributes": copy.deepcopy(
+            source_asset["sampled_attributes"]
+        ),
+        "attribute_evidence": copy.deepcopy(attribute_evidence),
+        "source_asset": _relative_record(source_path, registry_root),
+        "state_classification": "research_candidate",
+        "next_gate": "lod_then_species_rig_binding",
+    }
+    registry = {
+        "schema": source_registry.DERIVED_REGISTRY_SCHEMA,
+        "state_classification": "research_candidate",
+        "formal_dataset_registration_authorized": False,
+        "direct_source_authority": {
+            **_record(authority_path),
+            "authority_sha256": authority_sha256,
+        },
+        "pixal_batch": {
+            "path": str(pixal_path.resolve()),
+            "sha256": _sha256(pixal_path),
+            "batch_sha256": batch_sha256,
+        },
+        "static_decision_batch": {
+            "path": str(static_batch_path.resolve()),
+            "sha256": _sha256(static_batch_path),
+            "decision_batch_sha256": static_batch[
+                "decision_batch_sha256"
+            ],
+        },
+        "derived_static_decisions": [
+            {
+                "path": str(derived_decision_path.resolve()),
+                "sha256": _sha256(derived_decision_path),
+                "decision_sha256": derived_decision["decision_sha256"],
+            }
+        ],
+        "source_asset_count": 1,
+        "source_assets": [source_index],
+        "automatic_checks": copy.deepcopy(direct_checks),
+    }
+    registry["registry_sha256"] = source_registry._hash_without(
+        registry,
+        "registry_sha256",
+    )
+    registry_path = registry_root / "registry_manifest.json"
+    _write_json(registry_path, registry)
+    return {
+        "artifact_root": artifact_root,
+        "authority": authority,
+        "context": context,
+        "pixal_path": pixal_path,
+        "registry_path": registry_path,
+        "source_asset": source_asset,
+        "source_path": source_path,
+    }
+
+
+def test_direct_registry_reader_accepts_noncanonical_adopted_identity(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = _direct_registry_reader_fixture(tmp_path, monkeypatch)
+
+    (
+        registry_path,
+        registry,
+        source_authority,
+        source_context,
+        validation_mode,
+    ) = preparation.load_source_registry_anchor(
+        fixture["registry_path"],
+        fixture["source_path"],
+        expected_file_sha256=_sha256(fixture["registry_path"]),
+    )
+    source_path, source_asset, artifacts = preparation.load_source_asset(
+        fixture["source_path"],
+        {"direct_fixture_root": fixture["artifact_root"]},
+        request=source_authority,
+        profile=source_context,
+    )
+
+    assert registry_path == fixture["registry_path"].resolve()
+    assert "preflight" not in registry
+    assert source_authority == fixture["authority"]
+    assert source_context["attempt"] == fixture["context"]["attempt"]
+    assert validation_mode == "direct_source_authority_v1"
+    assert source_path == fixture["source_path"].resolve()
+    assert source_asset["asset_id"] == "dog_direct_adopted_noncanonical_v1"
+    assert not source_asset["asset_id"].endswith(
+        source_asset["request_sha256"][:12]
+    )
+    assert artifacts["artifact:pixal_raw_glb"] == (
+        fixture["artifact_root"] / "pixal_raw.glb"
+    )
+
+
+def test_direct_registry_reader_rejects_adopted_batch_path_rebind(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = _direct_registry_reader_fixture(tmp_path, monkeypatch)
+    rebound = tmp_path / "rebound_direct_adopted_pixal_batch.json"
+    rebound.write_bytes(fixture["pixal_path"].read_bytes())
+    registry = contracts.load_json(fixture["registry_path"])
+    registry["pixal_batch"]["path"] = str(rebound.resolve())
+    registry["pixal_batch"]["sha256"] = _sha256(rebound)
+    registry["registry_sha256"] = source_registry._hash_without(
+        registry,
+        "registry_sha256",
+    )
+    _write_json(fixture["registry_path"], registry)
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="direct adopted Pixal batch identity changed",
+    ):
+        preparation.load_source_registry_anchor(
+            fixture["registry_path"],
+            fixture["source_path"],
+            expected_file_sha256=_sha256(fixture["registry_path"]),
+        )
+
+
+@pytest.mark.parametrize("mutation", ["missing", "rebound"])
+def test_direct_source_asset_requires_registry_bound_lineage_artifacts(
+    tmp_path,
+    monkeypatch,
+    mutation,
+):
+    fixture = _direct_registry_reader_fixture(tmp_path, monkeypatch)
+    source_asset = contracts.load_json(fixture["source_path"])
+    if mutation == "missing":
+        source_asset["artifacts"].pop("direct_adoption_spec")
+    else:
+        replacement = fixture["artifact_root"] / "replacement_authority.json"
+        replacement.write_bytes(
+            (
+                fixture["artifact_root"] / "direct_source_authority.json"
+            ).read_bytes()
+        )
+        source_asset["artifacts"]["direct_source_authority"] = _root_record(
+            "direct_fixture_root",
+            replacement,
+            fixture["artifact_root"],
+        )
+    _write_json(fixture["source_path"], source_asset)
+    registry = contracts.load_json(fixture["registry_path"])
+    registry["source_assets"][0]["source_asset"] = _relative_record(
+        fixture["source_path"],
+        fixture["registry_path"].parent,
+    )
+    registry["registry_sha256"] = source_registry._hash_without(
+        registry,
+        "registry_sha256",
+    )
+    _write_json(fixture["registry_path"], registry)
+    (
+        _registry_path,
+        _registry,
+        source_authority,
+        source_context,
+        _validation_mode,
+    ) = preparation.load_source_registry_anchor(
+        fixture["registry_path"],
+        fixture["source_path"],
+        expected_file_sha256=_sha256(fixture["registry_path"]),
+    )
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="direct source asset lineage artifacts",
+    ):
+        preparation.load_source_asset(
+            fixture["source_path"],
+            {"direct_fixture_root": fixture["artifact_root"]},
+            request=source_authority,
+            profile=source_context,
+        )
+
+
 def _rewrite_review_and_rebind_decision(fixture, review):
     _write_json(fixture["review_path"], review)
     decision = contracts.load_json(fixture["decision_path"])
@@ -1911,6 +2563,51 @@ def test_target_rig_lineage_rejects_rebound_raw_pixal(tmp_path, monkeypatch):
             target_rig_glb=target_rig,
             source_asset={"asset_class": "animal"},
             source_artifacts={"artifact:pixal_raw_glb": canonical_raw},
+            authenticated={},
+        )
+
+
+def test_target_rig_lineage_rejects_derived_geometry_watertight_fallback(
+    tmp_path,
+    monkeypatch,
+):
+    spear_root = tmp_path / "SPEAR"
+    workspace = spear_root / "tmp/new_animal_assets/fixture_workspace"
+    workspace.mkdir(parents=True)
+    raw_pixal = workspace / "pixal_raw.glb"
+    raw_pixal.write_bytes(b"raw Pixal geometry")
+    repaired = workspace / "bounded_repaired.glb"
+    repaired.write_bytes(b"bounded repaired Pixel3D geometry")
+    target_rig = workspace / "tokenrig_output.glb"
+    target_rig.write_bytes(b"TokenRig output")
+    descriptor = _fake_tokenrig_lineage(
+        tmp_path,
+        raw_pixal_glb=raw_pixal,
+        target_rig_glb=target_rig,
+    )
+    descriptor["lineage"]["tokenrig_input"] = _record(repaired)
+    descriptor["descriptor_sha256"] = preparation._hash_without(
+        descriptor, "descriptor_sha256"
+    )
+    monkeypatch.setattr(preparation, "SPEAR_ROOT", spear_root)
+    monkeypatch.setattr(
+        preparation,
+        "validate_tokenrig_closure_manifest",
+        lambda *args, **kwargs: copy.deepcopy(descriptor),
+    )
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="derived TokenRig input must come from a bounded geometry closure",
+    ):
+        preparation._validate_target_rig_lineage(
+            descriptor,
+            target_rig_glb=target_rig,
+            source_asset={"asset_class": "animal"},
+            source_artifacts={
+                "artifact:pixal_raw_glb": raw_pixal,
+                "artifact:derived_repaired_glb": repaired,
+            },
             authenticated={},
         )
 
