@@ -116,6 +116,70 @@ def _write_presentation_evidence(
     )
 
 
+def _write_compact_approval_evidence(
+    tmp_path: Path,
+    *,
+    asset_id: str,
+    review_path: Path,
+    runtime: Path,
+) -> dict[str, Any]:
+    style_video = _write(
+        tmp_path / "approved_motion_style.mp4",
+        b"approved-idle-walking-motion-style",
+    )
+    style_approval = {
+        "schema": subject.preparation_bridge.MOTION_STYLE_APPROVAL_SCHEMA,
+        "status": "approved_for_idle_walking_motion_style",
+        "actions": copy.deepcopy(subject.EXPECTED_ACTIONS),
+        "evidence_video": _descriptor(style_video),
+    }
+    style_approval["approval_sha256"] = _hash_without(
+        style_approval,
+        "approval_sha256",
+    )
+    style_path = _write(
+        tmp_path / "motion_style_approval.json",
+        style_approval,
+    )
+    review = contracts.load_json(review_path)
+    readback = {
+        "schema": subject.preparation_bridge.CURRENT_ASSET_SHORT_READBACK_SCHEMA,
+        "status": "passed_current_asset_geometry_and_actions",
+        "asset_id": asset_id,
+        "animation_review": _descriptor(review_path),
+        "reviewed_animated_glb": _descriptor(runtime),
+        "actions": copy.deepcopy(subject.EXPECTED_ACTIONS),
+        "action_readbacks": {
+            "Idle": copy.deepcopy(review["outputs"]["media"]["idle_side"]),
+            "Walking": copy.deepcopy(
+                review["outputs"]["media"]["walking_side"]
+            ),
+        },
+        "checks": copy.deepcopy(
+            subject.preparation_bridge.CURRENT_ASSET_SHORT_READBACK_CHECKS
+        ),
+    }
+    readback["receipt_sha256"] = _hash_without(
+        readback,
+        "receipt_sha256",
+    )
+    readback_path = _write(
+        tmp_path / "current_asset_short_readback.json",
+        readback,
+    )
+    return {
+        "mode": subject.MOTION_STYLE_AND_CURRENT_READBACK_MODE,
+        "motion_style_approval": {
+            **_descriptor(style_path),
+            "approval_sha256": style_approval["approval_sha256"],
+        },
+        "current_asset_short_readback": {
+            **_descriptor(readback_path),
+            "receipt_sha256": readback["receipt_sha256"],
+        },
+    }
+
+
 def _repin(inputs: dict[str, Any], *path_keys: str) -> None:
     pin_keys = {
         "ue_preparation": "expected_ue_preparation_sha256",
@@ -390,6 +454,7 @@ def _fixture(
     weight_repair_branch: str = "primary",
     texture_transcode: bool = False,
     direct_registry: bool = False,
+    compact_approval: bool = False,
 ) -> dict[str, Any]:
     asset_id = "horse_candidate_001"
     tag = "pixal_horse_candidate_001"
@@ -435,6 +500,21 @@ def _fixture(
         "retargeted_animated_glb": _descriptor(runtime),
         final_glb_role: _descriptor(runtime),
     }
+    if compact_approval:
+        outputs["media"] = {
+            "idle_side": _descriptor(
+                _write(
+                    tmp_path / "current_idle_side.mp4",
+                    b"current-horse-idle-side",
+                )
+            ),
+            "walking_side": _descriptor(
+                _write(
+                    tmp_path / "current_walking_side.mp4",
+                    b"current-horse-walking-side",
+                )
+            ),
+        }
     if final_manifest_role is not None:
         outputs[final_manifest_role] = _descriptor(semantic_evidence)
         outputs["weight_repair_manifest"] = _descriptor(semantic_evidence)
@@ -680,10 +760,19 @@ def _fixture(
         tmp_path / "jobs.json",
         jobs,
     )
-    presentation_evidence = _write_presentation_evidence(
-        tmp_path,
-        review_path=review,
-        runtime=runtime,
+    presentation_evidence = (
+        _write_compact_approval_evidence(
+            tmp_path,
+            asset_id=asset_id,
+            review_path=review,
+            runtime=runtime,
+        )
+        if compact_approval
+        else _write_presentation_evidence(
+            tmp_path,
+            review_path=review,
+            runtime=runtime,
+        )
     )
     freeze_receipt = {
         "schema": subject.DECISION_FREEZE_RECEIPT_SCHEMA,
@@ -696,14 +785,29 @@ def _fixture(
         "source_asset": _descriptor(source_asset),
         "animation_review": _descriptor(review),
         "expected_animation_review_file_sha256": _sha(review),
-        "user_instruction_binding": {
-            "decision": "approved_for_ue_apartment",
-            "review_sha256": _sha(review),
-            "all_six_checks_explicit": True,
-            "presentation_receipt_file_sha256": presentation_evidence[
-                "expected_presentation_receipt_file_sha256"
-            ],
-        },
+        "user_instruction_binding": (
+            {
+                "decision": "approved_for_ue_apartment",
+                "motion_style_approval_file_sha256": presentation_evidence[
+                    "motion_style_approval"
+                ]["sha256"],
+                "current_asset_short_readback_file_sha256": (
+                    presentation_evidence["current_asset_short_readback"][
+                        "sha256"
+                    ]
+                ),
+                "current_asset_readback_is_machine_gate": True,
+            }
+            if compact_approval
+            else {
+                "decision": "approved_for_ue_apartment",
+                "review_sha256": _sha(review),
+                "all_six_checks_explicit": True,
+                "presentation_receipt_file_sha256": presentation_evidence[
+                    "expected_presentation_receipt_file_sha256"
+                ],
+            }
+        ),
         "user_instruction_authority": copy.deepcopy(subject.USER_INSTRUCTION_AUTHORITY),
         "authenticated_review_artifact_count": 1,
         "animation_decision": _relative_descriptor(decision_path, tmp_path),
@@ -720,7 +824,11 @@ def _fixture(
     )
     automatic_checks = {
         field: True
-        for field in subject.PREPARATION_AUTOMATIC_CHECK_FIELDS
+        for field in (
+            subject.COMPACT_PREPARATION_AUTOMATIC_CHECK_FIELDS
+            if compact_approval
+            else subject.PREPARATION_AUTOMATIC_CHECK_FIELDS
+        )
         if field != "overall"
     }
     automatic_checks["overall"] = "passed"
@@ -1022,6 +1130,44 @@ def test_builds_authenticated_walk_idle_pair(tmp_path: Path) -> None:
     assert "rig_direction_check_windows" in walking
     assert "rig_direction_check_windows" not in idle
     assert idle["sources"][0]["trajectory_m"] == [[2.0, 0.0, 0.0]] * 5
+
+
+def test_builds_and_reauthenticates_compact_motion_style_apartment_pair(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path, compact_approval=True)
+    output_root = tmp_path / "compact_output"
+    inputs.pop("semantic_evidence")
+
+    manifest_path = subject.build_specs(**inputs, output_root=output_root)
+    manifest = contracts.load_json(manifest_path)
+    evidence = manifest["presentation_evidence"]
+
+    assert evidence["mode"] == subject.MOTION_STYLE_AND_CURRENT_READBACK_MODE
+    assert manifest["presentation_automatic_checks"] == (
+        subject.MOTION_STYLE_AND_CURRENT_READBACK_AUTOMATIC_CHECKS
+    )
+    authenticated = subject.authenticate_apartment_v2_manifest(manifest_path)
+    assert authenticated["presentation_evidence"] == evidence
+
+    walking_spec = contracts.load_json(
+        Path(manifest["records"][0]["actions"]["Walking"]["spec"])
+    )
+    gate = walking_spec["sources"][0]["controlled_animal_gate"]
+    assert gate["presentation_evidence"] == evidence
+    assert gate["presentation_automatic_checks"] == (
+        subject.MOTION_STYLE_AND_CURRENT_READBACK_AUTOMATIC_CHECKS
+    )
+
+    readback_path = Path(
+        evidence["current_asset_short_readback"]["path"]
+    )
+    readback_path.write_bytes(readback_path.read_bytes() + b" ")
+    with pytest.raises(
+        contracts.ContractError,
+        match="short-readback receipt does not match",
+    ):
+        subject.authenticate_apartment_v2_manifest(manifest_path)
 
 
 def test_builds_authenticated_walk_idle_pair_from_direct_v3_registry(

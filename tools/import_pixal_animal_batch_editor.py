@@ -158,7 +158,45 @@ PREPARATION_FIELDS = {
     "automatic_checks",
     "manifest_sha256",
 }
-PREPARATION_AUTOMATIC_CHECK_FIELDS = {
+PRESENTATION_EVIDENCE_FIELDS = {
+    "presentation_receipt",
+    "expected_presentation_receipt_file_sha256",
+    "presentation_receipt_sha256",
+    "output_video",
+}
+PRESENTATION_AUTOMATIC_CHECKS = {
+    "presentation_receipt_raw_file_sha256_reauthenticated": True,
+    "presentation_receipt_internal_sha256_reauthenticated": True,
+    "presentation_exact_v4_review_sha256_reauthenticated": True,
+    "presentation_output_video_bytes_and_directory_reauthenticated": True,
+}
+MOTION_STYLE_APPROVAL_SCHEMA = (
+    "avengine_generated_animal_motion_style_approval_v1"
+)
+CURRENT_ASSET_SHORT_READBACK_SCHEMA = (
+    "avengine_generated_animal_current_asset_short_readback_v1"
+)
+MOTION_STYLE_AND_CURRENT_READBACK_MODE = (
+    "motion_style_approval_plus_current_asset_short_readback_v1"
+)
+MOTION_STYLE_AND_CURRENT_READBACK_EVIDENCE_FIELDS = {
+    "mode",
+    "motion_style_approval",
+    "current_asset_short_readback",
+}
+MOTION_STYLE_AND_CURRENT_READBACK_AUTOMATIC_CHECKS = {
+    "motion_style_approval_file_and_video_sha256_reauthenticated": True,
+    "motion_style_idle_walking_approval_reauthenticated": True,
+    "current_asset_short_readback_file_and_video_sha256_reauthenticated": True,
+    "current_reviewed_glb_geometry_and_idle_walking_binding_reauthenticated": True,
+}
+CURRENT_ASSET_SHORT_READBACK_CHECKS = {
+    "current_review_action_media_bound": True,
+    "reviewed_animated_glb_bound": True,
+    "idle_action_present": True,
+    "walking_action_present": True,
+}
+PREPARATION_COMMON_AUTOMATIC_CHECK_FIELDS = {
     "source_registry_and_preflight_reauthenticated",
     "source_registry_matched_external_expected_sha256",
     "source_asset_v2_validated_against_request_and_profile",
@@ -173,10 +211,6 @@ PREPARATION_AUTOMATIC_CHECK_FIELDS = {
     "all_six_animation_render_encode_receipts_reauthenticated",
     "human_animation_approval_matched_external_expected_sha256",
     "animation_decision_freeze_receipt_reauthenticated",
-    "presentation_receipt_raw_file_sha256_reauthenticated",
-    "presentation_receipt_internal_sha256_reauthenticated",
-    "presentation_exact_v4_review_sha256_reauthenticated",
-    "presentation_output_video_bytes_and_directory_reauthenticated",
     "user_instruction_authority_preserved_without_cryptographic_upgrade",
     "reviewed_glb_has_embedded_skin_weights_and_exact_idle_walking_actions",
     "job_identity_and_attributes_copied_exactly_from_source_asset_v2",
@@ -185,6 +219,13 @@ PREPARATION_AUTOMATIC_CHECK_FIELDS = {
     "no_ue_execution_performed",
     "overall",
 }
+PREPARATION_AUTOMATIC_CHECK_FIELDS = (
+    PREPARATION_COMMON_AUTOMATIC_CHECK_FIELDS | set(PRESENTATION_AUTOMATIC_CHECKS)
+)
+COMPACT_PREPARATION_AUTOMATIC_CHECK_FIELDS = (
+    PREPARATION_COMMON_AUTOMATIC_CHECK_FIELDS
+    | set(MOTION_STYLE_AND_CURRENT_READBACK_AUTOMATIC_CHECKS)
+)
 DECISION_FREEZE_RECEIPT_FIELDS = {
     "schema",
     "status",
@@ -203,12 +244,6 @@ DECISION_FREEZE_RECEIPT_FIELDS = {
     "decision_sha256",
     "presentation_evidence",
     "receipt_sha256",
-}
-PRESENTATION_EVIDENCE_FIELDS = {
-    "presentation_receipt",
-    "expected_presentation_receipt_file_sha256",
-    "presentation_receipt_sha256",
-    "output_video",
 }
 CANONICAL_IDENTITY_FIELDS = {
     "asset_id",
@@ -528,6 +563,197 @@ def _validate_file_descriptor(
     ):
         raise RuntimeError(f"{label} descriptor does not authenticate its file")
     return {"path": str(path), "sha256": sha256, "size_bytes": size_bytes}
+
+
+def _has_idle_walking_actions(value: Any) -> bool:
+    return bool(
+        isinstance(value, list)
+        and len(value) == 2
+        and all(isinstance(action, str) for action in value)
+        and set(value) == set(EXPECTED_ACTIONS)
+    )
+
+
+def _uses_compact_approval_evidence(value: Any) -> bool:
+    return bool(
+        isinstance(value, Mapping)
+        and value.get("mode") == MOTION_STYLE_AND_CURRENT_READBACK_MODE
+    )
+
+
+def _validate_extended_file_descriptor(
+    value: Any,
+    label: str,
+    *,
+    internal_hash_field: str,
+) -> tuple[dict[str, Any], str]:
+    expected_fields = DESCRIPTOR_FIELDS | {internal_hash_field}
+    if not isinstance(value, dict) or set(value) != expected_fields:
+        raise RuntimeError(f"{label} descriptor fields are invalid")
+    descriptor = _validate_file_descriptor(
+        {field: value[field] for field in DESCRIPTOR_FIELDS},
+        label,
+    )
+    internal_hash = _require_sha256(
+        value.get(internal_hash_field),
+        f"{label} {internal_hash_field}",
+    )
+    return descriptor, internal_hash
+
+
+def _validate_compact_approval_evidence(
+    value: Any,
+    *,
+    expected_asset_id: str,
+    review: dict[str, Any],
+    review_descriptor: dict[str, Any],
+    reviewed_glb_descriptor: dict[str, Any],
+) -> dict[str, Any]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != MOTION_STYLE_AND_CURRENT_READBACK_EVIDENCE_FIELDS
+        or value.get("mode") != MOTION_STYLE_AND_CURRENT_READBACK_MODE
+    ):
+        raise RuntimeError("compact motion approval evidence fields are invalid")
+
+    style_descriptor, expected_approval_sha256 = (
+        _validate_extended_file_descriptor(
+            value.get("motion_style_approval"),
+            "motion-style approval",
+            internal_hash_field="approval_sha256",
+        )
+    )
+    style = _load_json_file(
+        Path(style_descriptor["path"]),
+        "motion-style approval",
+        expected_sha256=style_descriptor["sha256"],
+    )
+    if (
+        set(style)
+        != {
+            "schema",
+            "status",
+            "actions",
+            "evidence_video",
+            "approval_sha256",
+        }
+        or style.get("schema") != MOTION_STYLE_APPROVAL_SCHEMA
+        or style.get("status") != "approved_for_idle_walking_motion_style"
+        or not _has_idle_walking_actions(style.get("actions"))
+        or style.get("approval_sha256")
+        != _hash_without(style, "approval_sha256")
+        or style.get("approval_sha256") != expected_approval_sha256
+    ):
+        raise RuntimeError("motion-style approval contract is invalid")
+    style_video = _validate_file_descriptor(
+        style.get("evidence_video"),
+        "motion-style evidence video",
+    )
+    if style["evidence_video"] != style_video:
+        raise RuntimeError("motion-style evidence video descriptor is non-canonical")
+
+    readback_descriptor, expected_readback_sha256 = (
+        _validate_extended_file_descriptor(
+            value.get("current_asset_short_readback"),
+            "current-asset short-readback receipt",
+            internal_hash_field="receipt_sha256",
+        )
+    )
+    readback = _load_json_file(
+        Path(readback_descriptor["path"]),
+        "current-asset short-readback receipt",
+        expected_sha256=readback_descriptor["sha256"],
+    )
+    media = (
+        review.get("outputs", {}).get("media")
+        if isinstance(review.get("outputs"), dict)
+        else None
+    )
+    if (
+        not isinstance(media, dict)
+        or not isinstance(media.get("idle_side"), dict)
+        or not isinstance(media.get("walking_side"), dict)
+    ):
+        raise RuntimeError(
+            "current animation review lacks Idle/Walking side readbacks"
+        )
+    expected_action_readbacks = {
+        "Idle": {
+            field: media["idle_side"].get(field)
+            for field in ("path", "sha256", "size_bytes")
+        },
+        "Walking": {
+            field: media["walking_side"].get(field)
+            for field in ("path", "sha256", "size_bytes")
+        },
+    }
+    expected_review_descriptor = {
+        field: review_descriptor[field] for field in DESCRIPTOR_FIELDS
+    }
+    expected_glb_descriptor = {
+        field: reviewed_glb_descriptor[field] for field in DESCRIPTOR_FIELDS
+    }
+    if (
+        set(readback)
+        != {
+            "schema",
+            "status",
+            "asset_id",
+            "animation_review",
+            "reviewed_animated_glb",
+            "actions",
+            "action_readbacks",
+            "checks",
+            "receipt_sha256",
+        }
+        or readback.get("schema") != CURRENT_ASSET_SHORT_READBACK_SCHEMA
+        or readback.get("status")
+        != "passed_current_asset_geometry_and_actions"
+        or readback.get("asset_id") != expected_asset_id
+        or readback.get("animation_review") != expected_review_descriptor
+        or readback.get("reviewed_animated_glb") != expected_glb_descriptor
+        or not _has_idle_walking_actions(readback.get("actions"))
+        or readback.get("action_readbacks") != expected_action_readbacks
+        or readback.get("checks") != CURRENT_ASSET_SHORT_READBACK_CHECKS
+        or readback.get("receipt_sha256")
+        != _hash_without(readback, "receipt_sha256")
+        or readback.get("receipt_sha256") != expected_readback_sha256
+    ):
+        raise RuntimeError(
+            "current-asset short-readback identity binding is invalid"
+        )
+    action_videos = {
+        action: _validate_file_descriptor(
+            descriptor,
+            f"current-asset {action} short-readback video",
+        )
+        for action, descriptor in expected_action_readbacks.items()
+    }
+    if any(
+        expected_action_readbacks[action] != descriptor
+        for action, descriptor in action_videos.items()
+    ):
+        raise RuntimeError(
+            "current-asset short-readback video descriptor is non-canonical"
+        )
+    if any(
+        style_video["sha256"] == descriptor["sha256"]
+        for descriptor in action_videos.values()
+    ):
+        raise RuntimeError(
+            "motion-style video cannot replace current-asset readback"
+        )
+    return {
+        "mode": MOTION_STYLE_AND_CURRENT_READBACK_MODE,
+        "motion_style_approval": {
+            **style_descriptor,
+            "approval_sha256": expected_approval_sha256,
+        },
+        "current_asset_short_readback": {
+            **readback_descriptor,
+            "receipt_sha256": expected_readback_sha256,
+        },
+    }
 
 
 def _load_texture_transcode_manifest(
@@ -911,6 +1137,23 @@ def _validate_decision_freeze_receipt(
         )
     instruction = payload.get("user_instruction_binding")
     authority = payload.get("user_instruction_authority")
+    evidence_value = payload.get("presentation_evidence")
+    compact_evidence = _uses_compact_approval_evidence(evidence_value)
+    expected_instruction_fields = (
+        {
+            "decision",
+            "motion_style_approval_file_sha256",
+            "current_asset_short_readback_file_sha256",
+            "current_asset_readback_is_machine_gate",
+        }
+        if compact_evidence
+        else {
+            "decision",
+            "review_sha256",
+            "all_six_checks_explicit",
+            "presentation_receipt_file_sha256",
+        }
+    )
     if (
         set(payload) != DECISION_FREEZE_RECEIPT_FIELDS
         or payload.get("schema") != DECISION_FREEZE_RECEIPT_SCHEMA
@@ -924,15 +1167,17 @@ def _validate_decision_freeze_receipt(
         or payload.get("source_asset_registry_validation_mode")
         not in SOURCE_REGISTRY_VALIDATION_MODES
         or not isinstance(instruction, dict)
-        or set(instruction)
-        != {
-            "decision",
-            "review_sha256",
-            "all_six_checks_explicit",
-            "presentation_receipt_file_sha256",
-        }
+        or set(instruction) != expected_instruction_fields
         or instruction.get("decision") != "approved_for_ue_apartment"
-        or instruction.get("all_six_checks_explicit") is not True
+        or (
+            not compact_evidence
+            and instruction.get("all_six_checks_explicit") is not True
+        )
+        or (
+            compact_evidence
+            and instruction.get("current_asset_readback_is_machine_gate")
+            is not True
+        )
         or isinstance(payload.get("authenticated_review_artifact_count"), bool)
         or not isinstance(payload.get("authenticated_review_artifact_count"), int)
         or payload["authenticated_review_artifact_count"] <= 0
@@ -951,17 +1196,26 @@ def _validate_decision_freeze_receipt(
         preparation.get("animation_review"),
         "animation review",
     )
+    reviewed_glb = _validate_file_descriptor(
+        preparation.get("reviewed_animated_glb"),
+        "reviewed animated GLB",
+    )
     decision = _validate_file_descriptor(
         preparation.get("animation_decision"),
         "animation decision",
     )
+    review_payload = None
     for descriptor, label in (
         (source_asset, "canonical source asset"),
         (source_registry, "source asset registry"),
         (review, "animation review"),
         (decision, "animation decision"),
     ):
-        _load_json_file(Path(descriptor["path"]), label)
+        loaded = _load_json_file(Path(descriptor["path"]), label)
+        if descriptor is review:
+            review_payload = loaded
+    if review_payload is None:
+        raise RuntimeError("animation review could not be authenticated")
     if (
         payload.get("source_asset") != source_asset
         or payload.get("source_asset_registry") != source_registry
@@ -971,7 +1225,10 @@ def _validate_decision_freeze_receipt(
         or payload.get("source_asset_registry_validation_mode")
         != preparation.get("source_asset_registry_validation_mode")
         or payload.get("expected_animation_review_file_sha256") != review["sha256"]
-        or instruction.get("review_sha256") != review["sha256"]
+        or (
+            not compact_evidence
+            and instruction.get("review_sha256") != review["sha256"]
+        )
         or isinstance(payload.get("authenticated_review_artifact_count"), bool)
         or payload.get("authenticated_review_artifact_count")
         != preparation.get("authenticated_review_artifact_count")
@@ -979,54 +1236,85 @@ def _validate_decision_freeze_receipt(
         != preparation.get("animation_decision_sha256")
     ):
         raise RuntimeError("animation decision freeze receipt artifact lineage changed")
-    presentation_evidence = payload.get("presentation_evidence")
-    if (
-        not isinstance(presentation_evidence, dict)
-        or set(presentation_evidence) != PRESENTATION_EVIDENCE_FIELDS
-        or presentation_evidence != preparation.get("presentation_evidence")
-        or instruction.get("presentation_receipt_file_sha256")
-        != presentation_evidence.get("expected_presentation_receipt_file_sha256")
-    ):
-        raise RuntimeError(
-            "animation decision freeze receipt presentation binding changed"
+    canonical_identity = preparation.get("canonical_identity")
+    if compact_evidence and not isinstance(canonical_identity, dict):
+        raise RuntimeError("preparation canonical identity is invalid")
+    if compact_evidence:
+        canonical_evidence = _validate_compact_approval_evidence(
+            evidence_value,
+            expected_asset_id=str(canonical_identity.get("asset_id", "")),
+            review=review_payload,
+            review_descriptor=review,
+            reviewed_glb_descriptor=reviewed_glb,
         )
-    presentation_receipt = _validate_file_descriptor(
-        presentation_evidence.get("presentation_receipt"),
-        "owner-review presentation receipt",
-    )
-    expected_presentation_receipt_sha256 = _require_sha256(
-        presentation_evidence.get("expected_presentation_receipt_file_sha256"),
-        "external owner-review presentation receipt hash",
-    )
-    if presentation_receipt["sha256"] != expected_presentation_receipt_sha256:
-        raise RuntimeError("owner-review presentation receipt external anchor changed")
-    try:
-        presentation_payload, raw_presentation_record = (
-            presentation.load_presentation_receipt(
-                Path(presentation_receipt["path"]),
-                expected_presentation_receipt_sha256,
-                expected_source_review_sha256=review["sha256"],
+        if (
+            canonical_evidence != evidence_value
+            or evidence_value != preparation.get("presentation_evidence")
+            or instruction.get("motion_style_approval_file_sha256")
+            != canonical_evidence["motion_style_approval"]["sha256"]
+            or instruction.get("current_asset_short_readback_file_sha256")
+            != canonical_evidence["current_asset_short_readback"]["sha256"]
+        ):
+            raise RuntimeError(
+                "animation decision freeze receipt compact approval binding changed"
             )
+    else:
+        presentation_evidence = evidence_value
+        if (
+            not isinstance(presentation_evidence, dict)
+            or set(presentation_evidence) != PRESENTATION_EVIDENCE_FIELDS
+            or presentation_evidence != preparation.get("presentation_evidence")
+            or instruction.get("presentation_receipt_file_sha256")
+            != presentation_evidence.get(
+                "expected_presentation_receipt_file_sha256"
+            )
+        ):
+            raise RuntimeError(
+                "animation decision freeze receipt presentation binding changed"
+            )
+        presentation_receipt = _validate_file_descriptor(
+            presentation_evidence.get("presentation_receipt"),
+            "owner-review presentation receipt",
         )
-    except (
-        presentation.PresentationContractError,
-        contracts.StrictJSONError,
-        OSError,
-        ValueError,
-    ) as error:
-        raise RuntimeError(
-            f"animation decision presentation evidence is invalid: {error}"
-        ) from error
-    canonical_presentation = {
-        "presentation_receipt": raw_presentation_record,
-        "expected_presentation_receipt_file_sha256": (
-            expected_presentation_receipt_sha256
-        ),
-        "presentation_receipt_sha256": presentation_payload["receipt_sha256"],
-        "output_video": presentation_payload["output"],
-    }
-    if canonical_presentation != presentation_evidence:
-        raise RuntimeError("animation decision presentation evidence is non-canonical")
+        expected_presentation_receipt_sha256 = _require_sha256(
+            presentation_evidence.get("expected_presentation_receipt_file_sha256"),
+            "external owner-review presentation receipt hash",
+        )
+        if presentation_receipt["sha256"] != expected_presentation_receipt_sha256:
+            raise RuntimeError(
+                "owner-review presentation receipt external anchor changed"
+            )
+        try:
+            presentation_payload, raw_presentation_record = (
+                presentation.load_presentation_receipt(
+                    Path(presentation_receipt["path"]),
+                    expected_presentation_receipt_sha256,
+                    expected_source_review_sha256=review["sha256"],
+                )
+            )
+        except (
+            presentation.PresentationContractError,
+            contracts.StrictJSONError,
+            OSError,
+            ValueError,
+        ) as error:
+            raise RuntimeError(
+                f"animation decision presentation evidence is invalid: {error}"
+            ) from error
+        canonical_presentation = {
+            "presentation_receipt": raw_presentation_record,
+            "expected_presentation_receipt_file_sha256": (
+                expected_presentation_receipt_sha256
+            ),
+            "presentation_receipt_sha256": presentation_payload[
+                "receipt_sha256"
+            ],
+            "output_video": presentation_payload["output"],
+        }
+        if canonical_presentation != presentation_evidence:
+            raise RuntimeError(
+                "animation decision presentation evidence is non-canonical"
+            )
     decision_path, decision_relative = _resolve_relative_descriptor(
         receipt_path.parent,
         payload.get("animation_decision"),
@@ -1079,12 +1367,19 @@ def _validate_preparation_anchor(
     ):
         raise RuntimeError("UE import preparation contract is invalid")
     automatic_checks = preparation.get("automatic_checks")
+    expected_automatic_check_fields = (
+        COMPACT_PREPARATION_AUTOMATIC_CHECK_FIELDS
+        if _uses_compact_approval_evidence(
+            preparation.get("presentation_evidence")
+        )
+        else PREPARATION_AUTOMATIC_CHECK_FIELDS
+    )
     if (
         not isinstance(automatic_checks, dict)
-        or set(automatic_checks) != PREPARATION_AUTOMATIC_CHECK_FIELDS
+        or set(automatic_checks) != expected_automatic_check_fields
         or any(
             automatic_checks.get(field) is not True
-            for field in PREPARATION_AUTOMATIC_CHECK_FIELDS - {"overall"}
+            for field in expected_automatic_check_fields - {"overall"}
         )
         or automatic_checks.get("overall") != "passed"
     ):

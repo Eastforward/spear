@@ -15,6 +15,9 @@ import soundfile as sf
 
 from flag_verifier import verify_flag_details
 from source_trajectory import acoustic_trajectory
+from tools import (
+    prepare_user_approved_generated_animal_ue_imports as approval_bridge,
+)
 
 
 _AUDIO_EVIDENCE_SCHEMA = "avengine_audio_artifact_evidence_v1"
@@ -410,7 +413,7 @@ def publish_research_candidate_registry_clip(
     )
 
 
-def _verified_artifact_descriptor(artifact: dict, *, label: str) -> tuple[Path, dict]:
+def _verified_file_descriptor(artifact: dict, *, label: str) -> Path:
     try:
         path = Path(artifact["path"]).resolve()
         expected_sha256 = str(artifact["sha256"])
@@ -421,6 +424,11 @@ def _verified_artifact_descriptor(artifact: dict, *, label: str) -> tuple[Path, 
         raise ValueError(f"{label} must be a direct regular file: {path}")
     if path.stat().st_size != expected_size or sha256_file(path) != expected_sha256:
         raise ValueError(f"{label} descriptor no longer matches: {path}")
+    return path
+
+
+def _verified_artifact_descriptor(artifact: dict, *, label: str) -> tuple[Path, dict]:
+    path = _verified_file_descriptor(artifact, label=label)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -435,6 +443,107 @@ def _artifact_identity_matches(left: object, right: object) -> bool:
         left.get(field) == right.get(field)
         for field in ("path", "sha256", "size_bytes")
     )
+
+
+def _artifact_content_identity_matches(left: object, right: object) -> bool:
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+    return all(
+        left.get(field) == right.get(field)
+        for field in ("sha256", "size_bytes")
+    )
+
+
+def _validate_controlled_animal_v2_approval_evidence(
+    *,
+    source: dict,
+    gate: dict,
+    preparation: dict,
+    receipt: dict,
+) -> None:
+    evidence = gate.get("presentation_evidence")
+    instruction = receipt.get("user_instruction_binding")
+    review_descriptor = preparation.get("animation_review")
+    reviewed_glb_descriptor = preparation.get("reviewed_animated_glb")
+    canonical_identity = preparation.get("canonical_identity")
+    if (
+        evidence != preparation.get("presentation_evidence")
+        or evidence != receipt.get("presentation_evidence")
+        or not isinstance(instruction, dict)
+        or not isinstance(review_descriptor, dict)
+        or not isinstance(reviewed_glb_descriptor, dict)
+        or not isinstance(canonical_identity, dict)
+        or receipt.get("animation_review") != review_descriptor
+        or canonical_identity.get("asset_id") != source.get("asset_id")
+    ):
+        raise ValueError("controlled-animal approval evidence binding changed")
+    review_path, review = _verified_artifact_descriptor(
+        review_descriptor,
+        label="animation review",
+    )
+    reviewed_glb = _verified_file_descriptor(
+        reviewed_glb_descriptor,
+        label="reviewed animated GLB",
+    )
+    if (
+        isinstance(evidence, dict)
+        and evidence.get("mode")
+        == approval_bridge.MOTION_STYLE_AND_CURRENT_READBACK_MODE
+    ):
+        canonical, _paths = (
+            approval_bridge.load_motion_style_and_current_readback_evidence(
+                evidence,
+                expected_asset_id=str(source.get("asset_id")),
+                review_path=review_path,
+                review_payload=review,
+                reviewed_animated_glb=reviewed_glb,
+            )
+        )
+        valid = bool(
+            canonical == evidence
+            and gate.get("presentation_automatic_checks")
+            == approval_bridge.MOTION_STYLE_AND_CURRENT_READBACK_AUTOMATIC_CHECKS
+            and set(instruction)
+            == {
+                "decision",
+                "motion_style_approval_file_sha256",
+                "current_asset_short_readback_file_sha256",
+                "current_asset_readback_is_machine_gate",
+            }
+            and instruction.get("decision") == "approved_for_ue_apartment"
+            and instruction.get("motion_style_approval_file_sha256")
+            == evidence["motion_style_approval"]["sha256"]
+            and instruction.get("current_asset_short_readback_file_sha256")
+            == evidence["current_asset_short_readback"]["sha256"]
+            and instruction.get("current_asset_readback_is_machine_gate") is True
+        )
+    else:
+        canonical, _presentation, _video = (
+            approval_bridge.load_presentation_evidence(
+                evidence,
+                review_path=review_path,
+            )
+        )
+        valid = bool(
+            canonical == evidence
+            and gate.get("presentation_automatic_checks")
+            == approval_bridge.PRESENTATION_AUTOMATIC_CHECKS
+            and set(instruction)
+            == {
+                "decision",
+                "review_sha256",
+                "all_six_checks_explicit",
+                "presentation_receipt_file_sha256",
+            }
+            and instruction.get("decision") == "approved_for_ue_apartment"
+            and instruction.get("review_sha256")
+            == review_descriptor.get("sha256")
+            and instruction.get("all_six_checks_explicit") is True
+            and instruction.get("presentation_receipt_file_sha256")
+            == evidence["expected_presentation_receipt_file_sha256"]
+        )
+    if not valid:
+        raise ValueError("controlled-animal approval evidence binding changed")
 
 
 def _validate_controlled_animal_v2_gate(
@@ -486,13 +595,19 @@ def _validate_controlled_animal_v2_gate(
         )
         or not isinstance(receipt, dict)
         or receipt.get("status") != "frozen"
-        or not _artifact_identity_matches(
+        or not _artifact_content_identity_matches(
             receipt_decision,
             gate.get("animation_decision"),
         )
         or receipt.get("decision_sha256") != decision.get("decision_sha256")
     ):
         raise ValueError("controlled-animal v2 approval/import lineage changed")
+    _validate_controlled_animal_v2_approval_evidence(
+        source=source,
+        gate=gate,
+        preparation=preparation,
+        receipt=receipt,
+    )
     return imported_result
 
 

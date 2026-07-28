@@ -243,17 +243,116 @@ def _upgrade_controlled_animal_manifest_to_v2(manifest: Path) -> Path:
             "size_bytes": len(data),
         }
 
+    def hash_without(value: dict, field: str) -> str:
+        encoded = json.dumps(
+            {key: item for key, item in value.items() if key != field},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        return hashlib.sha256(encoded).hexdigest()
+
+    reviewed_glb = root / "evidence" / "reviewed_animated.glb"
+    reviewed_glb.write_bytes(b"current-controlled-animal-animated-glb")
+    idle_side = root / "evidence" / "idle_side.mp4"
+    idle_side.write_bytes(b"current-controlled-animal-idle-side")
+    walking_side = root / "evidence" / "walking_side.mp4"
+    walking_side.write_bytes(b"current-controlled-animal-walking-side")
+    review = {
+        "schema": "avengine_target_native_generated_quadruped_review_run_v4",
+        "asset_id": asset_id,
+        "outputs": {
+            "animated_glb": artifact(reviewed_glb),
+            "media": {
+                "idle_side": artifact(idle_side),
+                "walking_side": artifact(walking_side),
+            },
+        },
+    }
+    review_path = root / "evidence" / "animation_review.json"
+    review_path.write_text(json.dumps(review))
+
+    style_video = root / "evidence" / "approved_motion_style.mp4"
+    style_video.write_bytes(b"approved-idle-walking-motion-style")
+    style = {
+        "schema": (
+            "avengine_generated_animal_motion_style_approval_v1"
+        ),
+        "status": "approved_for_idle_walking_motion_style",
+        "actions": ["Idle", "Walking"],
+        "evidence_video": artifact(style_video),
+    }
+    style["approval_sha256"] = hash_without(style, "approval_sha256")
+    style_path = root / "evidence" / "motion_style_approval.json"
+    style_path.write_text(json.dumps(style))
+
+    short_readback = {
+        "schema": (
+            "avengine_generated_animal_current_asset_short_readback_v1"
+        ),
+        "status": "passed_current_asset_geometry_and_actions",
+        "asset_id": asset_id,
+        "animation_review": artifact(review_path),
+        "reviewed_animated_glb": artifact(reviewed_glb),
+        "actions": ["Idle", "Walking"],
+        "action_readbacks": {
+            "Idle": artifact(idle_side),
+            "Walking": artifact(walking_side),
+        },
+        "checks": {
+            "current_review_action_media_bound": True,
+            "reviewed_animated_glb_bound": True,
+            "idle_action_present": True,
+            "walking_action_present": True,
+        },
+    }
+    short_readback["receipt_sha256"] = hash_without(
+        short_readback,
+        "receipt_sha256",
+    )
+    short_readback_path = (
+        root / "evidence" / "current_asset_short_readback.json"
+    )
+    short_readback_path.write_text(json.dumps(short_readback))
+    presentation_evidence = {
+        "mode": (
+            "motion_style_approval_plus_current_asset_short_readback_v1"
+        ),
+        "motion_style_approval": {
+            **artifact(style_path),
+            "approval_sha256": style["approval_sha256"],
+        },
+        "current_asset_short_readback": {
+            **artifact(short_readback_path),
+            "receipt_sha256": short_readback["receipt_sha256"],
+        },
+    }
     receipt = {
         "status": "frozen",
         "animation_decision": artifact(decision_path),
         "decision_sha256": decision["decision_sha256"],
+        "animation_review": artifact(review_path),
+        "user_instruction_binding": {
+            "decision": "approved_for_ue_apartment",
+            "motion_style_approval_file_sha256": (
+                presentation_evidence["motion_style_approval"]["sha256"]
+            ),
+            "current_asset_short_readback_file_sha256": (
+                presentation_evidence["current_asset_short_readback"]["sha256"]
+            ),
+            "current_asset_readback_is_machine_gate": True,
+        },
+        "presentation_evidence": presentation_evidence,
     }
     receipt_path = root / "evidence" / "decision_freeze_receipt.json"
     receipt_path.write_text(json.dumps(receipt))
     preparation = {
         "status": "ready_for_new_ue_import",
+        "canonical_identity": {"asset_id": asset_id},
         "animation_decision": artifact(decision_path),
         "animation_decision_freeze_receipt": artifact(receipt_path),
+        "animation_review": artifact(review_path),
+        "reviewed_animated_glb": artifact(reviewed_glb),
+        "presentation_evidence": presentation_evidence,
     }
     preparation_path = root / "evidence" / "ue_preparation.json"
     preparation_path.write_text(json.dumps(preparation))
@@ -287,6 +386,13 @@ def _upgrade_controlled_animal_manifest_to_v2(manifest: Path) -> Path:
         "ue_import_preparation": preparation_descriptor,
         "ue_import_result": artifact(import_path),
         "ue_source_sha256": original_gate["ue_source_sha256"],
+        "presentation_evidence": presentation_evidence,
+        "presentation_automatic_checks": {
+            "motion_style_approval_file_and_video_sha256_reauthenticated": True,
+            "motion_style_idle_walking_approval_reauthenticated": True,
+            "current_asset_short_readback_file_and_video_sha256_reauthenticated": True,
+            "current_reviewed_glb_geometry_and_idle_walking_binding_reauthenticated": True,
+        },
         "producer_metadata": {"ignored_by_runtime_reader": True},
         "formal_dataset_registration_authorized": False,
     }
@@ -468,6 +574,24 @@ def test_build_jobs_accepts_key_bound_controlled_animal_v2_gate(tmp_path):
         ("cat_siamese_bindpose_example", "Idle"),
         ("cat_siamese_bindpose_example", "Walking"),
     ]
+
+
+def test_controlled_animal_v2_gate_rejects_changed_compact_readback(tmp_path):
+    manifest = _upgrade_controlled_animal_manifest_to_v2(
+        _controlled_animal_manifest(tmp_path)
+    )
+    payload = json.loads(manifest.read_text())
+    spec_path = Path(payload["records"][0]["actions"]["Walking"]["spec"])
+    source = json.loads(spec_path.read_text())["sources"][0]
+    readback_path = Path(
+        source["controlled_animal_gate"]["presentation_evidence"][
+            "current_asset_short_readback"
+        ]["path"]
+    )
+    readback_path.write_bytes(readback_path.read_bytes() + b" ")
+
+    with pytest.raises(RuntimeError, match="review spec identity changed"):
+        build_jobs(manifest)
 
 
 def test_controlled_animal_v2_gate_rejects_missing_freeze_receipt(tmp_path):

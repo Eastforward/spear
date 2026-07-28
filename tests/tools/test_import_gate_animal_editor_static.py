@@ -226,11 +226,67 @@ def _stubbed_presentation_evidence(tmp_path, batch, animation_review):
     return evidence, output_video, loader_calls
 
 
+def _stubbed_compact_evidence(
+    tmp_path,
+    batch,
+    animation_review,
+    rigged_glb,
+):
+    style_video = tmp_path / "approved_motion_style.mp4"
+    style_video.write_bytes(b"approved-idle-walking-motion-style")
+    style_approval = {
+        "schema": batch.MOTION_STYLE_APPROVAL_SCHEMA,
+        "status": "approved_for_idle_walking_motion_style",
+        "actions": list(batch.EXPECTED_ACTIONS),
+        "evidence_video": _record(style_video),
+    }
+    style_approval["approval_sha256"] = batch._hash_without(
+        style_approval,
+        "approval_sha256",
+    )
+    style_path = tmp_path / "motion_style_approval.json"
+    _write_json(style_path, style_approval)
+
+    review = json.loads(animation_review.read_text(encoding="utf-8"))
+    action_readbacks = {
+        "Idle": copy.deepcopy(review["outputs"]["media"]["idle_side"]),
+        "Walking": copy.deepcopy(review["outputs"]["media"]["walking_side"]),
+    }
+    readback = {
+        "schema": batch.CURRENT_ASSET_SHORT_READBACK_SCHEMA,
+        "status": "passed_current_asset_geometry_and_actions",
+        "asset_id": "animal_british_shorthair_v1",
+        "animation_review": _record(animation_review),
+        "reviewed_animated_glb": _record(rigged_glb),
+        "actions": list(batch.EXPECTED_ACTIONS),
+        "action_readbacks": action_readbacks,
+        "checks": copy.deepcopy(batch.CURRENT_ASSET_SHORT_READBACK_CHECKS),
+    }
+    readback["receipt_sha256"] = batch._hash_without(
+        readback,
+        "receipt_sha256",
+    )
+    readback_path = tmp_path / "current_asset_short_readback.json"
+    _write_json(readback_path, readback)
+    return {
+        "mode": batch.MOTION_STYLE_AND_CURRENT_READBACK_MODE,
+        "motion_style_approval": {
+            **_record(style_path),
+            "approval_sha256": style_approval["approval_sha256"],
+        },
+        "current_asset_short_readback": {
+            **_record(readback_path),
+            "receipt_sha256": readback["receipt_sha256"],
+        },
+    }, style_video
+
+
 def _build_v3_contract(
     tmp_path,
     batch,
     *,
     source_registry_validation_mode="current_exact_rebuild",
+    compact_approval=False,
 ):
     asset_id = "animal_british_shorthair_v1"
     tag = f"pixal_{asset_id}"
@@ -254,13 +310,24 @@ def _build_v3_contract(
             "asset_ids": [asset_id],
         },
     )
-    _write_json(
-        animation_review,
-        {
-            "schema": "generated_animal_animation_review_v4",
-            "asset_id": asset_id,
-        },
-    )
+    _write_glb(rigged_glb)
+    review_payload = {
+        "schema": "generated_animal_animation_review_v4",
+        "asset_id": asset_id,
+    }
+    if compact_approval:
+        idle_video = tmp_path / "idle_side.mp4"
+        walking_video = tmp_path / "walking_side.mp4"
+        idle_video.write_bytes(b"current-british-shorthair-idle-side")
+        walking_video.write_bytes(b"current-british-shorthair-walking-side")
+        review_payload["outputs"] = {
+            "animated_glb": _record(rigged_glb),
+            "media": {
+                "idle_side": _record(idle_video),
+                "walking_side": _record(walking_video),
+            },
+        }
+    _write_json(animation_review, review_payload)
     decision_payload = {
         "schema": "target_native_generated_animal_animation_decision_v1",
         "decision": "approved_for_ue_apartment",
@@ -270,10 +337,20 @@ def _build_v3_contract(
         decision_payload, "decision_sha256"
     )
     _write_json(animation_decision, decision_payload)
-    _write_glb(rigged_glb)
-    presentation_evidence, presentation_video, presentation_loader_calls = (
-        _stubbed_presentation_evidence(tmp_path, batch, animation_review)
-    )
+    if compact_approval:
+        presentation_evidence, presentation_video = _stubbed_compact_evidence(
+            tmp_path,
+            batch,
+            animation_review,
+            rigged_glb,
+        )
+        presentation_loader_calls = []
+    else:
+        (
+            presentation_evidence,
+            presentation_video,
+            presentation_loader_calls,
+        ) = _stubbed_presentation_evidence(tmp_path, batch, animation_review)
 
     authority = copy.deepcopy(batch.USER_INSTRUCTION_AUTHORITY)
     receipt_payload = {
@@ -287,14 +364,29 @@ def _build_v3_contract(
         "source_asset": _record(source_asset),
         "animation_review": _record(animation_review),
         "expected_animation_review_file_sha256": _sha256(animation_review),
-        "user_instruction_binding": {
-            "decision": "approved_for_ue_apartment",
-            "review_sha256": _sha256(animation_review),
-            "all_six_checks_explicit": True,
-            "presentation_receipt_file_sha256": presentation_evidence[
-                "expected_presentation_receipt_file_sha256"
-            ],
-        },
+        "user_instruction_binding": (
+            {
+                "decision": "approved_for_ue_apartment",
+                "motion_style_approval_file_sha256": presentation_evidence[
+                    "motion_style_approval"
+                ]["sha256"],
+                "current_asset_short_readback_file_sha256": (
+                    presentation_evidence["current_asset_short_readback"][
+                        "sha256"
+                    ]
+                ),
+                "current_asset_readback_is_machine_gate": True,
+            }
+            if compact_approval
+            else {
+                "decision": "approved_for_ue_apartment",
+                "review_sha256": _sha256(animation_review),
+                "all_six_checks_explicit": True,
+                "presentation_receipt_file_sha256": presentation_evidence[
+                    "expected_presentation_receipt_file_sha256"
+                ],
+            }
+        ),
         "user_instruction_authority": authority,
         "authenticated_review_artifact_count": 1,
         "animation_decision": {
@@ -392,7 +484,11 @@ def _build_v3_contract(
         },
         "automatic_checks": {
             field: ("passed" if field == "overall" else True)
-            for field in batch.PREPARATION_AUTOMATIC_CHECK_FIELDS
+            for field in (
+                batch.COMPACT_PREPARATION_AUTOMATIC_CHECK_FIELDS
+                if compact_approval
+                else batch.PREPARATION_AUTOMATIC_CHECK_FIELDS
+            )
         },
     }
     preparation["manifest_sha256"] = batch._hash_without(preparation, "manifest_sha256")
@@ -721,6 +817,53 @@ def test_formal_pixal_import_contract_uses_v3_preparation_and_is_externally_anch
     assert authenticated["batch_identity"] == identity
     assert authenticated["result_path"] == result_path
     assert not result_path.exists()
+
+
+def test_pixal_import_accepts_compact_style_and_current_asset_readback(
+    tmp_path,
+    monkeypatch,
+):
+    batch = _load_module(
+        BATCH_IMPORT,
+        "_test_import_pixal_compact_approval",
+        monkeypatch,
+    )
+    fixture = _build_v3_contract(
+        tmp_path,
+        batch,
+        compact_approval=True,
+    )
+
+    preparation, _preparation_descriptor, _manifest_descriptor = (
+        batch._validate_preparation_anchor(
+            fixture["preparation_path"],
+            _sha256(fixture["preparation_path"]),
+            fixture["manifest_path"],
+            _sha256(fixture["manifest_path"]),
+        )
+    )
+
+    assert preparation["presentation_evidence"]["mode"] == (
+        batch.MOTION_STYLE_AND_CURRENT_READBACK_MODE
+    )
+    assert set(preparation["automatic_checks"]) == (
+        batch.COMPACT_PREPARATION_AUTOMATIC_CHECK_FIELDS
+    )
+    assert fixture["presentation_loader_calls"] == []
+
+    readback = Path(
+        preparation["presentation_evidence"]["current_asset_short_readback"][
+            "path"
+        ]
+    )
+    readback.write_bytes(readback.read_bytes() + b" ")
+    with pytest.raises(RuntimeError, match="does not authenticate"):
+        batch._validate_preparation_anchor(
+            fixture["preparation_path"],
+            _sha256(fixture["preparation_path"]),
+            fixture["manifest_path"],
+            _sha256(fixture["manifest_path"]),
+        )
 
 
 def test_presentation_video_and_cross_layer_binding_mutations_fail_closed(

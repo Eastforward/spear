@@ -34,6 +34,9 @@ from tools.spike_rlr.animal_audio import (  # noqa: E402
     validate_animal_silence_contract,
     validate_animal_audio_evidence,
 )
+from tools import (  # noqa: E402
+    prepare_user_approved_generated_animal_ue_imports as approval_bridge,
+)
 
 DEFAULT_LAUNCHER = SPEAR_ROOT / "tools/spike_rlr/run_human_apartment_smoke.py"
 DEFAULT_PYTHON = Path("/data/jzy/miniconda3/envs/spear-env/bin/python")
@@ -130,6 +133,97 @@ def _artifact_identity_matches(left: object, right: object) -> bool:
     )
 
 
+def _artifact_content_identity_matches(left: object, right: object) -> bool:
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+    return all(
+        left.get(field) == right.get(field)
+        for field in ("sha256", "size_bytes")
+    )
+
+
+def _controlled_animal_v2_approval_evidence_is_valid(
+    *,
+    source: dict,
+    gate: dict,
+    preparation: dict,
+    receipt: dict,
+) -> bool:
+    evidence = gate.get("presentation_evidence")
+    instruction = receipt.get("user_instruction_binding")
+    review_descriptor = preparation.get("animation_review")
+    reviewed_glb_descriptor = preparation.get("reviewed_animated_glb")
+    canonical_identity = preparation.get("canonical_identity")
+    if (
+        evidence != preparation.get("presentation_evidence")
+        or evidence != receipt.get("presentation_evidence")
+        or not isinstance(instruction, dict)
+        or not isinstance(review_descriptor, dict)
+        or not isinstance(reviewed_glb_descriptor, dict)
+        or not isinstance(canonical_identity, dict)
+        or receipt.get("animation_review") != review_descriptor
+        or canonical_identity.get("asset_id") != source.get("asset_id")
+    ):
+        return False
+    review = _authenticated_artifact_json(review_descriptor)
+    _authenticated_artifact_payload(reviewed_glb_descriptor)
+    review_path = Path(review_descriptor["path"])
+    reviewed_glb = Path(reviewed_glb_descriptor["path"])
+    if (
+        isinstance(evidence, dict)
+        and evidence.get("mode")
+        == approval_bridge.MOTION_STYLE_AND_CURRENT_READBACK_MODE
+    ):
+        canonical, _paths = (
+            approval_bridge.load_motion_style_and_current_readback_evidence(
+                evidence,
+                expected_asset_id=str(source.get("asset_id")),
+                review_path=review_path,
+                review_payload=review,
+                reviewed_animated_glb=reviewed_glb,
+            )
+        )
+        return bool(
+            canonical == evidence
+            and gate.get("presentation_automatic_checks")
+            == approval_bridge.MOTION_STYLE_AND_CURRENT_READBACK_AUTOMATIC_CHECKS
+            and set(instruction)
+            == {
+                "decision",
+                "motion_style_approval_file_sha256",
+                "current_asset_short_readback_file_sha256",
+                "current_asset_readback_is_machine_gate",
+            }
+            and instruction.get("decision") == "approved_for_ue_apartment"
+            and instruction.get("motion_style_approval_file_sha256")
+            == evidence["motion_style_approval"]["sha256"]
+            and instruction.get("current_asset_short_readback_file_sha256")
+            == evidence["current_asset_short_readback"]["sha256"]
+            and instruction.get("current_asset_readback_is_machine_gate") is True
+        )
+    canonical, _presentation, _video = approval_bridge.load_presentation_evidence(
+        evidence,
+        review_path=review_path,
+    )
+    return bool(
+        canonical == evidence
+        and gate.get("presentation_automatic_checks")
+        == approval_bridge.PRESENTATION_AUTOMATIC_CHECKS
+        and set(instruction)
+        == {
+            "decision",
+            "review_sha256",
+            "all_six_checks_explicit",
+            "presentation_receipt_file_sha256",
+        }
+        and instruction.get("decision") == "approved_for_ue_apartment"
+        and instruction.get("review_sha256") == review_descriptor.get("sha256")
+        and instruction.get("all_six_checks_explicit") is True
+        and instruction.get("presentation_receipt_file_sha256")
+        == evidence["expected_presentation_receipt_file_sha256"]
+    )
+
+
 def _controlled_animal_v2_gate_is_valid(
     *,
     source: dict,
@@ -138,7 +232,9 @@ def _controlled_animal_v2_gate_is_valid(
     imported: dict,
 ) -> bool:
     try:
-        _authenticated_artifact_json(gate["ue_import_preparation"])
+        preparation = _authenticated_artifact_json(
+            gate["ue_import_preparation"]
+        )
         receipt = _authenticated_artifact_json(
             gate["animation_decision_freeze_receipt"]
         )
@@ -179,11 +275,17 @@ def _controlled_animal_v2_gate_is_valid(
             gate["ue_import_preparation"],
         )
         and receipt.get("status") == "frozen"
-        and _artifact_identity_matches(
+        and _artifact_content_identity_matches(
             receipt_decision,
             gate["animation_decision"],
         )
         and receipt.get("decision_sha256") == decision.get("decision_sha256")
+        and _controlled_animal_v2_approval_evidence_is_valid(
+            source=source,
+            gate=gate,
+            preparation=preparation,
+            receipt=receipt,
+        )
     )
 
 

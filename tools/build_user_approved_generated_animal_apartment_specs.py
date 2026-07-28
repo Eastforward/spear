@@ -77,6 +77,12 @@ PRESENTATION_EVIDENCE_FIELDS = preparation_bridge.PRESENTATION_EVIDENCE_FIELDS
 PRESENTATION_AUTOMATIC_CHECKS = copy.deepcopy(
     preparation_bridge.PRESENTATION_AUTOMATIC_CHECKS
 )
+MOTION_STYLE_AND_CURRENT_READBACK_MODE = (
+    preparation_bridge.MOTION_STYLE_AND_CURRENT_READBACK_MODE
+)
+MOTION_STYLE_AND_CURRENT_READBACK_AUTOMATIC_CHECKS = copy.deepcopy(
+    preparation_bridge.MOTION_STYLE_AND_CURRENT_READBACK_AUTOMATIC_CHECKS
+)
 SOURCE_REGISTRY_VALIDATION_MODES = frozenset(
     {
         "frozen_historical_preflight_v1",
@@ -234,7 +240,7 @@ PREPARATION_FIELDS = frozenset(
         "manifest_sha256",
     }
 )
-PREPARATION_AUTOMATIC_CHECK_FIELDS = frozenset(
+PREPARATION_COMMON_AUTOMATIC_CHECK_FIELDS = frozenset(
     {
         "source_registry_and_preflight_reauthenticated",
         "source_registry_matched_external_expected_sha256",
@@ -250,7 +256,6 @@ PREPARATION_AUTOMATIC_CHECK_FIELDS = frozenset(
         "all_six_animation_render_encode_receipts_reauthenticated",
         "human_animation_approval_matched_external_expected_sha256",
         "animation_decision_freeze_receipt_reauthenticated",
-        *PRESENTATION_AUTOMATIC_CHECKS,
         "user_instruction_authority_preserved_without_cryptographic_upgrade",
         "reviewed_glb_has_embedded_skin_weights_and_exact_idle_walking_actions",
         "job_identity_and_attributes_copied_exactly_from_source_asset_v2",
@@ -259,6 +264,13 @@ PREPARATION_AUTOMATIC_CHECK_FIELDS = frozenset(
         "no_ue_execution_performed",
         "overall",
     }
+)
+PREPARATION_AUTOMATIC_CHECK_FIELDS = frozenset(
+    PREPARATION_COMMON_AUTOMATIC_CHECK_FIELDS | frozenset(PRESENTATION_AUTOMATIC_CHECKS)
+)
+COMPACT_PREPARATION_AUTOMATIC_CHECK_FIELDS = frozenset(
+    PREPARATION_COMMON_AUTOMATIC_CHECK_FIELDS
+    | frozenset(MOTION_STYLE_AND_CURRENT_READBACK_AUTOMATIC_CHECKS)
 )
 CANONICAL_IDENTITY_FIELDS = frozenset(
     {
@@ -306,6 +318,31 @@ APARTMENT_STAGING_ROOT_NAMES = frozenset(
         "spec_manifest.json",
     }
 )
+
+
+def _uses_compact_approval_evidence(value: Any) -> bool:
+    return bool(
+        isinstance(value, Mapping)
+        and value.get("mode") == MOTION_STYLE_AND_CURRENT_READBACK_MODE
+    )
+
+
+def _approval_automatic_checks(value: Any) -> dict[str, bool]:
+    return copy.deepcopy(
+        MOTION_STYLE_AND_CURRENT_READBACK_AUTOMATIC_CHECKS
+        if _uses_compact_approval_evidence(value)
+        else PRESENTATION_AUTOMATIC_CHECKS
+    )
+
+
+def _preparation_automatic_check_fields(value: Any) -> frozenset[str]:
+    return (
+        COMPACT_PREPARATION_AUTOMATIC_CHECK_FIELDS
+        if _uses_compact_approval_evidence(value)
+        else PREPARATION_AUTOMATIC_CHECK_FIELDS
+    )
+
+
 APARTMENT_V2_FIELDS = frozenset(
     {
         "schema",
@@ -2024,6 +2061,8 @@ def _validate_decision_freeze_receipt(
     review_descriptor: Mapping[str, Any],
     decision_descriptor: Mapping[str, Any],
     decision: Mapping[str, Any],
+    expected_asset_id: str,
+    reviewed_runtime: Path,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     _, receipt_descriptor = _validate_absolute_descriptor(
         preparation.get("animation_decision_freeze_receipt"),
@@ -2046,6 +2085,23 @@ def _validate_decision_freeze_receipt(
         )
     instruction = receipt.get("user_instruction_binding")
     authority = receipt.get("user_instruction_authority")
+    evidence_value = receipt.get("presentation_evidence")
+    compact_evidence = _uses_compact_approval_evidence(evidence_value)
+    expected_instruction_fields = (
+        {
+            "decision",
+            "motion_style_approval_file_sha256",
+            "current_asset_short_readback_file_sha256",
+            "current_asset_readback_is_machine_gate",
+        }
+        if compact_evidence
+        else {
+            "decision",
+            "review_sha256",
+            "all_six_checks_explicit",
+            "presentation_receipt_file_sha256",
+        }
+    )
     if (
         set(receipt) != DECISION_FREEZE_RECEIPT_FIELDS
         or receipt.get("schema") != DECISION_FREEZE_RECEIPT_SCHEMA
@@ -2059,16 +2115,21 @@ def _validate_decision_freeze_receipt(
         or authority != USER_INSTRUCTION_AUTHORITY
         or preparation.get("user_instruction_authority") != USER_INSTRUCTION_AUTHORITY
         or not isinstance(instruction, Mapping)
-        or set(instruction)
-        != {
-            "decision",
-            "review_sha256",
-            "all_six_checks_explicit",
-            "presentation_receipt_file_sha256",
-        }
+        or set(instruction) != expected_instruction_fields
         or instruction.get("decision") != "approved_for_ue_apartment"
-        or instruction.get("review_sha256") != review_descriptor["sha256"]
-        or instruction.get("all_six_checks_explicit") is not True
+        or (
+            not compact_evidence
+            and instruction.get("review_sha256") != review_descriptor["sha256"]
+        )
+        or (
+            not compact_evidence
+            and instruction.get("all_six_checks_explicit") is not True
+        )
+        or (
+            compact_evidence
+            and instruction.get("current_asset_readback_is_machine_gate")
+            is not True
+        )
     ):
         raise contracts.ContractError(
             "animation decision freeze receipt authority contract is invalid"
@@ -2104,20 +2165,43 @@ def _validate_decision_freeze_receipt(
         raise contracts.ContractError(
             "animation decision freeze receipt decision identity changed"
         )
-    presentation_evidence, _presentation_receipt, _output_video = (
-        preparation_bridge.load_presentation_evidence(
-            receipt.get("presentation_evidence"),
-            review_path=Path(str(review_descriptor["path"])),
+    review_path = Path(str(review_descriptor["path"]))
+    if compact_evidence:
+        presentation_evidence, _compact_paths = (
+            preparation_bridge.load_motion_style_and_current_readback_evidence(
+                evidence_value,
+                expected_asset_id=expected_asset_id,
+                review_path=review_path,
+                review_payload=_load(review_path),
+                reviewed_animated_glb=reviewed_runtime,
+            )
         )
-    )
+        instruction_bound = bool(
+            instruction.get("motion_style_approval_file_sha256")
+            == presentation_evidence["motion_style_approval"]["sha256"]
+            and instruction.get("current_asset_short_readback_file_sha256")
+            == presentation_evidence["current_asset_short_readback"]["sha256"]
+        )
+    else:
+        presentation_evidence, _presentation_receipt, _output_video = (
+            preparation_bridge.load_presentation_evidence(
+                evidence_value,
+                review_path=review_path,
+            )
+        )
+        instruction_bound = bool(
+            instruction.get("presentation_receipt_file_sha256")
+            == presentation_evidence[
+                "expected_presentation_receipt_file_sha256"
+            ]
+        )
     if (
         preparation.get("presentation_evidence") != receipt["presentation_evidence"]
         or preparation.get("presentation_evidence") != presentation_evidence
-        or instruction.get("presentation_receipt_file_sha256")
-        != presentation_evidence["expected_presentation_receipt_file_sha256"]
+        or not instruction_bound
     ):
         raise contracts.ContractError(
-            "Apartment presentation evidence cross-layer binding changed"
+            "Apartment approval evidence cross-layer binding changed"
         )
     return receipt_descriptor, receipt, presentation_evidence
 
@@ -2160,6 +2244,9 @@ def _validate_preparation_anchor(
         )
     automatic_checks = preparation.get("automatic_checks")
     canonical_identity = preparation.get("canonical_identity")
+    expected_automatic_check_fields = _preparation_automatic_check_fields(
+        preparation.get("presentation_evidence")
+    )
     if (
         set(preparation) != PREPARATION_FIELDS
         or preparation.get("schema") != PREPARATION_SCHEMA
@@ -2172,10 +2259,10 @@ def _validate_preparation_anchor(
         or not isinstance(preparation.get("created_at"), str)
         or not preparation["created_at"]
         or not isinstance(automatic_checks, Mapping)
-        or set(automatic_checks) != PREPARATION_AUTOMATIC_CHECK_FIELDS
+        or set(automatic_checks) != expected_automatic_check_fields
         or any(
             automatic_checks.get(field) is not True
-            for field in PREPARATION_AUTOMATIC_CHECK_FIELDS - {"overall"}
+            for field in expected_automatic_check_fields - {"overall"}
         )
         or automatic_checks.get("overall") != "passed"
         or not isinstance(canonical_identity, Mapping)
@@ -2316,6 +2403,8 @@ def _validate_preparation_anchor(
         review_descriptor=review_descriptor,
         decision_descriptor=decision_descriptor,
         decision=decision,
+        expected_asset_id=str(config["asset_id"]),
+        reviewed_runtime=reviewed_runtime,
     )
     return preparation, freeze_receipt, presentation_evidence
 
@@ -3071,6 +3160,38 @@ def _authenticate_build_authority(
     template_payload = _load(template)
     _validate_template_numeric_contract(template_payload)
 
+    if _uses_compact_approval_evidence(presentation_evidence):
+        style_path = Path(
+            str(presentation_evidence["motion_style_approval"]["path"])
+        )
+        readback_path = Path(
+            str(presentation_evidence["current_asset_short_readback"]["path"])
+        )
+        style_payload = _load(style_path)
+        readback_payload = _load(readback_path)
+        approval_evidence_paths = {
+            style_path,
+            Path(str(style_payload["evidence_video"]["path"])),
+            readback_path,
+            *(
+                Path(str(readback_payload["action_readbacks"][action]["path"]))
+                for action in EXPECTED_ACTIONS
+            ),
+        }
+        presentation_directory_guard = None
+    else:
+        presentation_root = Path(
+            str(presentation_evidence["presentation_receipt"]["path"])
+        ).parent
+        approval_evidence_paths = {
+            Path(str(presentation_evidence["presentation_receipt"]["path"])),
+            Path(str(presentation_evidence["output_video"]["path"])),
+        }
+        presentation_directory_guard = _directory_guard(
+            presentation_root,
+            "owner-review presentation directory",
+        )
+
     guarded_paths = {
         config_path,
         ue_jobs,
@@ -3086,8 +3207,7 @@ def _authenticate_build_authority(
         Path(str(preparation["reviewed_animated_glb"]["path"])),
         runtime_lineage["import_runtime"],
         runtime_lineage["reviewed_runtime"],
-        Path(str(presentation_evidence["presentation_receipt"]["path"])),
-        Path(str(presentation_evidence["output_video"]["path"])),
+        *approval_evidence_paths,
     }
     if runtime_lineage["texture_transcode_manifest"] is not None:
         guarded_paths.add(runtime_lineage["texture_transcode_manifest"])
@@ -3097,9 +3217,6 @@ def _authenticate_build_authority(
         str(path.resolve()): _file_guard(path, f"Apartment authority {path.name}")
         for path in sorted(guarded_paths, key=str)
     }
-    presentation_root = Path(
-        str(presentation_evidence["presentation_receipt"]["path"])
-    ).parent
     return {
         "config_path": config_path,
         "ue_jobs": ue_jobs,
@@ -3122,10 +3239,7 @@ def _authenticate_build_authority(
         "audio_source_height_offset_m": audio_source_height_offset_m,
         "template_payload": template_payload,
         "file_guards": file_guards,
-        "presentation_directory_guard": _directory_guard(
-            presentation_root,
-            "owner-review presentation directory",
-        ),
+        "presentation_directory_guard": presentation_directory_guard,
     }
 
 
@@ -3169,7 +3283,7 @@ def authenticate_apartment_v2_manifest(
         or len(records) != 1
         or manifest.get("manifest_sha256") != contracts.manifest_sha256(manifest)
         or manifest.get("presentation_automatic_checks")
-        != PRESENTATION_AUTOMATIC_CHECKS
+        != _approval_automatic_checks(manifest.get("presentation_evidence"))
     ):
         raise contracts.ContractError(
             f"invalid published Apartment v2 manifest: {path}"
@@ -3334,8 +3448,8 @@ def authenticate_apartment_v2_manifest(
         "ue_source_sha256": runtime_lineage["import_runtime_sha256"],
         "user_instruction_authority": copy.deepcopy(USER_INSTRUCTION_AUTHORITY),
         "presentation_evidence": copy.deepcopy(presentation_evidence),
-        "presentation_automatic_checks": copy.deepcopy(
-            PRESENTATION_AUTOMATIC_CHECKS
+        "presentation_automatic_checks": _approval_automatic_checks(
+            presentation_evidence
         ),
         "formal_dataset_registration_authorized": False,
     }
@@ -3523,8 +3637,8 @@ def build_specs(
             "ue_source_sha256": job["rigged_glb_sha256"],
             "user_instruction_authority": copy.deepcopy(USER_INSTRUCTION_AUTHORITY),
             "presentation_evidence": copy.deepcopy(presentation_evidence),
-            "presentation_automatic_checks": copy.deepcopy(
-                PRESENTATION_AUTOMATIC_CHECKS
+            "presentation_automatic_checks": _approval_automatic_checks(
+                presentation_evidence
             ),
             "formal_dataset_registration_authorized": False,
         }
@@ -3595,8 +3709,8 @@ def build_specs(
             "avatar_count": 1,
             "clip_count": 2,
             "presentation_evidence": copy.deepcopy(presentation_evidence),
-            "presentation_automatic_checks": copy.deepcopy(
-                PRESENTATION_AUTOMATIC_CHECKS
+            "presentation_automatic_checks": _approval_automatic_checks(
+                presentation_evidence
             ),
             "inputs": {
                 "config": _artifact(config_path),

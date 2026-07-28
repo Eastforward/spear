@@ -510,6 +510,38 @@ def test_publish_controlled_animal_v2_clip_accepts_key_import_bindings(
     assert registry["clips"]["Walking"]["clip_id"] == "controlled_cat_v2_walk"
 
 
+def test_publish_controlled_animal_v2_clip_rejects_changed_compact_readback(
+    tmp_path,
+):
+    import human_apartment_evidence as evidence
+    from tests.tools import (
+        test_run_rocketbox_batch_apartment_reviews as runner_support,
+    )
+
+    manifest = runner_support._upgrade_controlled_animal_manifest_to_v2(
+        runner_support._controlled_animal_manifest(tmp_path / "input")
+    )
+    record = json.loads(manifest.read_text())["records"][0]
+    source = json.loads(
+        Path(record["actions"]["Walking"]["spec"]).read_text()
+    )["sources"][0]
+    readback_path = Path(
+        source["controlled_animal_gate"]["presentation_evidence"][
+            "current_asset_short_readback"
+        ]["path"]
+    )
+    readback_path.write_bytes(readback_path.read_bytes() + b" ")
+
+    with pytest.raises(ValueError, match="does not match"):
+        evidence.publish_controlled_animal_registry_clip(
+            registry_root=tmp_path / "registry",
+            source=source,
+            action_name="Walking",
+            clip_id="controlled_cat_v2_walk",
+            clip_dir=tmp_path / "unused",
+        )
+
+
 def test_publish_controlled_animal_v2_clip_rejects_preparation_rebind(
     tmp_path,
 ):
