@@ -546,8 +546,8 @@ def _validate_render_manifest(value: Any, repaired_glb: Path) -> dict[str, Any]:
         if float(maximum) <= float(minimum) or not math.isclose(
             float(maximum) - float(minimum),
             float(extent),
-            rel_tol=1.0e-9,
-            abs_tol=1.0e-9,
+            rel_tol=1.0e-6,
+            abs_tol=1.0e-7,
         ):
             raise GeometryClosureError("clay render bounding box is inconsistent")
     views = _exact(render["views"], set(VIEWS), "clay render views")

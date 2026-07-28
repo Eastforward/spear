@@ -164,7 +164,9 @@ def _fixture(
             "input": str(repaired.resolve()),
             "bbox_min": [0.0, 0.0, 0.0],
             "bbox_max": [1.0, 1.0, 1.0],
-            "extent": [1.0, 1.0, 1.0],
+            # Blender stores bounds through float32 vectors, so max-min can
+            # differ from the serialized extent by a few ULPs.
+            "extent": [1.0, 1.0, 0.99999997],
             "front_axis": "negative-x",
             "views": cameras,
             "resolution": [480, 480],

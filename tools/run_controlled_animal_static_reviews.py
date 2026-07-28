@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -168,6 +169,16 @@ def build_contact_sheet(
     canvas.save(output, format="PNG", optimize=False, compress_level=6)
 
 
+def _publish_reference(
+    reference_path: Path,
+    destination: Path,
+    staging: Path,
+) -> dict[str, Any]:
+    published = destination / "pixal_input_rgba.png"
+    shutil.copyfile(reference_path, published)
+    return _relative(published, staging)
+
+
 def _render_one(
     attempt: dict[str, Any],
     pixal_root: Path,
@@ -285,6 +296,7 @@ def _render_one(
         or _sha256_file(reference_path) != attempt["pixal_input"]["sha256"]
     ):
         raise contracts.ContractError(f"authenticated Pixal input changed: {instance_id}")
+    published_reference = _publish_reference(reference_path, destination, staging)
     contact_path = destination / "contact_sheet.png"
     build_contact_sheet(
         reference_path,
@@ -303,7 +315,7 @@ def _render_one(
         "up_axis": "positive-z",
         "pixal_output": attempt["output"],
         "mesh_readback": attempt["mesh_readback"],
-        "reference_rgba": attempt["pixal_input"],
+        "reference_rgba": published_reference,
         "render_manifest": _relative(render_manifest_path, staging),
         "views": {
             view: _relative(views / f"{view}.png", staging) for view in VIEWS
