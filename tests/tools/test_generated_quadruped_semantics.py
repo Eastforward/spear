@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from tools.generated_quadruped_semantics import (
@@ -225,3 +227,74 @@ def test_clusters_disconnected_low_hoof_controls_into_four_anatomical_limbs():
     assert labels["fr_hoof_control_end"] == "front_side_positive"
     assert labels["hl_hoof_control"] == "hind_side_negative"
     assert labels["hr_hoof_control_end"] == "hind_side_positive"
+
+
+def test_labels_shared_pelvic_and_tail_junctions_as_axial():
+    records = synthetic_quadruped()
+    by_name = {record["name"]: record for record in records}
+    root = by_name["root"]
+    root["children"] = ["spine", "pelvis"]
+    records.extend(
+        [
+            bone(
+                "pelvis",
+                "root",
+                0.18,
+                0.0,
+                0.42,
+                ("hr", "left_pelvis_tail"),
+            ),
+            bone(
+                "left_pelvis_tail",
+                "pelvis",
+                0.20,
+                -0.02,
+                0.40,
+                ("hl", "tail"),
+            ),
+        ]
+    )
+    by_name["hr"]["parent"] = "pelvis"
+    by_name["hl"]["parent"] = "left_pelvis_tail"
+    by_name["tail"]["parent"] = "left_pelvis_tail"
+
+    result = infer_quadruped_semantics(
+        records,
+        bbox_min=(-0.5, -0.3, 0.0),
+        bbox_extent=(1.2, 0.6, 0.8),
+        front_axis="negative-x",
+    )
+    labels = quadruped_semantic_labels(
+        result,
+        records,
+        bbox_min=(-0.5, -0.3, 0.0),
+        bbox_extent=(1.2, 0.6, 0.8),
+        front_axis="negative-x",
+    )
+
+    assert labels["pelvis"] == "axial"
+    assert labels["left_pelvis_tail"] == "axial"
+    assert labels["hl"] == "hind_side_negative"
+    assert labels["hr"] == "hind_side_positive"
+    assert labels["tail"] == "tail"
+    assert set(labels) == {record["name"] for record in records}
+
+
+def test_rejects_duplicate_core_chain_instead_of_treating_it_as_a_junction():
+    records = synthetic_quadruped()
+    result = infer_quadruped_semantics(
+        records,
+        bbox_min=(-0.5, -0.3, 0.0),
+        bbox_extent=(1.2, 0.6, 0.8),
+        front_axis="negative-x",
+    )
+    malformed = replace(result, tail_chain=result.hind_side_negative)
+
+    with pytest.raises(SemanticRigError, match="bone appears in multiple chains"):
+        quadruped_semantic_labels(
+            malformed,
+            records,
+            bbox_min=(-0.5, -0.3, 0.0),
+            bbox_extent=(1.2, 0.6, 0.8),
+            front_axis="negative-x",
+        )

@@ -59,14 +59,16 @@ def quadruped_semantic_labels(
     front_axis: str,
     low_leaf_height_fraction: float = 0.22,
 ) -> dict[str, str]:
-    """Return exhaustive labels and attach low auxiliary controls to a paw.
+    """Return exhaustive labels with neutral shared junctions and paw controls.
 
     ``QuadrupedSemantics.chains()`` deliberately preserves the literal tree:
     disconnected exporter controls remain auxiliary branches.  Weight QA,
     however, must know that a low ``hoof`` controller on the animal's negative
     side belongs to the same locomotion limb as the nearest deform chain.  This
-    helper performs that geometric association without changing chain order,
-    which keeps retargeting topology and weight sanitation concerns separate.
+    helper also keeps a shared pelvic/tail-base junction neutral instead of
+    assigning it to one of the distal branches.  Both associations leave chain
+    order unchanged, which keeps retargeting topology and weight sanitation
+    concerns separate.
     """
     axis_components = {
         "positive-x": (0, 1.0, 1),
@@ -90,15 +92,58 @@ def quadruped_semantic_labels(
         "hind_side_negative",
         "hind_side_positive",
     }
+    branch_names = core_names - {"axial", "head"}
+    core_occurrences: dict[
+        str,
+        list[tuple[str, int, tuple[str, ...]]],
+    ] = {}
     for label, chain in semantics.chains().items():
         if label.startswith("auxiliary_"):
             continue
         if label not in core_names:
             raise SemanticRigError(f"unknown semantic chain label: {label}")
-        for name in chain:
-            if name in labels:
-                raise SemanticRigError(f"bone appears in multiple chains: {name}")
-            labels[name] = label
+        chain = tuple(chain)
+        seen_in_chain: set[str] = set()
+        for index, name in enumerate(chain):
+            if name not in by_name:
+                raise SemanticRigError(
+                    f"semantic chain {label} references missing bone: {name}"
+                )
+            if name in seen_in_chain:
+                raise SemanticRigError(
+                    f"semantic chain {label} repeats bone: {name}"
+                )
+            seen_in_chain.add(name)
+            if (
+                index
+                and by_name[name].get("parent") != chain[index - 1]
+            ):
+                raise SemanticRigError(
+                    f"semantic chain {label} is not parent-child contiguous at "
+                    f"{name}"
+                )
+            core_occurrences.setdefault(name, []).append((label, index, chain))
+
+    for name, occurrences in core_occurrences.items():
+        if len(occurrences) == 1:
+            labels[name] = occurrences[0][0]
+            continue
+        occurrence_labels = {label for label, _index, _chain in occurrences}
+        suffixes = [chain[index + 1 :] for _label, index, chain in occurrences]
+        if (
+            not occurrence_labels.issubset(branch_names)
+            or any(not suffix for suffix in suffixes)
+            or len(set(suffixes)) != len(suffixes)
+        ):
+            raise SemanticRigError(f"bone appears in multiple chains: {name}")
+        # Some generated one-root rigs place a pelvic or tail-base junction
+        # below the nominal axial path.  Literal root-to-leaf paths then share
+        # that proximal junction across two limbs, or across a limb and the
+        # tail.  It is not owned by either distal domain: treating it as axial
+        # preserves its neutral support weights while the distinct non-empty
+        # suffixes above prove that this is a real branch, not a duplicated
+        # semantic chain.
+        labels[name] = "axial"
 
     forward_index, sign, lateral_index = axis_components[front_axis]
     extent = [float(value) for value in bbox_extent]
