@@ -17,6 +17,7 @@ rigidly during walking). See Plan 1.5.A analysis for the reasoning.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 import datetime
 import json
 from pathlib import Path
@@ -111,6 +112,13 @@ _PREFIXED_BIP_QUADRUPED_BASIS_BONE_CANDIDATES = {
     "right_foot": ("R Foot",),
 }
 _PREFIXED_BIP_QUADRUPED_REQUIRED_MARKERS = (("Tail",),)
+_EXPLICIT_QUADRUPED_SEMANTIC_ROLES = (
+    "rear",
+    "front",
+    "body",
+    "left_foot",
+    "right_foot",
+)
 
 
 def _integer_return_value(value) -> int:
@@ -140,6 +148,50 @@ def _name_return_value(value) -> str:
 
 def _normalized_bone_name(name: str) -> str:
     return "".join(character.lower() for character in str(name) if character.isalnum())
+
+
+def _match_explicit_bone_name(available_names, *, role: str, requested_name) -> str:
+    if not isinstance(requested_name, str) or not requested_name.strip():
+        raise ValueError(f"explicit {role} bone name must be a non-empty string")
+    matches = [
+        name
+        for name in available_names
+        if name == requested_name
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            f"explicit {role} bone {requested_name!r} matched "
+            f"{len(matches)} component bones; expected exactly one"
+        )
+    return matches[0]
+
+
+def _match_explicit_quadruped_semantic_roles(
+    available_names,
+    semantic_bone_names,
+):
+    if not isinstance(semantic_bone_names, Mapping):
+        raise TypeError("semantic_bone_names must be a mapping")
+    expected_roles = set(_EXPLICIT_QUADRUPED_SEMANTIC_ROLES)
+    actual_roles = set(semantic_bone_names)
+    if actual_roles != expected_roles:
+        missing = sorted(expected_roles - actual_roles)
+        unexpected = sorted(
+            (repr(role) for role in actual_roles - expected_roles)
+        )
+        raise ValueError(
+            "semantic_bone_names must contain exactly "
+            f"{list(_EXPLICIT_QUADRUPED_SEMANTIC_ROLES)!r}; "
+            f"missing={missing!r}, unexpected={unexpected!r}"
+        )
+    return {
+        role: _match_explicit_bone_name(
+            available_names,
+            role=role,
+            requested_name=semantic_bone_names[role],
+        )
+        for role in _EXPLICIT_QUADRUPED_SEMANTIC_ROLES
+    }
 
 
 def _component_bone_names(component):
@@ -266,7 +318,13 @@ def quadruped_basis_from_positions(
     }
 
 
-def sample_body_basis_in_frame(actor, *, unreal_service=None, diagnostics=None):
+def sample_body_basis_in_frame(
+    actor,
+    *,
+    unreal_service=None,
+    diagnostics=None,
+    semantic_bone_names=None,
+):
     """Sample humanoid or quadruped body axes inside an active SPEAR frame."""
     if unreal_service is None:
         raise RuntimeError(
@@ -293,6 +351,33 @@ def sample_body_basis_in_frame(actor, *, unreal_service=None, diagnostics=None):
                         matched[role] = actual
                         break
             return matched
+
+        if semantic_bone_names is not None:
+            matched_names = _match_explicit_quadruped_semantic_roles(
+                available_names,
+                semantic_bone_names,
+            )
+            basis_builder = quadruped_basis_from_positions
+            basis_kind = "authenticated_generated_quadruped_longitudinal_v1"
+            positions = {}
+            for role, bone_name in matched_names.items():
+                position = sample_body_bone_position_in_frame(
+                    actor,
+                    bone_name,
+                    unreal_service=unreal_service,
+                    diagnostics=diagnostics,
+                )
+                if position is None:
+                    return None
+                positions[role] = position
+            basis = basis_builder(**positions)
+            basis["basis_kind"] = basis_kind
+            basis["bone_names"] = matched_names
+            basis["positions_ue_cm"] = {
+                role: np.asarray(position, dtype=np.float64).tolist()
+                for role, position in positions.items()
+            }
+            return basis
 
         human_names = match_roles(_BODY_BASIS_BONE_CANDIDATES)
         quadruped_names = match_roles(_QUADRUPED_BASIS_BONE_CANDIDATES)
@@ -549,6 +634,7 @@ def find_body_bone_in_frame(
     *,
     unreal_service=None,
     diagnostics=None,
+    semantic_body_bone_name=None,
 ) -> Optional[str]:
     """Return the first available candidate bone name on this actor.
 
@@ -564,7 +650,35 @@ def find_body_bone_in_frame(
     except Exception:
         available_names = None
 
-    if available_names is not None:
+    if semantic_body_bone_name is not None:
+        try:
+            if available_names is not None:
+                query_names = [
+                    _match_explicit_bone_name(
+                        available_names,
+                        role="body",
+                        requested_name=semantic_body_bone_name,
+                    )
+                ]
+            elif (
+                not isinstance(semantic_body_bone_name, str)
+                or not semantic_body_bone_name.strip()
+            ):
+                raise ValueError(
+                    "explicit body bone name must be a non-empty string"
+                )
+            else:
+                query_names = [semantic_body_bone_name]
+        except (TypeError, ValueError) as error:
+            if diagnostics is not None:
+                diagnostics.append({
+                    "stage": "explicit_body_bone_lookup",
+                    "error_type": type(error).__name__,
+                    "error": str(error),
+                    "available_bone_names": available_names,
+                })
+            return None
+    elif available_names is not None:
         by_normalized_name = {
             _normalized_bone_name(name): name for name in available_names
         }

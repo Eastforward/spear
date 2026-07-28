@@ -8,6 +8,7 @@ import json
 import os
 import queue
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,7 @@ from tools.spike_rlr.animal_audio import (  # noqa: E402
     validate_animal_audio_evidence,
 )
 from tools import (  # noqa: E402
+    build_user_approved_generated_animal_apartment_specs as generated_animal_specs,
     prepare_user_approved_generated_animal_ue_imports as approval_bridge,
 )
 
@@ -52,17 +54,19 @@ STABLE_PENDING_REVIEW_STATUSES = {
     "agent_selected_pending_human_review",
     "local_ofat_visual_review_pending",
 }
+CONTROLLED_ANIMAL_MANIFEST_GATE_SCHEMAS = {
+    "controlled_animal_walk_idle_apartment_specs_v1": (
+        "controlled_animal_apartment_gate_v1"
+    ),
+    "controlled_animal_walk_idle_apartment_specs_v2": (
+        "controlled_animal_apartment_gate_v2"
+    ),
+}
 CONTROLLED_ANIMAL_MANIFEST_SCHEMAS = frozenset(
-    {
-        "controlled_animal_walk_idle_apartment_specs_v1",
-        "controlled_animal_walk_idle_apartment_specs_v2",
-    }
+    CONTROLLED_ANIMAL_MANIFEST_GATE_SCHEMAS
 )
 CONTROLLED_ANIMAL_GATE_SCHEMAS = frozenset(
-    {
-        "controlled_animal_apartment_gate_v1",
-        "controlled_animal_apartment_gate_v2",
-    }
+    CONTROLLED_ANIMAL_MANIFEST_GATE_SCHEMAS.values()
 )
 
 
@@ -95,6 +99,38 @@ def _atomic_json(path: Path, payload: dict) -> None:
 
 def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _require_controlled_animal_v2_clips_root(root: Path) -> Path:
+    clips_root = root / "clips"
+    try:
+        current = os.stat(clips_root, follow_symlinks=False)
+    except FileNotFoundError as error:
+        raise RuntimeError(
+            "controlled-animal v2 runtime clips directory is missing; "
+            "rebuild the manifest into a new output root"
+        ) from error
+    except OSError as error:
+        raise RuntimeError(
+            "controlled-animal v2 runtime clips directory cannot be inspected"
+        ) from error
+    if (
+        not stat.S_ISDIR(current.st_mode)
+        or stat.S_ISLNK(current.st_mode)
+        or not (stat.S_IMODE(current.st_mode) & stat.S_IWUSR)
+    ):
+        raise RuntimeError(
+            "controlled-animal v2 runtime clips path must be a real, "
+            "owner-writable directory"
+        )
+    return clips_root
+
+
+def default_status_path(manifest_path: Path, *, manifest_schema: str) -> Path:
+    root = manifest_path.resolve().parent
+    if manifest_schema == "controlled_animal_walk_idle_apartment_specs_v2":
+        return root / "clips" / "batch_render_status.json"
+    return root / "batch_render_status.json"
 
 
 def _sha256_file(path: Path) -> str:
@@ -435,6 +471,22 @@ def build_jobs(
     payload = _read_json(manifest_path)
     records = payload.get("records")
     schema = payload.get("schema")
+    if schema == "controlled_animal_walk_idle_apartment_specs_v2":
+        try:
+            generated_animal_specs.authenticate_apartment_v2_manifest(
+                manifest_path
+            )
+        except (
+            KeyError,
+            TypeError,
+            OSError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as error:
+            raise RuntimeError(
+                "controlled-animal v2 manifest reauthentication failed"
+            ) from error
+        _require_controlled_animal_v2_clips_root(root)
     if not isinstance(records, list) or payload.get("avatar_count") != len(records):
         raise RuntimeError("Rocketbox Apartment spec manifest is invalid")
     controlled_animal = False
@@ -455,6 +507,9 @@ def build_jobs(
         expected_clip_count = len(records) * 2
         require_original_tag = False
         controlled_animal = True
+        expected_controlled_gate_schema = (
+            CONTROLLED_ANIMAL_MANIFEST_GATE_SCHEMAS[schema]
+        )
     elif schema == "stable_animal_walk_idle_apartment_specs_v1":
         expected_action_set = {"Walking", "Idle"}
         expected_clip_count = len(records) * 2
@@ -524,6 +579,15 @@ def build_jobs(
                         sources[0].get("asset_class") != "animal"
                         or not sources[0].get("species")
                         or sources[0].get("asset_id") != avatar_id
+                        or sources[0].get("controlled_animal_gate", {}).get(
+                            "schema"
+                        )
+                        != expected_controlled_gate_schema
+                        or (
+                            schema
+                            == "controlled_animal_walk_idle_apartment_specs_v1"
+                            and "rig_direction_semantic_evidence" in sources[0]
+                        )
                         or not _controlled_animal_source_gate_is_valid(sources[0])
                     )
                 )
@@ -1217,8 +1281,14 @@ def main() -> int:
 
     missing = incomplete_jobs(jobs)
     all_passed = [job for job in jobs if job not in missing]
-    status_path = (args.status or args.manifest.parent / "batch_render_status.json").resolve()
     manifest_schema = _read_json(args.manifest.resolve()).get("schema")
+    status_path = (
+        args.status
+        or default_status_path(
+            args.manifest,
+            manifest_schema=str(manifest_schema),
+        )
+    ).resolve()
     status = {
         "schema": (
             "controlled_animal_apartment_render_status_v1"

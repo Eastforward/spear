@@ -37,6 +37,9 @@ EMITTER_COORDINATE_SYSTEM = "avengine_local_x_forward_y_up_z_right_m"
 EMITTER_METHOD = "semantic_head_forward_quantile_rest_mesh_v1"
 PHYSICAL_MEASUREMENT = "shoulder_height_cm"
 RIG_SEMANTIC_EVIDENCE_SCHEMA = "controlled_animal_rig_semantic_evidence_v1"
+RIG_DIRECTION_SEMANTIC_EVIDENCE_SCHEMA = (
+    "controlled_animal_rig_direction_semantic_evidence_v1"
+)
 LEGACY_UNGATED_GENERATED_REVIEW_SCHEMA = (
     "avengine_target_native_generated_quadruped_review_run_v1"
 )
@@ -318,6 +321,7 @@ APARTMENT_SPEC_FILE_NAMES = frozenset(
 )
 APARTMENT_STAGING_ROOT_NAMES = frozenset(
     {
+        "clips",
         "specs",
         "spec_manifest.json",
     }
@@ -752,6 +756,8 @@ def _seal_known_files_at(
 
 def _seal_apartment_staging_at(
     staging_fd: int,
+    clips_fd: int,
+    clips_identity: tuple[int, int],
     specs_fd: int,
     specs_identity: tuple[int, int],
     tag: str,
@@ -760,6 +766,19 @@ def _seal_apartment_staging_at(
     spec_records: Mapping[str, Mapping[str, Any]],
     manifest_record: Mapping[str, Any],
 ) -> None:
+    _require_directory_entry_identity(
+        staging_fd,
+        "clips",
+        clips_fd,
+        clips_identity,
+        "Apartment clips staging directory",
+    )
+    if os.listdir(clips_fd):
+        raise contracts.ContractError(
+            "Apartment clips staging directory must be empty"
+        )
+    os.fchmod(clips_fd, 0o755)
+    os.fsync(clips_fd)
     _require_directory_entry_identity(
         staging_fd,
         "specs",
@@ -813,6 +832,8 @@ def _seal_apartment_staging_at(
 def _require_apartment_staging_at(
     *,
     staging_fd: int,
+    clips_fd: int,
+    clips_identity: tuple[int, int],
     specs_fd: int,
     specs_identity: tuple[int, int],
     tag: str,
@@ -821,6 +842,13 @@ def _require_apartment_staging_at(
     spec_records: Mapping[str, Mapping[str, Any]],
     manifest_record: Mapping[str, Any],
 ) -> None:
+    _require_directory_entry_identity(
+        staging_fd,
+        "clips",
+        clips_fd,
+        clips_identity,
+        "Apartment clips staging directory",
+    )
     _require_directory_entry_identity(
         staging_fd,
         "specs",
@@ -837,6 +865,7 @@ def _require_apartment_staging_at(
     )
     for directory_fd, expected_mode, label in (
         (staging_fd, 0o555, "Apartment staging root"),
+        (clips_fd, 0o755, "Apartment clips staging"),
         (specs_fd, 0o555, "Apartment specs staging"),
         (tag_fd, 0o555, "Apartment tag staging"),
     ):
@@ -846,6 +875,10 @@ def _require_apartment_staging_at(
             or stat.S_IMODE(current.st_mode) != expected_mode
         ):
             raise contracts.ContractError(f"{label} seal changed")
+    if os.listdir(clips_fd):
+        raise contracts.ContractError(
+            "Apartment clips staging directory changed before publication"
+        )
     if set(os.listdir(staging_fd)) != APARTMENT_STAGING_ROOT_NAMES:
         raise contracts.ContractError(
             "Apartment staging root artifact set changed before publication"
@@ -892,6 +925,8 @@ def _atomic_publish_no_replace_at(
     parent_identity: tuple[int, int],
     staging_fd: int,
     staging_identity: tuple[int, int],
+    clips_fd: int,
+    clips_identity: tuple[int, int],
     specs_fd: int,
     specs_identity: tuple[int, int],
     tag: str,
@@ -915,6 +950,8 @@ def _atomic_publish_no_replace_at(
     )
     _require_apartment_staging_at(
         staging_fd=staging_fd,
+        clips_fd=clips_fd,
+        clips_identity=clips_identity,
         specs_fd=specs_fd,
         specs_identity=specs_identity,
         tag=tag,
@@ -948,6 +985,8 @@ def _remove_owned_apartment_staging_at(
     staging_fd: int,
     staging_name: str,
     staging_identity: tuple[int, int],
+    clips_fd: int,
+    clips_identity: tuple[int, int],
     specs_fd: int,
     specs_identity: tuple[int, int],
     tag: str,
@@ -973,6 +1012,21 @@ def _remove_owned_apartment_staging_at(
     root_children = set(os.listdir(staging_fd))
     if not root_children.issubset(APARTMENT_STAGING_ROOT_NAMES):
         return False
+    if "clips" in root_children:
+        if clips_fd < 0:
+            return False
+        try:
+            _require_directory_entry_identity(
+                staging_fd,
+                "clips",
+                clips_fd,
+                clips_identity,
+                "Apartment clips cleanup directory",
+            )
+        except contracts.ContractError:
+            return False
+        if os.listdir(clips_fd):
+            return False
     specs_children: set[str] = set()
     tag_children: set[str] = set()
     if "specs" in root_children:
@@ -1028,6 +1082,8 @@ def _remove_owned_apartment_staging_at(
             return False
 
     os.fchmod(staging_fd, 0o700)
+    if "clips" in root_children:
+        os.fchmod(clips_fd, 0o700)
     if "specs" in root_children:
         os.fchmod(specs_fd, 0o700)
     if tag in specs_children:
@@ -1039,6 +1095,9 @@ def _remove_owned_apartment_staging_at(
     if "specs" in root_children:
         os.fsync(specs_fd)
         os.rmdir("specs", dir_fd=staging_fd)
+    if "clips" in root_children:
+        os.fsync(clips_fd)
+        os.rmdir("clips", dir_fd=staging_fd)
     if "spec_manifest.json" in root_children:
         os.unlink("spec_manifest.json", dir_fd=staging_fd)
     os.fsync(staging_fd)
@@ -1486,6 +1545,99 @@ def _require_front_semantic_chains(payload: Mapping[str, Any]) -> None:
         raise contracts.ContractError(
             "generated rig front upper semantic bones are not distinct"
         )
+
+
+def _derive_rig_direction_semantic_evidence(
+    wrapper: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Derive runtime direction roles from authenticated weight-repair semantics.
+
+    Retarget-only reviews retain their historical runtime direction fallback.
+    In particular, this function does not guess an ``axial`` chain from the
+    older ``root``/``axial_head`` retarget representation.
+    """
+
+    if wrapper is None:
+        return None
+    if wrapper.get("semantic_schema") != WEIGHT_REPAIR_SCHEMA:
+        return None
+
+    # ``wrapper`` is the direct result of
+    # ``_authenticated_rig_semantic_evidence``.  That authenticator already
+    # verifies the exact artifact descriptor, output GLB binding, preservation
+    # authority, and both front chains.  Only the extra runtime roles are
+    # derived here.
+    artifact = wrapper["artifact"]
+    payload = _load(Path(str(artifact["path"])))
+    if (
+        payload.get("schema") != WEIGHT_REPAIR_SCHEMA
+        or payload.get("front_axis") != "positive-x"
+    ):
+        raise contracts.ContractError(
+            "generated rig direction semantics require positive-x weight repair"
+        )
+    source_glb_sha256 = str(wrapper.get("source_glb_sha256", ""))
+
+    semantic_rig = payload.get("semantic_rig")
+    chains = (
+        semantic_rig.get("chains")
+        if isinstance(semantic_rig, Mapping)
+        else None
+    )
+    requirements = {
+        "axial": 3,
+        "hind_side_negative": 2,
+        "hind_side_positive": 2,
+    }
+    if not isinstance(chains, Mapping):
+        raise contracts.ContractError(
+            "generated rig direction semantic chains are missing"
+        )
+    normalized: dict[str, list[str]] = {}
+    for label, minimum_length in requirements.items():
+        chain = chains.get(label)
+        if (
+            not isinstance(chain, list)
+            or len(chain) < minimum_length
+            or any(not isinstance(name, str) or not name for name in chain)
+            or len(set(chain)) != len(chain)
+        ):
+            raise contracts.ContractError(
+                f"generated rig direction semantic chain is invalid: {label}"
+            )
+        normalized[label] = list(chain)
+
+    axial = normalized["axial"]
+    bone_names = {
+        "rear": axial[0],
+        "front": axial[-1],
+        # The quadruped basis measures up from the paired hind feet.  Reuse
+        # the authenticated rear torso anchor here; a mid-axial anchor can
+        # tilt that vector forward on long, low bodies such as a corgi.
+        "body": axial[0],
+        # The shared generated-GLB import converts source lateral -Y to UE
+        # +Y (right).  Preserve anatomical left/right names after that
+        # coordinate conversion instead of copying source sign labels.
+        "left_foot": normalized["hind_side_positive"][-1],
+        "right_foot": normalized["hind_side_negative"][-1],
+    }
+    distinct_basis_roles = {
+        bone_names["rear"],
+        bone_names["front"],
+        bone_names["left_foot"],
+        bone_names["right_foot"],
+    }
+    if len(distinct_basis_roles) != 4:
+        raise contracts.ContractError(
+            "generated rig direction semantic roles are not distinct"
+        )
+    return {
+        "schema": RIG_DIRECTION_SEMANTIC_EVIDENCE_SCHEMA,
+        "artifact": copy.deepcopy(dict(artifact)),
+        "source_glb_sha256": source_glb_sha256,
+        "front_axis": "positive-x",
+        "bone_names": bone_names,
+    }
 
 
 def _authenticated_rig_semantic_evidence(
@@ -2972,6 +3124,7 @@ def _build_pair(
     *,
     config: Mapping[str, Any],
     gate: Mapping[str, Any],
+    rig_direction_semantic_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     walking = copy.deepcopy(template)
     walking.update(
@@ -3015,6 +3168,10 @@ def _build_pair(
             "controlled_animal_gate": copy.deepcopy(gate),
         }
     )
+    if rig_direction_semantic_evidence is not None:
+        source["rig_direction_semantic_evidence"] = copy.deepcopy(
+            dict(rig_direction_semantic_evidence)
+        )
     bind_pinned_animal_audio_contract(source)
     walking["camera_pass_table_loop_contract"]["animal_scale_rationale"] = {
         "actor_scale": config["actor_scale"],
@@ -3503,6 +3660,9 @@ def authenticate_apartment_v2_manifest(
         )
     config["audio_source_height_offset_m"] = audio_source_height_offset_m
     rig_semantic_evidence = _authenticated_rig_semantic_evidence(decision, job)
+    rig_direction_semantic_evidence = _derive_rig_direction_semantic_evidence(
+        rig_semantic_evidence
+    )
 
     record = records[0]
     expected_record_fields = set(APARTMENT_V2_RECORD_FIELDS)
@@ -3570,7 +3730,12 @@ def authenticate_apartment_v2_manifest(
         ),
         "formal_dataset_registration_authorized": False,
     }
-    expected_specs = _build_pair(template, config=config, gate=gate)
+    expected_specs = _build_pair(
+        template,
+        config=config,
+        gate=gate,
+        rig_direction_semantic_evidence=rig_direction_semantic_evidence,
+    )
     actions = record.get("actions")
     if not isinstance(actions, Mapping) or set(actions) != {"Walking", "Idle"}:
         raise contracts.ContractError("Apartment v2 action set changed")
@@ -3694,6 +3859,9 @@ def build_specs(
     freeze_receipt = authority["freeze_receipt"]
     presentation_evidence = authority["presentation_evidence"]
     rig_semantic_evidence = authority["rig_semantic_evidence"]
+    rig_direction_semantic_evidence = _derive_rig_direction_semantic_evidence(
+        rig_semantic_evidence
+    )
     runtime_lineage = authority["runtime_lineage"]
     emitter_measurement_descriptor = authority["emitter_measurement_descriptor"]
     audio_source_height_offset_m = authority["audio_source_height_offset_m"]
@@ -3708,6 +3876,8 @@ def build_specs(
     staging_name = ""
     staging_fd = -1
     staging_identity = (-1, -1)
+    clips_fd = -1
+    clips_identity = (-1, -1)
     specs_fd = -1
     specs_identity = (-1, -1)
     tag_fd = -1
@@ -3726,6 +3896,11 @@ def build_specs(
             staging_fd,
             staging_identity,
         ) = _create_staging_at(parent_fd, output_root.name)
+        clips_fd, clips_identity = _create_directory_at(
+            staging_fd,
+            "clips",
+            "Apartment clips staging directory",
+        )
         specs_fd, specs_identity = _create_directory_at(
             staging_fd,
             "specs",
@@ -3762,7 +3937,10 @@ def build_specs(
         actions: dict[str, Any] = {}
         spec_records: dict[str, dict[str, Any]] = {}
         for action, spec in _build_pair(
-            template_payload, config=config, gate=gate
+            template_payload,
+            config=config,
+            gate=gate,
+            rig_direction_semantic_evidence=rig_direction_semantic_evidence,
         ).items():
             motion = action.lower()
             clip_name = f"camera_pass_table_loop_{motion}"
@@ -3868,6 +4046,8 @@ def build_specs(
 
         _seal_apartment_staging_at(
             staging_fd,
+            clips_fd,
+            clips_identity,
             specs_fd,
             specs_identity,
             tag,
@@ -3919,6 +4099,8 @@ def build_specs(
         )
         _require_apartment_staging_at(
             staging_fd=staging_fd,
+            clips_fd=clips_fd,
+            clips_identity=clips_identity,
             specs_fd=specs_fd,
             specs_identity=specs_identity,
             tag=tag,
@@ -3949,6 +4131,8 @@ def build_specs(
                 parent_identity=parent_identity,
                 staging_fd=staging_fd,
                 staging_identity=staging_identity,
+                clips_fd=clips_fd,
+                clips_identity=clips_identity,
                 specs_fd=specs_fd,
                 specs_identity=specs_identity,
                 tag=tag,
@@ -3972,6 +4156,8 @@ def build_specs(
                     staging_fd=staging_fd,
                     staging_name=staging_name,
                     staging_identity=staging_identity,
+                    clips_fd=clips_fd,
+                    clips_identity=clips_identity,
                     specs_fd=specs_fd,
                     specs_identity=specs_identity,
                     tag=tag,
@@ -3994,6 +4180,8 @@ def build_specs(
             os.close(tag_fd)
         if specs_fd >= 0:
             os.close(specs_fd)
+        if clips_fd >= 0:
+            os.close(clips_fd)
         if staging_fd >= 0:
             os.close(staging_fd)
         os.close(parent_fd)

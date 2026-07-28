@@ -405,6 +405,169 @@ def test_sample_body_basis_matches_quaternius_numeric_dog_bones():
     assert basis["up_alignment_z"] > 0.99
 
 
+def test_sample_body_basis_uses_explicit_generated_quadruped_semantics():
+    from rig_direction_check import sample_body_basis_in_frame
+
+    positions = {
+        "bone_0": [0.0, 0.0, 100.0],
+        "bone_5": [100.0, 0.0, 105.0],
+        "bone_19": [-10.0, 30.0, 0.0],
+        "bone_23": [-10.0, -30.0, 0.0],
+    }
+
+    class Component:
+        bone_names = list(positions)
+
+        def GetNumBones(self):
+            return len(self.bone_names)
+
+        def GetBoneName(self, BoneIndex):
+            return self.bone_names[BoneIndex]
+
+        def GetBoneIndex(self, BoneName):
+            return self.bone_names.index(BoneName)
+
+        def GetBoneTransform(self, InBoneName, TransformSpace, as_dict):
+            x, y, z = positions[InBoneName]
+            return {"translation": {"x": x, "y": y, "z": z}}
+
+    class UnrealService:
+        def get_components_by_class(self, **_kwargs):
+            return [Component()]
+
+    basis = sample_body_basis_in_frame(
+        object(),
+        unreal_service=UnrealService(),
+        semantic_bone_names={
+            "rear": "bone_0",
+            "front": "bone_5",
+            "body": "bone_0",
+            "left_foot": "bone_23",
+            "right_foot": "bone_19",
+        },
+    )
+
+    assert basis["basis_kind"] == (
+        "authenticated_generated_quadruped_longitudinal_v1"
+    )
+    assert basis["bone_names"] == {
+        "rear": "bone_0",
+        "front": "bone_5",
+        "body": "bone_0",
+        "left_foot": "bone_23",
+        "right_foot": "bone_19",
+    }
+    assert basis["forward_yaw_ue_deg"] == pytest.approx(0.0, abs=3.0)
+    assert basis["up_alignment_z"] > 0.99
+
+
+@pytest.mark.parametrize(
+    "semantic_bone_names",
+    [
+        {
+            "rear": "Bone",
+            "body": "Bone",
+            "left_foot": "Bone_010",
+            "right_foot": "Bone_013",
+        },
+        {
+            "rear": "Bone",
+            "front": "missing_bone",
+            "body": "Bone",
+            "left_foot": "Bone_010",
+            "right_foot": "Bone_013",
+        },
+        {
+            "rear": "bone",
+            "front": "Bone_002",
+            "body": "Bone",
+            "left_foot": "Bone_010",
+            "right_foot": "Bone_013",
+        },
+    ],
+)
+def test_explicit_quadruped_semantics_fail_closed_without_legacy_fallback(
+    semantic_bone_names,
+):
+    from rig_direction_check import sample_body_basis_in_frame
+
+    class Component:
+        bone_names = ["Bone", "Bone_002", "Bone_010", "Bone_013"]
+
+        def GetNumBones(self):
+            return len(self.bone_names)
+
+        def GetBoneName(self, BoneIndex):
+            return self.bone_names[BoneIndex]
+
+        def GetBoneIndex(self, BoneName):
+            raise AssertionError("invalid explicit roles must not sample bones")
+
+        def GetBoneTransform(self, **_kwargs):
+            raise AssertionError("invalid explicit roles must not sample bones")
+
+    class UnrealService:
+        def get_components_by_class(self, **_kwargs):
+            return [Component()]
+
+    diagnostics = []
+    assert sample_body_basis_in_frame(
+        object(),
+        unreal_service=UnrealService(),
+        diagnostics=diagnostics,
+        semantic_bone_names=semantic_bone_names,
+    ) is None
+    assert diagnostics[-1]["stage"] == "body_basis"
+
+
+def test_find_body_bone_uses_explicit_name_and_missing_name_fails_closed():
+    from rig_direction_check import find_body_bone_in_frame
+
+    positions = {
+        "Root": [100.0, 100.0, 100.0],
+        "bone_0": [1.0, 2.0, 3.0],
+    }
+
+    class Component:
+        bone_names = list(positions)
+
+        def GetNumBones(self):
+            return len(self.bone_names)
+
+        def GetBoneName(self, BoneIndex):
+            return self.bone_names[BoneIndex]
+
+        def GetBoneIndex(self, BoneName):
+            try:
+                return self.bone_names.index(BoneName)
+            except ValueError:
+                return -1
+
+        def GetBoneTransform(self, InBoneName, TransformSpace, as_dict):
+            x, y, z = positions[InBoneName]
+            return {"translation": {"x": x, "y": y, "z": z}}
+
+    class UnrealService:
+        def get_components_by_class(self, **_kwargs):
+            return [Component()]
+
+    service = UnrealService()
+    assert find_body_bone_in_frame(
+        object(),
+        unreal_service=service,
+        semantic_body_bone_name="bone_0",
+    ) == "bone_0"
+
+    diagnostics = []
+    assert find_body_bone_in_frame(
+        object(),
+        unreal_service=service,
+        diagnostics=diagnostics,
+        semantic_body_bone_name="missing_bone",
+    ) is None
+    assert diagnostics[-1]["stage"] == "explicit_body_bone_lookup"
+
+
 def test_sample_body_basis_matches_quaternius_native_named_husky_bones():
     from rig_direction_check import sample_body_basis_in_frame
 

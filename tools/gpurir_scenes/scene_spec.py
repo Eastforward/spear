@@ -100,6 +100,10 @@ class AnimalPlacement:
     actor_z_lift_cm: Optional[float] = None
     walking_forward_yaw_offset_deg: Optional[float] = None
     animation_play_rate: Optional[float] = None
+    # Hash-bound generated quadrupeds can carry their authenticated semantic
+    # bone roles from the apartment source spec into the runtime direction
+    # check.  Legacy assets leave this unset and retain name-based discovery.
+    rig_direction_bone_names: Optional[dict[str, str]] = None
     # Optional UE runtime grounding for human dataset renders.  The actor is
     # still placed at scale 1 on the apartment floor; after animation pose
     # evaluation, only its world Z is corrected so the current lowest mesh

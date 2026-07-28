@@ -402,6 +402,7 @@ def _weight_repair_evidence(runtime: Path) -> dict:
     return {
         "schema": subject.WEIGHT_REPAIR_SCHEMA,
         "status": "research_candidate_pending_readback_and_visual_qa",
+        "front_axis": "positive-x",
         "output": _descriptor(runtime),
         "authority_contract": {
             "native_mesh_geometry_preserved": True,
@@ -413,6 +414,11 @@ def _weight_repair_evidence(runtime: Path) -> dict:
         },
         "semantic_rig": {
             "chains": {
+                "axial": [
+                    "generated_axial_rear",
+                    "generated_axial_body",
+                    "generated_axial_front",
+                ],
                 "front_side_negative": [
                     "generated_front_negative_upper",
                     "generated_front_negative_lower",
@@ -420,6 +426,14 @@ def _weight_repair_evidence(runtime: Path) -> dict:
                 "front_side_positive": [
                     "generated_front_positive_upper",
                     "generated_front_positive_lower",
+                ],
+                "hind_side_negative": [
+                    "generated_hind_negative_upper",
+                    "generated_hind_negative_foot",
+                ],
+                "hind_side_positive": [
+                    "generated_hind_positive_upper",
+                    "generated_hind_positive_foot",
                 ],
             }
         },
@@ -1109,6 +1123,23 @@ def test_builds_authenticated_walk_idle_pair(tmp_path: Path) -> None:
         "semantic_schema": subject.WEIGHT_REPAIR_SCHEMA,
         "source_glb_sha256": _sha(Path(record["source_glb"]["path"])),
     }
+    assert source["rig_direction_semantic_evidence"] == {
+        "schema": subject.RIG_DIRECTION_SEMANTIC_EVIDENCE_SCHEMA,
+        "artifact": _descriptor(semantic_evidence),
+        "source_glb_sha256": _sha(Path(record["source_glb"]["path"])),
+        "front_axis": "positive-x",
+        "bone_names": {
+            "rear": "generated_axial_rear",
+            "front": "generated_axial_front",
+            "body": "generated_axial_rear",
+            "left_foot": "generated_hind_positive_foot",
+            "right_foot": "generated_hind_negative_foot",
+        },
+    }
+    assert (
+        idle["sources"][0]["rig_direction_semantic_evidence"]
+        == source["rig_direction_semantic_evidence"]
+    )
     assert source["walking_forward_yaw_offset_deg"] == 90.0
     assert (
         source["controlled_animal_gate"]["status"]
@@ -1130,6 +1161,75 @@ def test_builds_authenticated_walk_idle_pair(tmp_path: Path) -> None:
     assert "rig_direction_check_windows" in walking
     assert "rig_direction_check_windows" not in idle
     assert idle["sources"][0]["trajectory_m"] == [[2.0, 0.0, 0.0]] * 5
+
+
+def test_reauthentication_rejects_changed_rig_direction_mapping(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    manifest_path = subject.build_specs(
+        **inputs,
+        output_root=tmp_path / "output",
+    )
+    manifest = contracts.load_json(manifest_path)
+    walking_path = Path(
+        manifest["records"][0]["actions"]["Walking"]["spec"]
+    )
+    walking = contracts.load_json(walking_path)
+    bone_names = walking["sources"][0][
+        "rig_direction_semantic_evidence"
+    ]["bone_names"]
+    bone_names["left_foot"], bone_names["right_foot"] = (
+        bone_names["right_foot"],
+        bone_names["left_foot"],
+    )
+    walking_path.chmod(0o644)
+    walking_path.write_text(json.dumps(walking), encoding="utf-8")
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="Apartment v2 Walking spec descriptor does not bind its file",
+    ):
+        subject.authenticate_apartment_v2_manifest(manifest_path)
+
+
+def test_published_clips_are_writable_without_unsealing_authority(
+    tmp_path: Path,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output_root = tmp_path / "output"
+    manifest_path = subject.build_specs(
+        **inputs,
+        output_root=output_root,
+    )
+    manifest = contracts.load_json(manifest_path)
+    record = manifest["records"][0]
+    tag = record["tag"]
+
+    assert os.stat(output_root).st_mode & 0o777 == 0o555
+    assert os.stat(output_root / "specs").st_mode & 0o777 == 0o555
+    assert os.stat(output_root / "specs" / tag).st_mode & 0o777 == 0o555
+    assert os.stat(manifest_path).st_mode & 0o777 == 0o444
+    clips_root = output_root / "clips"
+    assert clips_root.is_dir()
+    assert not clips_root.is_symlink()
+    assert os.stat(clips_root).st_mode & 0o777 == 0o755
+    assert not list(clips_root.iterdir())
+
+    for action in record["actions"].values():
+        output_dir = Path(action["output_dir"])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "first_run_probe.txt").write_text(
+            "runtime output\n",
+            encoding="utf-8",
+        )
+
+    authenticated = subject.authenticate_apartment_v2_manifest(manifest_path)
+    assert authenticated["record"] == record
+    assert os.stat(output_root).st_mode & 0o777 == 0o555
+    assert os.stat(manifest_path).st_mode & 0o777 == 0o444
 
 
 def test_builds_and_reauthenticates_compact_motion_style_apartment_pair(
@@ -1559,6 +1659,14 @@ def test_builds_from_v4_not_needed_retarget_semantic_artifact(
     assert evidence["kind"] == "bone_name_independent_retarget"
     assert evidence["artifact"] == _descriptor(semantic_evidence)
     assert evidence["semantic_schema"] == subject.RETARGET_SCHEMA
+    walking = contracts.load_json(
+        Path(
+            contracts.load_json(manifest_path)["records"][0]["actions"][
+                "Walking"
+            ]["spec"]
+        )
+    )
+    assert "rig_direction_semantic_evidence" not in walking["sources"][0]
 
 
 @pytest.mark.parametrize(
@@ -1796,6 +1904,35 @@ def test_refuses_changed_hash_bound_rig_semantic_evidence(tmp_path: Path) -> Non
 
     with pytest.raises(contracts.ContractError, match="missing or changed"):
         subject.build_specs(**inputs, output_root=tmp_path / "output")
+
+
+@pytest.mark.parametrize("mutation", ("missing_axial", "duplicate_role"))
+def test_rig_direction_semantics_fail_closed_on_incomplete_or_duplicate_roles(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    inputs = _fixture(tmp_path)
+    semantic_path = inputs.pop("semantic_evidence")
+    payload = contracts.load_json(semantic_path)
+    chains = payload["semantic_rig"]["chains"]
+    if mutation == "missing_axial":
+        chains.pop("axial")
+        error = "chain is invalid: axial"
+    else:
+        chains["hind_side_positive"][-1] = chains["axial"][0]
+        error = "roles are not distinct"
+    _write(semantic_path, payload)
+    runtime = Path(payload["output"]["path"])
+    wrapper = {
+        "schema": subject.RIG_SEMANTIC_EVIDENCE_SCHEMA,
+        "kind": "motion_aware_weight_repair",
+        "artifact": _descriptor(semantic_path),
+        "semantic_schema": subject.WEIGHT_REPAIR_SCHEMA,
+        "source_glb_sha256": _sha(runtime),
+    }
+
+    with pytest.raises(contracts.ContractError, match=error):
+        subject._derive_rig_direction_semantic_evidence(wrapper)
 
 
 @pytest.mark.parametrize(
@@ -2475,6 +2612,62 @@ def test_staging_byte_rewrite_inside_publication_hook_never_becomes_visible(
         subject.build_specs(**inputs, output_root=output)
 
     assert tampered
+    _assert_failed_without_apartment_output(output)
+
+
+def test_staging_clips_injection_is_rejected_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inputs = _fixture(tmp_path)
+    inputs.pop("semantic_evidence")
+    output = tmp_path / "staging_clips_injection_output"
+    original_publish = subject._atomic_publish_no_replace_at
+    injected = False
+
+    def inject_runtime_output_before_dirfd_rename(
+        parent_fd: int,
+        staging_name: str,
+        output_name: str,
+        **kwargs: Any,
+    ) -> None:
+        nonlocal injected
+        clips_fd = kwargs["clips_fd"]
+        artifact_fd = os.open(
+            "unexpected",
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+            dir_fd=clips_fd,
+        )
+        try:
+            os.write(artifact_fd, b"unexpected")
+            os.fsync(artifact_fd)
+        finally:
+            os.close(artifact_fd)
+        injected = True
+        try:
+            original_publish(
+                parent_fd,
+                staging_name,
+                output_name,
+                **kwargs,
+            )
+        finally:
+            os.unlink("unexpected", dir_fd=clips_fd)
+
+    monkeypatch.setattr(
+        subject,
+        "_atomic_publish_no_replace_at",
+        inject_runtime_output_before_dirfd_rename,
+    )
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="clips staging directory changed before publication",
+    ):
+        subject.build_specs(**inputs, output_root=output)
+
+    assert injected
     _assert_failed_without_apartment_output(output)
 
 

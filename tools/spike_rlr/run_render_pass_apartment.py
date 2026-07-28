@@ -77,6 +77,43 @@ def _rig_assert_enabled() -> bool:
            any("--rig-assert" in a for a in sys.argv)
 
 
+def _sample_rig_direction_basis_and_body_bone(
+    actor,
+    placement,
+    *,
+    unreal_service,
+    diagnostics,
+):
+    """Pass authenticated semantic roles to both runtime rig samplers."""
+    from rig_direction_check import (
+        find_body_bone_in_frame,
+        sample_body_basis_in_frame,
+    )
+
+    semantic_bone_names = getattr(
+        placement,
+        "rig_direction_bone_names",
+        None,
+    )
+    body_basis = sample_body_basis_in_frame(
+        actor,
+        unreal_service=unreal_service,
+        diagnostics=diagnostics,
+        semantic_bone_names=semantic_bone_names,
+    )
+    body_bone = find_body_bone_in_frame(
+        actor,
+        unreal_service=unreal_service,
+        diagnostics=diagnostics,
+        semantic_body_bone_name=(
+            semantic_bone_names["body"]
+            if semantic_bone_names is not None
+            else None
+        ),
+    )
+    return body_basis, body_bone
+
+
 def _assert_source_review_gates(spec):
     """Route technical-spike humans through their artifact-locked gate."""
     from human_apartment_gate import (
@@ -575,6 +612,21 @@ def _build_rig_direction_evidence(
             raise AssertionError(
                 f"{tag} body up alignment {up_alignment_z:.3f} is below 0.750"
             )
+        if (
+            body_basis.get("basis_kind")
+            == "authenticated_generated_quadruped_longitudinal_v1"
+        ):
+            anatomical_right_alignment = float(
+                body_basis.get("anatomical_right_alignment", float("nan"))
+            )
+            if (
+                not np.isfinite(anatomical_right_alignment)
+                or anatomical_right_alignment <= 0.0
+            ):
+                raise AssertionError(
+                    f"{tag} anatomical right alignment "
+                    f"{anatomical_right_alignment:.3f} must be positive"
+                )
         try:
             _assert_yaw_ok(
                 observed=body_forward_yaw_ue,
@@ -1086,8 +1138,6 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
             }
             if rig_assert_on:
                 from rig_direction_check import (
-                    find_body_bone_in_frame,
-                    sample_body_basis_in_frame,
                     sample_body_bone_position_in_frame,
                 )
             visual_centers = {placement.tag: [] for placement in scene.animals}
@@ -1146,13 +1196,12 @@ def render_apartment(spec_path: Path, out_dir: Path, csv_path: Path,
                                 bucket = samples.setdefault(placement.tag, {})
                                 if which == "a":
                                     bucket["diagnostics"] = []
-                                    bucket["body_basis"] = sample_body_basis_in_frame(
+                                    (
+                                        bucket["body_basis"],
+                                        bucket["bone"],
+                                    ) = _sample_rig_direction_basis_and_body_bone(
                                         actor,
-                                        unreal_service=game.unreal_service,
-                                        diagnostics=bucket["diagnostics"],
-                                    )
-                                    bucket["bone"] = find_body_bone_in_frame(
-                                        actor,
+                                        placement,
                                         unreal_service=game.unreal_service,
                                         diagnostics=bucket["diagnostics"],
                                     )

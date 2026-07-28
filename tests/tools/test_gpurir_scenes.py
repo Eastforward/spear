@@ -131,6 +131,25 @@ def test_animal_placement_can_carry_runtime_actor_scale():
     assert human.actor_z_lift_cm == 0.0
 
 
+def test_animal_placement_can_carry_optional_rig_direction_bone_names():
+    bone_names = {
+        "rear": "bone_0",
+        "front": "bone_3",
+        "body": "bone_0",
+        "left_foot": "bone_22",
+        "right_foot": "bone_18",
+    }
+    animal = AnimalPlacement(
+        tag="generated_quadruped",
+        is_animated=True,
+        trajectory_m=np.zeros((N_FRAMES, 3)),
+        yaw_deg=np.zeros(N_FRAMES),
+        rig_direction_bone_names=bone_names,
+    )
+
+    assert animal.rig_direction_bone_names == bone_names
+
+
 def test_render_helpers_prefer_placement_runtime_scale():
     from gpurir_scenes.run_render_pass import (
         _actor_scale_for_placement,

@@ -29,6 +29,9 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 SPEAR_ROOT = Path(__file__).resolve().parents[1]
+if str(SPEAR_ROOT) not in sys.path:
+    sys.path.insert(0, str(SPEAR_ROOT))
+
 SCHEMA = "controlled_animal_walk_idle_apartment_specs_v1"
 SCHEMA_V2 = "controlled_animal_walk_idle_apartment_specs_v2"
 SCHEMAS = frozenset({SCHEMA, SCHEMA_V2})

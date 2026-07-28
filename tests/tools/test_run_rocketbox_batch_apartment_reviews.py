@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from tools import run_rocketbox_batch_apartment_reviews as review_runner
 from tools.spike_rlr.acoustic_scene_contract import (
     approved_acoustic_scene_contract,
     approved_rlr_renderer_contract,
@@ -402,7 +403,25 @@ def _upgrade_controlled_animal_manifest_to_v2(manifest: Path) -> Path:
         spec_path.write_text(json.dumps(spec))
     payload["schema"] = "controlled_animal_walk_idle_apartment_specs_v2"
     manifest.write_text(json.dumps(payload))
+    clips = root / "clips"
+    clips.mkdir(exist_ok=True)
+    clips.chmod(0o755)
     return manifest
+
+
+def _allow_fixture_v2_reauthentication(monkeypatch) -> list[Path]:
+    calls = []
+
+    def authenticate(manifest_path):
+        calls.append(Path(manifest_path))
+        return {}
+
+    monkeypatch.setattr(
+        review_runner.generated_animal_specs,
+        "authenticate_apartment_v2_manifest",
+        authenticate,
+    )
+    return calls
 
 
 def _stable_animal_manifest(tmp_path: Path) -> Path:
@@ -563,7 +582,11 @@ def test_build_jobs_accepts_controlled_animal_walk_idle_and_instance_scale(tmp_p
     assert build_jobs(manifest, actions={"Idle"})[0].action == "Idle"
 
 
-def test_build_jobs_accepts_key_bound_controlled_animal_v2_gate(tmp_path):
+def test_build_jobs_accepts_key_bound_controlled_animal_v2_gate(
+    tmp_path,
+    monkeypatch,
+):
+    authentication_calls = _allow_fixture_v2_reauthentication(monkeypatch)
     manifest = _upgrade_controlled_animal_manifest_to_v2(
         _controlled_animal_manifest(tmp_path)
     )
@@ -574,9 +597,127 @@ def test_build_jobs_accepts_key_bound_controlled_animal_v2_gate(tmp_path):
         ("cat_siamese_bindpose_example", "Idle"),
         ("cat_siamese_bindpose_example", "Walking"),
     ]
+    assert authentication_calls == [manifest.resolve()]
 
 
-def test_controlled_animal_v2_gate_rejects_changed_compact_readback(tmp_path):
+def test_build_jobs_blocks_v2_when_reauthentication_fails(
+    tmp_path,
+    monkeypatch,
+):
+    manifest = _upgrade_controlled_animal_manifest_to_v2(
+        _controlled_animal_manifest(tmp_path)
+    )
+    calls = []
+
+    def fail_reauthentication(manifest_path):
+        calls.append(Path(manifest_path))
+        raise ValueError("fixture authority rejected")
+
+    monkeypatch.setattr(
+        review_runner.generated_animal_specs,
+        "authenticate_apartment_v2_manifest",
+        fail_reauthentication,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="controlled-animal v2 manifest reauthentication failed",
+    ):
+        build_jobs(manifest)
+    assert calls == [manifest.resolve()]
+
+
+def test_controlled_animal_v2_requires_real_writable_clips_root(
+    tmp_path,
+    monkeypatch,
+):
+    authentication_calls = _allow_fixture_v2_reauthentication(monkeypatch)
+    manifest = _upgrade_controlled_animal_manifest_to_v2(
+        _controlled_animal_manifest(tmp_path)
+    )
+    clips = manifest.parent / "clips"
+    clips.rmdir()
+
+    with pytest.raises(
+        RuntimeError,
+        match="runtime clips directory is missing",
+    ):
+        build_jobs(manifest)
+    assert authentication_calls == [manifest.resolve()]
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    clips.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(
+        RuntimeError,
+        match="must be a real, owner-writable directory",
+    ):
+        build_jobs(manifest)
+    assert authentication_calls == [manifest.resolve(), manifest.resolve()]
+
+
+def test_controlled_animal_v2_batch_status_defaults_to_runtime_clips_root(
+    tmp_path,
+):
+    from tools.run_rocketbox_batch_apartment_reviews import default_status_path
+
+    manifest = tmp_path / "published" / "spec_manifest.json"
+
+    assert default_status_path(
+        manifest,
+        manifest_schema="controlled_animal_walk_idle_apartment_specs_v2",
+    ) == (
+        manifest.parent.resolve() / "clips" / "batch_render_status.json"
+    )
+
+
+def test_legacy_batch_status_default_path_is_unchanged(tmp_path):
+    from tools.run_rocketbox_batch_apartment_reviews import default_status_path
+
+    manifest = tmp_path / "published" / "spec_manifest.json"
+
+    assert default_status_path(
+        manifest,
+        manifest_schema="stable_animal_walk_idle_apartment_specs_v1",
+    ) == (manifest.parent.resolve() / "batch_render_status.json")
+
+
+def test_controlled_animal_v1_rejects_unbound_rig_direction_evidence(
+    tmp_path,
+):
+    manifest = _controlled_animal_manifest(tmp_path)
+    payload = json.loads(manifest.read_text())
+    for action in payload["records"][0]["actions"].values():
+        spec_path = Path(action["spec"])
+        spec = json.loads(spec_path.read_text())
+        spec["sources"][0]["rig_direction_semantic_evidence"] = {
+            "bone_names": {"body": "unbound_body"},
+        }
+        spec_path.write_text(json.dumps(spec))
+
+    with pytest.raises(RuntimeError, match="review spec identity changed"):
+        build_jobs(manifest)
+
+
+def test_controlled_animal_manifest_schema_downgrade_cannot_skip_v2_gate(
+    tmp_path,
+):
+    manifest = _upgrade_controlled_animal_manifest_to_v2(
+        _controlled_animal_manifest(tmp_path)
+    )
+    payload = json.loads(manifest.read_text())
+    payload["schema"] = "controlled_animal_walk_idle_apartment_specs_v1"
+    manifest.write_text(json.dumps(payload))
+
+    with pytest.raises(RuntimeError, match="review spec identity changed"):
+        build_jobs(manifest)
+
+
+def test_controlled_animal_v2_gate_rejects_changed_compact_readback(
+    tmp_path,
+    monkeypatch,
+):
+    _allow_fixture_v2_reauthentication(monkeypatch)
     manifest = _upgrade_controlled_animal_manifest_to_v2(
         _controlled_animal_manifest(tmp_path)
     )
@@ -594,7 +735,11 @@ def test_controlled_animal_v2_gate_rejects_changed_compact_readback(tmp_path):
         build_jobs(manifest)
 
 
-def test_controlled_animal_v2_gate_rejects_missing_freeze_receipt(tmp_path):
+def test_controlled_animal_v2_gate_rejects_missing_freeze_receipt(
+    tmp_path,
+    monkeypatch,
+):
+    _allow_fixture_v2_reauthentication(monkeypatch)
     manifest = _upgrade_controlled_animal_manifest_to_v2(
         _controlled_animal_manifest(tmp_path)
     )
@@ -610,7 +755,11 @@ def test_controlled_animal_v2_gate_rejects_missing_freeze_receipt(tmp_path):
         build_jobs(manifest)
 
 
-def test_controlled_animal_v2_gate_rejects_v1_result_downgrade(tmp_path):
+def test_controlled_animal_v2_gate_rejects_v1_result_downgrade(
+    tmp_path,
+    monkeypatch,
+):
+    _allow_fixture_v2_reauthentication(monkeypatch)
     manifest = _upgrade_controlled_animal_manifest_to_v2(
         _controlled_animal_manifest(tmp_path)
     )
@@ -641,7 +790,11 @@ def test_controlled_animal_v2_gate_rejects_v1_result_downgrade(tmp_path):
         build_jobs(manifest)
 
 
-def test_controlled_animal_v2_gate_rejects_preparation_path_rebind(tmp_path):
+def test_controlled_animal_v2_gate_rejects_preparation_path_rebind(
+    tmp_path,
+    monkeypatch,
+):
+    _allow_fixture_v2_reauthentication(monkeypatch)
     manifest = _upgrade_controlled_animal_manifest_to_v2(
         _controlled_animal_manifest(tmp_path)
     )

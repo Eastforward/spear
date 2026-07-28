@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import subprocess
 import sys
 from contextlib import nullcontext
 from pathlib import Path
@@ -346,6 +347,30 @@ def test_human_smoke_launcher_can_publish_complete_evidence_and_command_log():
     assert "finalize_function(" in launcher
     assert 'out_dir / "command.log"' in launcher
     assert 'os.environ.setdefault("MPLCONFIGDIR"' in launcher
+
+
+def test_human_smoke_launcher_can_import_finalizer_from_external_cwd(tmp_path):
+    launcher = (
+        REPO / "tools" / "spike_rlr" / "run_human_apartment_smoke.py"
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import runpy, sys; "
+                f"sys.path.insert(0, {str(launcher.parent)!r}); "
+                f"runpy.run_path({str(launcher)!r}, run_name='launcher_import'); "
+                "import human_apartment_evidence"
+            ),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_human_smoke_explicit_finalize_stage_skips_ue_render(tmp_path):

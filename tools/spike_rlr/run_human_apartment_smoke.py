@@ -14,10 +14,13 @@ os.environ.setdefault("DISPLAY", ":99")
 os.environ.setdefault("VK_ICD_FILENAMES", "/etc/vulkan/icd.d/nvidia_icd.json")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/avengine-matplotlib")
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from run_render_pass_apartment import render_apartment  # noqa: E402
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ROOT = REPO_ROOT / "tmp" / "hy3d_rocketbox_template_fit_v1" / "ue_apartment_smoke"
 
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -208,6 +209,149 @@ def _wanted_anim_for_source(src):
     return "Idle" if motion == "stationary" else "Walking"
 
 
+_RIG_DIRECTION_BONE_ROLES = frozenset({
+    "rear",
+    "front",
+    "body",
+    "left_foot",
+    "right_foot",
+})
+_RIG_DIRECTION_EVIDENCE_FIELDS = frozenset({
+    "schema",
+    "artifact",
+    "source_glb_sha256",
+    "front_axis",
+    "bone_names",
+})
+_RIG_DIRECTION_ARTIFACT_FIELDS = frozenset({
+    "path",
+    "sha256",
+    "size_bytes",
+})
+_RIG_DIRECTION_EVIDENCE_SCHEMA = (
+    "controlled_animal_rig_direction_semantic_evidence_v1"
+)
+_RIG_DIRECTION_GATE_SCHEMA = "controlled_animal_apartment_gate_v2"
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+
+
+def _invalid_rig_direction_evidence(tag, message):
+    raise ValueError(f"{tag} rig_direction_semantic_evidence {message}")
+
+
+def _rig_direction_bone_names_for_source(src):
+    """Validate renderer plumbing for batch-reauthenticated rig semantics.
+
+    This deliberately validates the exact evidence shape but does not establish
+    provenance by itself.  The supported authenticated entry point is
+    run_rocketbox_batch_apartment_reviews.py, whose v2 manifest reauthentication
+    verifies the artifact graph and regenerates the expected spec before this
+    scene composer runs.
+    """
+    evidence = src.get("rig_direction_semantic_evidence")
+    if evidence is None:
+        return None
+    tag = str(src.get("tag", "<missing-tag>"))
+    if not isinstance(evidence, dict):
+        _invalid_rig_direction_evidence(tag, "must be an object")
+    if set(evidence) != _RIG_DIRECTION_EVIDENCE_FIELDS:
+        _invalid_rig_direction_evidence(
+            tag,
+            "fields must be "
+            f"{sorted(_RIG_DIRECTION_EVIDENCE_FIELDS)}, "
+            f"got {sorted(evidence)}",
+        )
+    if evidence["schema"] != _RIG_DIRECTION_EVIDENCE_SCHEMA:
+        _invalid_rig_direction_evidence(tag, "schema is invalid")
+    if evidence["front_axis"] != "positive-x":
+        _invalid_rig_direction_evidence(tag, "front_axis must be positive-x")
+    source_sha256 = evidence["source_glb_sha256"]
+    if (
+        not isinstance(source_sha256, str)
+        or _SHA256_PATTERN.fullmatch(source_sha256) is None
+    ):
+        _invalid_rig_direction_evidence(
+            tag, "source_glb_sha256 must be a lowercase SHA-256"
+        )
+    gate = src.get("controlled_animal_gate")
+    if (
+        not isinstance(gate, dict)
+        or gate.get("schema") != _RIG_DIRECTION_GATE_SCHEMA
+        or gate.get("ue_source_sha256") != source_sha256
+    ):
+        _invalid_rig_direction_evidence(
+            tag,
+            "requires a matching controlled-animal v2 gate",
+        )
+    artifact = evidence["artifact"]
+    if (
+        not isinstance(artifact, dict)
+        or set(artifact) != _RIG_DIRECTION_ARTIFACT_FIELDS
+    ):
+        _invalid_rig_direction_evidence(
+            tag,
+            "artifact fields must be "
+            f"{sorted(_RIG_DIRECTION_ARTIFACT_FIELDS)}",
+        )
+    artifact_path = artifact["path"]
+    if (
+        not isinstance(artifact_path, str)
+        or not artifact_path
+        or artifact_path != artifact_path.strip()
+        or not Path(artifact_path).is_absolute()
+    ):
+        _invalid_rig_direction_evidence(
+            tag, "artifact.path must be a non-empty absolute path"
+        )
+    if (
+        not isinstance(artifact["sha256"], str)
+        or _SHA256_PATTERN.fullmatch(artifact["sha256"]) is None
+    ):
+        _invalid_rig_direction_evidence(
+            tag, "artifact.sha256 must be a lowercase SHA-256"
+        )
+    if (
+        not isinstance(artifact["size_bytes"], int)
+        or isinstance(artifact["size_bytes"], bool)
+        or artifact["size_bytes"] <= 0
+    ):
+        _invalid_rig_direction_evidence(
+            tag, "artifact.size_bytes must be a positive integer"
+        )
+    bone_names = evidence.get("bone_names")
+    if not isinstance(bone_names, dict):
+        _invalid_rig_direction_evidence(tag, "bone_names must be an object")
+    actual_roles = set(bone_names)
+    if actual_roles != _RIG_DIRECTION_BONE_ROLES:
+        _invalid_rig_direction_evidence(
+            tag,
+            "bone_names roles must be "
+            f"{sorted(_RIG_DIRECTION_BONE_ROLES)}, "
+            f"got {sorted(actual_roles)}",
+        )
+    for role, bone_name in bone_names.items():
+        if not isinstance(bone_name, str):
+            _invalid_rig_direction_evidence(
+                tag, f"bone role {role} must be a string"
+            )
+        if not bone_name or bone_name != bone_name.strip():
+            _invalid_rig_direction_evidence(
+                tag,
+                f"bone role {role} must be a non-empty exact bone name "
+                "without surrounding whitespace",
+            )
+    directional_names = [
+        bone_names[role]
+        for role in ("rear", "front", "left_foot", "right_foot")
+    ]
+    if len(set(directional_names)) != len(directional_names):
+        _invalid_rig_direction_evidence(
+            tag,
+            "rear/front/left_foot/right_foot bone names must be distinct",
+        )
+    return {role: bone_names[role] for role in sorted(_RIG_DIRECTION_BONE_ROLES)}
+
+
 _N_FRAMES = None  # set inside compose
 
 
@@ -278,6 +422,7 @@ def compose_two_dog_scene_apartment(spec_path=DEFAULT_SPEC_PATH):
             actor_z_lift_cm=src.get("actor_z_lift_cm"),
             walking_forward_yaw_offset_deg=offset,
             animation_play_rate=src.get("animation_play_rate"),
+            rig_direction_bone_names=_rig_direction_bone_names_for_source(src),
             ground_snap_to_floor=bool(src.get("ground_snap_to_floor", False)),
             ground_snap_max_abs_correction_cm=float(
                 src.get("ground_snap_max_abs_correction_cm", 15.0)

@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
@@ -30,6 +31,33 @@ from tools.measure_controlled_animal_physical_attributes import (
     resolve_front_upper_groups,
     summarize_size_ordering,
 )
+
+
+def test_measurement_entrypoint_exposes_repo_package_from_external_cwd(
+    tmp_path: Path,
+) -> None:
+    launcher = (
+        Path(__file__).resolve().parents[2]
+        / "tools"
+        / "measure_controlled_animal_physical_attributes.py"
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import runpy; "
+                f"runpy.run_path({str(launcher)!r}, run_name='measure_import'); "
+                "import tools"
+            ),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def _record(size="medium", profile="dog_golden_retriever_v1"):

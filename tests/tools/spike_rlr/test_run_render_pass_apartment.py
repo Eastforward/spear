@@ -121,6 +121,74 @@ def test_actor_runtime_frame_state_records_bounds_root_animation_and_floor_conta
     }
 
 
+def test_apartment_renderer_passes_authenticated_rig_direction_bone_roles(
+    monkeypatch,
+):
+    import rig_direction_check
+    from run_render_pass_apartment import (
+        _sample_rig_direction_basis_and_body_bone,
+    )
+
+    actor = object()
+    unreal_service = object()
+    diagnostics = []
+    bone_names = {
+        "rear": "bone_0",
+        "front": "bone_3",
+        "body": "bone_0",
+        "left_foot": "bone_22",
+        "right_foot": "bone_18",
+    }
+    calls = {}
+
+    def sample_basis(candidate, **kwargs):
+        calls["basis"] = (candidate, kwargs)
+        return {
+            "basis_kind": "authenticated_generated_quadruped_longitudinal_v1"
+        }
+
+    def find_body(candidate, **kwargs):
+        calls["body"] = (candidate, kwargs)
+        return "bone_0"
+
+    monkeypatch.setattr(
+        rig_direction_check,
+        "sample_body_basis_in_frame",
+        sample_basis,
+    )
+    monkeypatch.setattr(
+        rig_direction_check,
+        "find_body_bone_in_frame",
+        find_body,
+    )
+
+    basis, body = _sample_rig_direction_basis_and_body_bone(
+        actor,
+        SimpleNamespace(rig_direction_bone_names=bone_names),
+        unreal_service=unreal_service,
+        diagnostics=diagnostics,
+    )
+
+    assert basis["basis_kind"].startswith("authenticated_generated_quadruped")
+    assert body == "bone_0"
+    assert calls["basis"] == (
+        actor,
+        {
+            "unreal_service": unreal_service,
+            "diagnostics": diagnostics,
+            "semantic_bone_names": bone_names,
+        },
+    )
+    assert calls["body"] == (
+        actor,
+        {
+            "unreal_service": unreal_service,
+            "diagnostics": diagnostics,
+            "semantic_body_bone_name": "bone_0",
+        },
+    )
+
+
 def test_runtime_summary_fails_human_floor_gate_over_one_centimeter():
     from run_render_pass_apartment import (
         _actor_runtime_frame_state,
@@ -479,6 +547,80 @@ def test_rig_direction_evidence_includes_body_basis_when_facing_mismatches():
             enabled=True,
             tolerance_deg=25.0,
         )
+
+
+def test_authenticated_quadruped_direction_rejects_swapped_anatomical_sides():
+    from run_render_pass_apartment import _build_rig_direction_evidence
+
+    idle = SimpleNamespace(
+        tag="generated_quadruped",
+        wanted_anim="Idle",
+        yaw_deg=np.asarray([0.0, 0.0]),
+        trajectory_m=np.asarray([[0.0, 0.0, 0.0]] * 2),
+    )
+    body_basis = {
+        "basis_kind": "authenticated_generated_quadruped_longitudinal_v1",
+        "bone_names": {
+            "rear": "bone_0",
+            "front": "bone_2",
+            "body": "bone_0",
+            "left_foot": "bone_22",
+            "right_foot": "bone_18",
+        },
+        "forward_yaw_ue_deg": 0.0,
+        "up_alignment_z": 0.95,
+        "anatomical_right_alignment": -0.93,
+        "forward_vector_ue": [1.0, 0.0, 0.0],
+    }
+
+    with pytest.raises(
+        AssertionError,
+        match="anatomical right alignment -0.930 must be positive",
+    ):
+        _build_rig_direction_evidence(
+            SimpleNamespace(animals=[idle]),
+            {"generated_quadruped": {"body_basis": body_basis}},
+            frame_a=0,
+            frame_b=1,
+            enabled=True,
+            tolerance_deg=25.0,
+        )
+
+
+def test_authenticated_quadruped_direction_allows_positive_gait_skew():
+    from run_render_pass_apartment import _build_rig_direction_evidence
+
+    walking = SimpleNamespace(
+        tag="generated_quadruped",
+        wanted_anim="Walking",
+        yaw_deg=np.asarray([0.0, 0.0]),
+        trajectory_m=np.asarray([[0.0, 0.0, 0.0]] * 2),
+    )
+    body_basis = {
+        "basis_kind": "authenticated_generated_quadruped_longitudinal_v1",
+        "bone_names": {
+            "rear": "bone_0",
+            "front": "bone_2",
+            "body": "bone_0",
+            "left_foot": "bone_22",
+            "right_foot": "bone_18",
+        },
+        "forward_yaw_ue_deg": 0.0,
+        "up_alignment_z": 0.95,
+        "anatomical_right_alignment": 0.547,
+        "forward_vector_ue": [1.0, 0.0, 0.0],
+    }
+
+    evidence = _build_rig_direction_evidence(
+        SimpleNamespace(animals=[walking]),
+        {"generated_quadruped": {"body_basis": body_basis}},
+        frame_a=0,
+        frame_b=1,
+        enabled=True,
+        tolerance_deg=25.0,
+    )
+
+    assert evidence["generated_quadruped"]["status"] == "passed"
 
 
 def test_rig_direction_evidence_removes_asset_yaw_offset_for_semantic_facing():
