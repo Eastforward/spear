@@ -862,21 +862,29 @@ def authenticate_review(
         source_asset_path,
         expected_file_sha256=expected_source_registry_sha256,
     )
-    source_path, source_asset, source_artifacts = bridge.load_source_asset(
-        source_asset_path,
-        roots,
-        request=source_request,
-        profile=source_profile,
-        require_derived_authority=(
+    source_authority_options = {
+        "require_derived_authority": (
             registry.get("schema")
             in {
                 bridge.source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
                 bridge.source_registry.DERIVED_REGISTRY_SCHEMA,
             }
         ),
+    }
+    if (
+        registry.get("schema")
+        == bridge.source_registry.DIRECT_GEOMETRY_REGISTRY_SCHEMA
+    ):
+        source_authority_options["require_direct_geometry_authority"] = True
+    source_path, source_asset, source_artifacts = bridge.load_source_asset(
+        source_asset_path,
+        roots,
+        request=source_request,
+        profile=source_profile,
         expected_raw_static_decision_batch=registry.get(
             "static_decision_batch"
         ),
+        **source_authority_options,
     )
     (
         authenticated_review_path,
