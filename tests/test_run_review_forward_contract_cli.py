@@ -22,6 +22,7 @@ from tools.generated_animal_forward_contract import (
 from tools.generated_animal_support_plane_contract import (
     CROSSCHECK_METHOD,
     EVIDENCE_SCHEMA as SUPPORT_PLANE_EVIDENCE_SCHEMA,
+    LEGACY_OUTPUT_READBACK_SCHEMA,
     MAXIMUM_PRIMARY_POST_LEVEL_TILT_DEG,
     MAXIMUM_POST_LEVEL_BBOX_DIAGONAL_RATIO_DELTA,
     MAXIMUM_RIGID_BONE_ENDPOINT_DELTA_RATIO,
@@ -120,7 +121,9 @@ def test_ffprobe_readback_rejects_ambiguous_json(tmp_path, monkeypatch, payload)
         verify_video(video, 8)
 
 
-def dual_support_plane_evidence():
+def dual_support_plane_evidence(mesh_diagonal=4.0):
+    capture_radius = mesh_diagonal * 0.05
+    band_thickness = max(0.004, mesh_diagonal * 0.003)
     points = [
         [-1.0, -1.0, 0.0],
         [-1.0, 1.0, 0.0],
@@ -139,18 +142,20 @@ def dual_support_plane_evidence():
     }
     return {
         "schema": SUPPORT_PLANE_EVIDENCE_SCHEMA,
-        "mesh_diagonal": 4.0,
+        "mesh_diagonal": mesh_diagonal,
         "thresholds": {
             "capture_radius_ratio_of_mesh_diagonal": 0.05,
-            "capture_radius": 0.2,
+            "capture_radius": capture_radius,
             "contact_band_absolute_floor": 0.004,
             "contact_band_ratio_of_mesh_diagonal": 0.003,
-            "contact_band_thickness": 0.012,
+            "contact_band_thickness": band_thickness,
             "minimum_capture_vertices": 10,
             "minimum_contact_band_vertices": 10,
             "minimum_weight_owner_score": 0.1,
-            "maximum_floor_delta_between_authorities": 0.012,
-            "maximum_contact_centroid_xy_delta_between_authorities": 0.2,
+            "maximum_floor_delta_between_authorities": band_thickness,
+            "maximum_contact_centroid_xy_delta_between_authorities": (
+                capture_radius
+            ),
             "maximum_plane_residual_ratio_of_mesh_diagonal": 0.02,
             "maximum_tilt_deg": 30.0,
         },
@@ -175,10 +180,10 @@ def dual_support_plane_evidence():
         "agreement": {
             "per_foot_floor_z_absolute_delta": [0.0, 0.0, 0.0, 0.0],
             "maximum_floor_z_absolute_delta": 0.0,
-            "maximum_allowed_floor_z_absolute_delta": 0.012,
+            "maximum_allowed_floor_z_absolute_delta": band_thickness,
             "per_foot_contact_centroid_xy_distance": [0.0, 0.0, 0.0, 0.0],
             "maximum_contact_centroid_xy_distance": 0.0,
-            "maximum_allowed_contact_centroid_xy_distance": 0.2,
+            "maximum_allowed_contact_centroid_xy_distance": capture_radius,
             "passed": True,
         },
         "fallback_used": False,
@@ -281,7 +286,8 @@ def support_output_readback(
             "maximum_foot_readback_delta": 2.0e-6,
             "maximum_post_level_semantic_reacquisition_delta": 0.2,
             "maximum_post_level_floor_reacquisition_delta": 0.012,
-            "maximum_post_level_bbox_diagonal_ratio_delta": (
+            "maximum_post_level_bbox_diagonal_ratio_delta_from_"
+            "expected_rigid_transform": (
                 MAXIMUM_POST_LEVEL_BBOX_DIAGONAL_RATIO_DELTA
             ),
         },
@@ -325,7 +331,14 @@ def support_output_readback(
             "post_level_crosscheck_foot_delta": 0.0,
             "actual_minimum_primary_foot_z": 0.0,
             "primary_post_level_tilt_deg": 0.0,
-            "post_level_bbox_diagonal_ratio_delta": 0.0,
+            "bbox_diagonal_reference_method": (
+                "pre_level_vertices_after_declared_rigid_transform_v1"
+            ),
+            "pre_level_bbox_diagonal": 4.0,
+            "expected_post_level_bbox_diagonal": 4.0,
+            "actual_post_level_bbox_diagonal": 4.0,
+            "post_level_bbox_diagonal_ratio_delta_from_"
+            "expected_rigid_transform": 0.0,
             "passed": True,
         },
     }
@@ -603,6 +616,12 @@ def test_full_plan_defaults_to_mesh_feet_and_gentle_conditional_repair(
         "deformation_repaired_low_slice_edge_average"
     )
     residual_label = "weight_repair_low_slice_edge_average_residual"
+    continuation_label = (
+        "weight_repair_low_slice_edge_average_residual_continuation"
+    )
+    continuation_deformation_label = (
+        "deformation_repaired_low_slice_edge_average_residual_continuation"
+    )
     assert labels.index("weight_repair") < labels.index(fallback_label)
     assert labels.index(fallback_label) < labels.index(fallback_gait_label)
     assert labels.index(fallback_gait_label) < labels.index(
@@ -616,9 +635,16 @@ def test_full_plan_defaults_to_mesh_feet_and_gentle_conditional_repair(
     )
     assert labels.index(
         "deformation_repaired_low_slice_edge_average_residual"
-    ) < labels.index("render_walking_side")
+    ) < labels.index(continuation_label)
+    assert labels.index(continuation_label) < labels.index(
+        continuation_deformation_label
+    )
+    assert labels.index(continuation_deformation_label) < labels.index(
+        "render_walking_side"
+    )
     fallback = commands[fallback_label]
     residual = commands[residual_label]
+    continuation = commands[continuation_label]
     assert fallback[fallback.index("--input") + 1].endswith(
         "/04_motion/target_animated.glb"
     )
@@ -643,11 +669,37 @@ def test_full_plan_defaults_to_mesh_feet_and_gentle_conditional_repair(
         == fallback_output
     )
     assert residual[residual.index("--input") + 1] == fallback_output
-    assert residual[residual.index("--output") + 1] != fallback_output
+    residual_output = residual[residual.index("--output") + 1]
+    assert residual_output != fallback_output
+    assert continuation[continuation.index("--input") + 1] == residual_output
+    continuation_output = continuation[continuation.index("--output") + 1]
+    assert continuation_output != residual_output
     assert "--skip-cross-limb-preclean" not in fallback
     assert "--skip-cross-limb-preclean" in residual
+    assert "--skip-cross-limb-preclean" in continuation
+    for option in (
+        "--walking-samples",
+        "--idle-samples",
+        "--maximum-passes",
+        "--inner-iterations",
+        "--extension-threshold",
+        "--minimum-stretch-ratio",
+        "--maximum-rest-edge-ratio",
+        "--blend",
+        "--component-rings",
+        "--repair-mode",
+        "--top-k",
+        "--minimum-weight",
+        "--maximum-seed-edges",
+        "--cross-limb-authority",
+        "--limb-slice-height-fraction",
+    ):
+        assert residual[residual.index(option) + 1] == continuation[
+            continuation.index(option) + 1
+        ]
     render = commands["render_walking_side"]
     encode = commands["encode_walking_side"]
+    assert render[render.index("--input") + 1] == continuation_output
     assert render[render.index("--manifest") + 1].endswith(
         "/05_review/walking_side_render_manifest.json"
     )
@@ -1605,6 +1657,135 @@ def test_review_repair_branch_rejects_missing_or_relabelled_fallback_b(tmp_path)
         )
 
 
+def test_second_residual_continuation_is_bounded_and_names_final_artifact(
+    tmp_path,
+):
+    attempts = [
+        review_repair_attempt(
+            tmp_path,
+            stage="primary",
+            status=WEIGHT_REPAIR_INCOMPLETE_STATUS,
+            extension=0.14,
+            remaining_seed_edges=1477,
+        ),
+        review_repair_attempt(
+            tmp_path,
+            stage="fallback_a",
+            status=WEIGHT_REPAIR_INCOMPLETE_STATUS,
+            extension=0.023,
+            remaining_seed_edges=87,
+        ),
+        review_repair_attempt(
+            tmp_path,
+            stage="fallback_b",
+            status=WEIGHT_REPAIR_INCOMPLETE_STATUS,
+            extension=0.020004,
+            remaining_seed_edges=2,
+        ),
+        review_repair_attempt(
+            tmp_path,
+            stage="fallback_c",
+            status=WEIGHT_REPAIR_READY_STATUS,
+            extension=0.019997,
+            remaining_seed_edges=0,
+        ),
+    ]
+
+    require_weight_repair_branch_consistency("fallback_a_b_c", attempts)
+    gates = weight_repair_gate_attempts(attempts)
+    outputs = weight_repair_output_descriptors(attempts)
+    final_artifact = weight_repair_final_artifact("fallback_a_b_c")
+
+    assert [attempt["stage"] for attempt in gates] == [
+        "primary",
+        "fallback_a",
+        "fallback_b",
+        "fallback_c",
+    ]
+    assert gates[-1]["pipeline_stage"] == (
+        "weight_repair_low_slice_edge_average_residual_continuation"
+    )
+    assert gates[-1]["strategy"] == (
+        "low_slice_edge_average_residual_continuation"
+    )
+    assert gates[-1]["input_glb_output_descriptor"] == (
+        "weight_repair_fallback_b_glb"
+    )
+    assert set(outputs) == {
+        "weight_repair_primary_glb",
+        "weight_repair_primary_manifest",
+        "weight_repair_fallback_a_glb",
+        "weight_repair_fallback_a_manifest",
+        "weight_repair_fallback_b_glb",
+        "weight_repair_fallback_b_manifest",
+        "weight_repair_fallback_c_glb",
+        "weight_repair_fallback_c_manifest",
+    }
+    assert final_artifact == {
+        "stage": "fallback_c",
+        "glb_output_descriptor": "weight_repair_fallback_c_glb",
+        "manifest_output_descriptor": "weight_repair_fallback_c_manifest",
+    }
+    assert outputs[final_artifact["glb_output_descriptor"]] == attempts[-1][
+        "output_glb"
+    ]
+    assert outputs[final_artifact["manifest_output_descriptor"]] == attempts[-1][
+        "manifest"
+    ]
+    require_weight_repair_pipeline_order(
+        [
+            "heading",
+            "deformation",
+            "weight_repair",
+            "weight_repair_low_slice_edge_average",
+            "weight_repair_low_slice_edge_average_residual",
+            (
+                "weight_repair_low_slice_edge_average_"
+                "residual_continuation"
+            ),
+            (
+                "gait_direction_repaired_low_slice_edge_average_"
+                "residual_continuation"
+            ),
+            (
+                "deformation_repaired_low_slice_edge_average_"
+                "residual_continuation"
+            ),
+            "render_walking_side",
+        ],
+        "fallback_a_b_c",
+    )
+
+    missing_continuation = attempts[:-1]
+    with pytest.raises(RuntimeError, match="attempt sequence"):
+        require_weight_repair_branch_consistency(
+            "fallback_a_b_c", missing_continuation
+        )
+
+    unnecessary_continuation = deepcopy(attempts)
+    unnecessary_continuation[2]["status"] = WEIGHT_REPAIR_READY_STATUS
+    with pytest.raises(RuntimeError, match="contradictory"):
+        require_weight_repair_branch_consistency(
+            "fallback_a_b_c", unnecessary_continuation
+        )
+
+    incomplete_continuation = deepcopy(attempts)
+    incomplete_continuation[-1]["status"] = WEIGHT_REPAIR_INCOMPLETE_STATUS
+    with pytest.raises(RuntimeError, match="contradictory"):
+        require_weight_repair_branch_consistency(
+            "fallback_a_b_c", incomplete_continuation
+        )
+
+    wrong_input = deepcopy(attempts)
+    wrong_input[-1]["input_glb_output_descriptor"] = (
+        "weight_repair_fallback_a_glb"
+    )
+    with pytest.raises(RuntimeError, match="descriptor contract"):
+        require_weight_repair_branch_consistency(
+            "fallback_a_b_c", wrong_input
+        )
+
+
 def test_primary_and_unrepaired_review_final_artifact_contracts(tmp_path):
     primary = review_repair_attempt(
         tmp_path,
@@ -1821,6 +2002,119 @@ def test_mesh_foot_support_plane_rejects_silent_bone_anchor_fallback(tmp_path):
         front_axis="positive-x",
     )
 
+    rigid_aabb_readback = support_output_readback(
+        source=source,
+        leveled=leveled,
+        manifest=manifest,
+        rig_audit=evidence,
+        dual=dual,
+        scene=scene_summary,
+    )
+    expected_post_diagonal = 3.96
+    assert (
+        abs(expected_post_diagonal - dual["mesh_diagonal"])
+        / dual["mesh_diagonal"]
+        > MAXIMUM_POST_LEVEL_BBOX_DIAGONAL_RATIO_DELTA
+    )
+    rigid_aabb_readback["post_level_dual_authority"] = (
+        dual_support_plane_evidence(expected_post_diagonal)
+    )
+    rigid_aabb_readback["comparison"].update(
+        {
+            "expected_post_level_bbox_diagonal": expected_post_diagonal,
+            "actual_post_level_bbox_diagonal": expected_post_diagonal,
+            "post_level_bbox_diagonal_ratio_delta_from_"
+            "expected_rigid_transform": 0.0,
+        }
+    )
+    readback.write_text(json.dumps(rigid_aabb_readback), encoding="utf-8")
+    require_support_plane(
+        manifest,
+        source,
+        leveled,
+        readback_path=readback,
+        plane_source="mesh-foot-bottoms",
+        review_evidence=evidence,
+        front_axis="positive-x",
+    )
+
+    legacy_readback = support_output_readback(
+        source=source,
+        leveled=leveled,
+        manifest=manifest,
+        rig_audit=evidence,
+        dual=dual,
+        scene=scene_summary,
+    )
+    legacy_readback["schema"] = LEGACY_OUTPUT_READBACK_SCHEMA
+    legacy_threshold = legacy_readback["thresholds"].pop(
+        "maximum_post_level_bbox_diagonal_ratio_delta_from_"
+        "expected_rigid_transform"
+    )
+    legacy_readback["thresholds"][
+        "maximum_post_level_bbox_diagonal_ratio_delta"
+    ] = legacy_threshold
+    legacy_comparison = legacy_readback["comparison"]
+    for field in (
+        "bbox_diagonal_reference_method",
+        "pre_level_bbox_diagonal",
+        "expected_post_level_bbox_diagonal",
+        "actual_post_level_bbox_diagonal",
+        "post_level_bbox_diagonal_ratio_delta_from_expected_rigid_transform",
+    ):
+        legacy_comparison.pop(field)
+    legacy_comparison["post_level_bbox_diagonal_ratio_delta"] = 0.0
+    readback.write_text(json.dumps(legacy_readback), encoding="utf-8")
+    require_support_plane(
+        manifest,
+        source,
+        leveled,
+        readback_path=readback,
+        plane_source="mesh-foot-bottoms",
+        review_evidence=evidence,
+        front_axis="positive-x",
+    )
+
+    scaled_geometry_readback = support_output_readback(
+        source=source,
+        leveled=leveled,
+        manifest=manifest,
+        rig_audit=evidence,
+        dual=dual,
+        scene=scene_summary,
+    )
+    scaled_geometry_readback["comparison"][
+        "maximum_world_vertex_delta_from_declared_transform"
+    ] = 4.0 * MAXIMUM_RIGID_VERTEX_DELTA_RATIO * 2.0
+    readback.write_text(
+        json.dumps(scaled_geometry_readback), encoding="utf-8"
+    )
+    with pytest.raises(
+        RuntimeError, match="declared mesh/skeleton transform"
+    ):
+        require_support_plane(
+            manifest,
+            source,
+            leveled,
+            readback_path=readback,
+            plane_source="mesh-foot-bottoms",
+            review_evidence=evidence,
+            front_axis="positive-x",
+        )
+
+    readback.write_text(
+        json.dumps(
+            support_output_readback(
+                source=source,
+                leveled=leveled,
+                manifest=manifest,
+                rig_audit=evidence,
+                dual=dual,
+                scene=scene_summary,
+            )
+        ),
+        encoding="utf-8",
+    )
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     payload["support_plane"]["dual_authority"]["primary"][
         "contact_band_sizes"

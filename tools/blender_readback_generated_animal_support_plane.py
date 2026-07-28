@@ -29,6 +29,7 @@ if str(SPEAR_ROOT) not in sys.path:
 
 from tools.generated_animal_support_plane import (  # noqa: E402
     evaluate_dual_authority_support_plane,
+    rigid_transform_aabb_reference,
 )
 from tools.generated_animal_support_plane_contract import (  # noqa: E402
     MAXIMUM_PRIMARY_POST_LEVEL_TILT_DEG,
@@ -473,22 +474,30 @@ def main():
 
     pre = snapshot(pre_path, args.front_axis)
     post = snapshot(output_path, args.front_axis)
+    rotation = transform["rotation_from_primary_normal_to_positive_z"]
+    translation = transform["vertical_translation"]
+    rigid_bbox_reference = rigid_transform_aabb_reference(
+        pre["vertices"], rotation, translation
+    )
+    expected_vertices = rigid_bbox_reference["vertices"]
+    expected_post_diagonal = rigid_bbox_reference["bbox_diagonal"]
     post_diagonal_ratio_delta = abs(
-        post["mesh_diagonal"] - pre["mesh_diagonal"]
-    ) / pre["mesh_diagonal"]
+        post["mesh_diagonal"] - expected_post_diagonal
+    ) / expected_post_diagonal
     if (
         post_diagonal_ratio_delta
         > MAXIMUM_POST_LEVEL_BBOX_DIAGONAL_RATIO_DELTA
     ):
         raise RuntimeError(
-            "post-level bounding-box diagonal changed beyond the rigid "
-            f"rotation allowance: ratio={post_diagonal_ratio_delta}"
+            "post-level bounding-box diagonal changed beyond its declared "
+            "rigid-transform reference: "
+            f"expected={expected_post_diagonal} "
+            f"actual={post['mesh_diagonal']} "
+            f"ratio={post_diagonal_ratio_delta}"
         )
     scale = max(1.0, pre["mesh_diagonal"])
     maximum_vertex_delta = MAXIMUM_RIGID_VERTEX_DELTA_RATIO * scale
     maximum_bone_delta = MAXIMUM_RIGID_BONE_ENDPOINT_DELTA_RATIO * scale
-    rotation = transform["rotation_from_primary_normal_to_positive_z"]
-    translation = transform["vertical_translation"]
 
     if pre["semantic_rig"] != post["semantic_rig"]:
         raise RuntimeError("semantic foot/limb ownership changed after export")
@@ -519,9 +528,6 @@ def main():
             f"polygons={pre['polygon_count']}/{post['polygon_count']} "
             f"topology={pre['topology_sha256']}/{post['topology_sha256']}"
         )
-    expected_vertices = transform_points(
-        pre["vertices"], rotation, translation
-    )
     if pre["bone_names"] != post["bone_names"]:
         raise RuntimeError("skin-weight bone groups changed during export")
     expansion_ratio = (
@@ -693,7 +699,8 @@ def main():
             "maximum_post_level_floor_reacquisition_delta": transform[
                 "band_thickness"
             ],
-            "maximum_post_level_bbox_diagonal_ratio_delta": (
+            "maximum_post_level_bbox_diagonal_ratio_delta_from_"
+            "expected_rigid_transform": (
                 MAXIMUM_POST_LEVEL_BBOX_DIAGONAL_RATIO_DELTA
             ),
         },
@@ -735,7 +742,14 @@ def main():
             "post_level_crosscheck_foot_delta": post_cross_delta,
             "actual_minimum_primary_foot_z": actual_minimum_z,
             "primary_post_level_tilt_deg": post_tilt,
-            "post_level_bbox_diagonal_ratio_delta": (
+            "bbox_diagonal_reference_method": (
+                "pre_level_vertices_after_declared_rigid_transform_v1"
+            ),
+            "pre_level_bbox_diagonal": pre["mesh_diagonal"],
+            "expected_post_level_bbox_diagonal": expected_post_diagonal,
+            "actual_post_level_bbox_diagonal": post["mesh_diagonal"],
+            "post_level_bbox_diagonal_ratio_delta_from_"
+            "expected_rigid_transform": (
                 post_diagonal_ratio_delta
             ),
             "passed": True,

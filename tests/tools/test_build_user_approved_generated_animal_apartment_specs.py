@@ -1518,10 +1518,17 @@ def test_transcode_dual_lineage_rejects_tampered_manifest(
         subject._authenticate_formal_job_runtime_lineage(job)
 
 
-def test_builds_from_v4_fallback_b_final_semantic_artifact(
+@pytest.mark.parametrize(
+    "weight_repair_branch",
+    ("fallback_a_b", "fallback_a_b_c"),
+)
+def test_builds_from_v4_fallback_final_semantic_artifact(
     tmp_path: Path,
+    weight_repair_branch: str,
 ) -> None:
-    inputs = _fixture(tmp_path, weight_repair_branch="fallback_a_b")
+    inputs = _fixture(
+        tmp_path, weight_repair_branch=weight_repair_branch
+    )
     semantic_evidence = inputs.pop("semantic_evidence")
 
     manifest_path = subject.build_specs(

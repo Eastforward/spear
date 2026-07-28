@@ -54,6 +54,72 @@ def _positive_finite(value, *, label: str) -> float:
     return float(value)
 
 
+def rigid_transform_aabb_reference(
+    world_vertices,
+    rotation,
+    vertical_translation,
+) -> dict:
+    """Apply one declared leveling transform and measure its expected AABB.
+
+    An axis-aligned bounding-box diagonal is not invariant under rotation.
+    The only valid AABB comparison after leveling is therefore between the
+    serialized output and this transformed copy of the authenticated input,
+    never between the pre- and post-rotation AABBs directly.
+    """
+
+    vertices = _finite_array(world_vertices, label="world vertices")
+    if vertices.ndim != 2 or vertices.shape[1] != 3 or len(vertices) == 0:
+        raise SupportPlaneContractError(
+            "world vertices must have non-empty shape (N, 3)"
+        )
+    matrix = _finite_array(
+        rotation, label="declared rigid rotation", shape=(3, 3)
+    )
+    if (
+        not np.allclose(
+            matrix.T @ matrix,
+            np.eye(3, dtype=np.float64),
+            rtol=1.0e-8,
+            atol=1.0e-10,
+        )
+        or not math.isclose(
+            float(np.linalg.det(matrix)),
+            1.0,
+            rel_tol=1.0e-8,
+            abs_tol=1.0e-10,
+        )
+    ):
+        raise SupportPlaneContractError(
+            "declared leveling rotation is not a proper rigid rotation"
+        )
+    if (
+        isinstance(vertical_translation, bool)
+        or not isinstance(
+            vertical_translation,
+            (int, float, np.integer, np.floating),
+        )
+        or not math.isfinite(float(vertical_translation))
+    ):
+        raise SupportPlaneContractError(
+            "declared vertical translation must be finite"
+        )
+    transformed = vertices @ matrix.T
+    transformed[:, 2] += float(vertical_translation)
+    minimum = transformed.min(axis=0)
+    extent = transformed.max(axis=0) - minimum
+    diagonal = float(np.linalg.norm(extent))
+    if not math.isfinite(diagonal) or diagonal <= 0.0:
+        raise SupportPlaneContractError(
+            "declared rigid transform has a degenerate AABB"
+        )
+    return {
+        "vertices": transformed,
+        "bbox_min": minimum,
+        "bbox_extent": extent,
+        "bbox_diagonal": diagonal,
+    }
+
+
 def projected_segment_horizontal_distances(
     world_vertices,
     segment_heads,

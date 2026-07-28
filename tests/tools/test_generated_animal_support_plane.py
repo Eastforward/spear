@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import math
 from pathlib import Path
 import sys
 
@@ -19,6 +20,7 @@ from tools.generated_animal_support_plane import (  # noqa: E402
     PRIMARY_METHOD,
     SupportPlaneContractError,
     evaluate_dual_authority_support_plane,
+    rigid_transform_aabb_reference,
 )
 from tools.generated_animal_support_plane_contract import (  # noqa: E402
     RIGID_TRANSFORM_ABSOLUTE_TOLERANCE_RATIO,
@@ -100,6 +102,60 @@ def _rotation_between(source, target):
         dtype=np.float64,
     )
     return np.eye(3) + skew + skew @ skew * ((1.0 - cosine) / sine**2)
+
+
+def test_rigid_aabb_reference_uses_transformed_anisotropic_vertices():
+    extent = np.asarray([0.904, 0.246, 0.679], dtype=np.float64)
+    vertices = np.asarray(
+        [
+            [x, y, z]
+            for x in (0.0, extent[0])
+            for y in (0.0, extent[1])
+            for z in (0.0, extent[2])
+        ],
+        dtype=np.float64,
+    )
+    angle = math.radians(1.801922)
+    rotation = np.asarray(
+        [
+            [math.cos(angle), 0.0, math.sin(angle)],
+            [0.0, 1.0, 0.0],
+            [-math.sin(angle), 0.0, math.cos(angle)],
+        ],
+        dtype=np.float64,
+    )
+
+    reference = rigid_transform_aabb_reference(
+        vertices, rotation, vertical_translation=0.3348
+    )
+
+    original_diagonal = float(np.linalg.norm(extent))
+    assert (
+        abs(reference["bbox_diagonal"] - original_diagonal)
+        / original_diagonal
+        > 0.005
+    )
+    assert reference["bbox_diagonal"] == pytest.approx(
+        np.linalg.norm(reference["bbox_extent"])
+    )
+    assert np.linalg.norm(
+        reference["vertices"][0] - reference["vertices"][-1]
+    ) == pytest.approx(np.linalg.norm(vertices[0] - vertices[-1]))
+
+
+def test_rigid_aabb_reference_rejects_scale_disguised_as_rotation():
+    vertices = np.asarray(
+        [[0.0, 0.0, 0.0], [1.0, 0.5, 0.25]],
+        dtype=np.float64,
+    )
+    scale = np.diag([1.001, 1.0, 1.0])
+
+    with pytest.raises(
+        SupportPlaneContractError, match="not a proper rigid rotation"
+    ):
+        rigid_transform_aabb_reference(
+            vertices, scale, vertical_translation=0.0
+        )
 
 
 def serialized_leveling(

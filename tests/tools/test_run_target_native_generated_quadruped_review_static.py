@@ -72,6 +72,10 @@ def test_runner_uses_gentle_repair_and_fails_closed_before_rendering():
     assert '"--extension-threshold", "0.02"' in text
     assert '"weight_repair_low_slice_edge_average"' in text
     assert '"weight_repair_low_slice_edge_average_residual"' in text
+    assert (
+        '"weight_repair_low_slice_edge_average_residual_continuation"'
+        in text
+    )
     assert '"gait_direction_repaired_low_slice_edge_average"' in text
     assert '"deformation_repaired_low_slice_edge_average"' in text
     assert (
@@ -79,6 +83,15 @@ def test_runner_uses_gentle_repair_and_fails_closed_before_rendering():
         in text
     )
     assert "residual_label, residual_command = fallback_commands[3]" in text
+    assert (
+        "continuation_label, continuation_command = "
+        "(\n                        fallback_commands[6]\n                    )"
+        in text
+    )
+    assert (
+        'if repair_manifest["status"] == WEIGHT_REPAIR_READY_STATUS:'
+        in text
+    )
     assert '"weight_repair_branch": repair_branch' in text
     assert '"weight_repair_final_artifact": repair_final_artifact' in text
     assert '"weight_repair_primary_glb"' in text
@@ -87,6 +100,8 @@ def test_runner_uses_gentle_repair_and_fails_closed_before_rendering():
     assert '"weight_repair_fallback_a_manifest"' in text
     assert '"weight_repair_fallback_b_glb"' in text
     assert '"weight_repair_fallback_b_manifest"' in text
+    assert '"weight_repair_fallback_c_glb"' in text
+    assert '"weight_repair_fallback_c_manifest"' in text
     assert "require_weight_repair_branch_consistency" in text
     assert '"cross_limb_authority": "low-slice-components"' in text
     assert '"limb_slice_height_fraction": 0.2' in text

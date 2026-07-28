@@ -135,12 +135,27 @@ WEIGHT_REPAIR_STAGE_CONTRACTS = {
         "output_glb_output_descriptor": "weight_repair_fallback_b_glb",
         "manifest_output_descriptor": "weight_repair_fallback_b_manifest",
     },
+    "fallback_c": {
+        "pipeline_stage": (
+            "weight_repair_low_slice_edge_average_residual_continuation"
+        ),
+        "strategy": "low_slice_edge_average_residual_continuation",
+        "input_glb_output_descriptor": "weight_repair_fallback_b_glb",
+        "output_glb_output_descriptor": "weight_repair_fallback_c_glb",
+        "manifest_output_descriptor": "weight_repair_fallback_c_manifest",
+    },
 }
 WEIGHT_REPAIR_BRANCH_STAGES = {
     "not_needed": (),
     "primary": ("primary",),
     "fallback_a": ("primary", "fallback_a"),
     "fallback_a_b": ("primary", "fallback_a", "fallback_b"),
+    "fallback_a_b_c": (
+        "primary",
+        "fallback_a",
+        "fallback_b",
+        "fallback_c",
+    ),
 }
 WEIGHT_REPAIR_BRANCH_PIPELINE_STAGES = {
     "not_needed": (),
@@ -162,18 +177,34 @@ WEIGHT_REPAIR_BRANCH_PIPELINE_STAGES = {
         "gait_direction_repaired_low_slice_edge_average_residual",
         "deformation_repaired_low_slice_edge_average_residual",
     ),
+    "fallback_a_b_c": (
+        "weight_repair",
+        "weight_repair_low_slice_edge_average",
+        "weight_repair_low_slice_edge_average_residual",
+        "weight_repair_low_slice_edge_average_residual_continuation",
+        (
+            "gait_direction_repaired_low_slice_edge_average_"
+            "residual_continuation"
+        ),
+        (
+            "deformation_repaired_low_slice_edge_average_"
+            "residual_continuation"
+        ),
+    ),
 }
 WEIGHT_REPAIR_BRANCH_FINAL_STAGE = {
     "not_needed": None,
     "primary": "primary",
     "fallback_a": "fallback_a",
     "fallback_a_b": "fallback_b",
+    "fallback_a_b_c": "fallback_c",
 }
 WEIGHT_REPAIR_BRANCH_STRATEGY = {
     "not_needed": "not_needed",
     "primary": "component_parent_lock",
     "fallback_a": "low_slice_edge_average",
     "fallback_a_b": "low_slice_edge_average_residual",
+    "fallback_a_b_c": "low_slice_edge_average_residual_continuation",
 }
 WEIGHT_REPAIR_ATTEMPT_GATE_FIELDS = (
     "stage",
@@ -402,6 +433,34 @@ def output_paths(root: Path) -> dict[str, Path]:
         "fallback_residual_deformation_audit": (
             motion
             / "skinned_deformation_walk_idle_low_slice_edge_average_residual.json"
+        ),
+        "fallback_residual_continuation_repaired_glb": (
+            motion
+            / (
+                "target_animated_repaired_low_slice_edge_average_"
+                "residual_continuation.glb"
+            )
+        ),
+        "fallback_residual_continuation_weight_repair_manifest": (
+            motion
+            / (
+                "weight_repair_low_slice_edge_average_"
+                "residual_continuation_manifest.json"
+            )
+        ),
+        "fallback_residual_continuation_gait_audit": (
+            motion
+            / (
+                "gait_direction_audit_low_slice_edge_average_"
+                "residual_continuation.json"
+            )
+        ),
+        "fallback_residual_continuation_deformation_audit": (
+            motion
+            / (
+                "skinned_deformation_walk_idle_low_slice_edge_average_"
+                "residual_continuation.json"
+            )
         ),
         "review_root": review,
         "result": root / "review_run.json",
@@ -666,15 +725,16 @@ def _low_slice_edge_average_arguments(
 def build_fallback_repair_commands(
     args, paths: dict[str, Path], blender: str
 ) -> list[tuple[str, list[str]]]:
-    """Build an evidence-preserving two-stage low-slice fallback.
+    """Build an evidence-preserving bounded low-slice fallback.
 
     The first fallback always starts from the immutable retarget export.  The
-    residual continuation consumes only that fallback output and has its own
-    GLB and manifest, so neither the default attempt nor its evidence can be
-    overwritten.  A ready first fallback proceeds directly to its own
-    gait/deformation audits; the residual stage runs only when that first
-    fallback is valid but incomplete, and must then reach the strict
-    repair-ready status with zero remaining seed edges.
+    first residual pass consumes only that fallback output.  At most one
+    second residual continuation may then consume only the first residual
+    output.  Every attempt has its own GLB and manifest, so no earlier evidence
+    can be overwritten.  Each later pass runs only when its predecessor is
+    well-formed but incomplete; a ready predecessor proceeds directly to its
+    own gait/deformation audits.  The final attempted stage must reach the
+    strict repair-ready status with zero remaining seed edges.
     """
 
     return [
@@ -763,6 +823,84 @@ def build_fallback_repair_commands(
                     str(paths["fallback_residual_repaired_glb"]),
                     "--output",
                     str(paths["fallback_residual_deformation_audit"]),
+                    "--action",
+                    "Walking",
+                    "--action",
+                    "Idle",
+                    "--samples",
+                    str(args.deformation_samples),
+                ],
+            ),
+        ),
+        (
+            (
+                "weight_repair_low_slice_edge_average_"
+                "residual_continuation"
+            ),
+            blender_command(
+                blender,
+                "blender_repair_animated_quadruped_weight_stretch.py",
+                _low_slice_edge_average_arguments(
+                    input_glb=paths["fallback_residual_repaired_glb"],
+                    output_glb=paths[
+                        "fallback_residual_continuation_repaired_glb"
+                    ],
+                    manifest=paths[
+                        "fallback_residual_continuation_"
+                        "weight_repair_manifest"
+                    ],
+                    residual=True,
+                ),
+            ),
+        ),
+        (
+            (
+                "gait_direction_repaired_low_slice_edge_average_"
+                "residual_continuation"
+            ),
+            blender_command(
+                blender,
+                "blender_audit_gait_direction.py",
+                [
+                    "--input",
+                    str(
+                        paths[
+                            "fallback_residual_continuation_repaired_glb"
+                        ]
+                    ),
+                    "--output",
+                    str(
+                        paths[
+                            "fallback_residual_continuation_gait_audit"
+                        ]
+                    ),
+                    "--action",
+                    "Walking",
+                ],
+            ),
+        ),
+        (
+            (
+                "deformation_repaired_low_slice_edge_average_"
+                "residual_continuation"
+            ),
+            blender_command(
+                blender,
+                "blender_audit_skinned_deformation.py",
+                [
+                    "--input",
+                    str(
+                        paths[
+                            "fallback_residual_continuation_repaired_glb"
+                        ]
+                    ),
+                    "--output",
+                    str(
+                        paths[
+                            "fallback_residual_continuation_"
+                            "deformation_audit"
+                        ]
+                    ),
                     "--action",
                     "Walking",
                     "--action",
@@ -894,7 +1032,7 @@ def build_commands(
             args,
             paths,
             blender,
-            paths["fallback_residual_repaired_glb"],
+            paths["fallback_residual_continuation_repaired_glb"],
         ),
     ]
 
@@ -2363,6 +2501,16 @@ def require_weight_repair_branch_consistency(
             raise RuntimeError(
                 "fallback repair branch has contradictory primary/final status"
             )
+    elif branch == "fallback_a_b_c":
+        if (
+            attempts[0]["status"] != WEIGHT_REPAIR_INCOMPLETE_STATUS
+            or attempts[1]["status"] != WEIGHT_REPAIR_INCOMPLETE_STATUS
+            or attempts[2]["status"] != WEIGHT_REPAIR_INCOMPLETE_STATUS
+            or attempts[-1]["status"] != WEIGHT_REPAIR_READY_STATUS
+        ):
+            raise RuntimeError(
+                "fallback continuation branch has contradictory stage status"
+            )
 
 
 def require_weight_repair_pipeline_order(
@@ -3012,10 +3160,8 @@ def main(argv=None):
                     expected_parameters=(
                         WEIGHT_REPAIR_FALLBACK_RESIDUAL_PARAMETERS
                     ),
+                    allow_incomplete=True,
                 )
-                final_repair_manifest_path = paths[
-                    "fallback_residual_weight_repair_manifest"
-                ]
                 repair_attempts.append(
                     weight_repair_attempt_record(
                         "fallback_b",
@@ -3026,16 +3172,74 @@ def main(argv=None):
                         paths["fallback_residual_repaired_glb"],
                     )
                 )
-                repair_strategy = "low_slice_edge_average_residual"
-                repair_branch = "fallback_a_b"
-                post_repair_commands = fallback_commands[4:]
-                reviewed_glb = paths["fallback_residual_repaired_glb"]
-                final_gait_path = paths[
-                    "fallback_residual_gait_audit"
-                ]
-                final_deformation_path = paths[
-                    "fallback_residual_deformation_audit"
-                ]
+                if repair_manifest["status"] == WEIGHT_REPAIR_READY_STATUS:
+                    final_repair_manifest_path = paths[
+                        "fallback_residual_weight_repair_manifest"
+                    ]
+                    repair_strategy = "low_slice_edge_average_residual"
+                    repair_branch = "fallback_a_b"
+                    post_repair_commands = fallback_commands[4:6]
+                    reviewed_glb = paths["fallback_residual_repaired_glb"]
+                    final_gait_path = paths[
+                        "fallback_residual_gait_audit"
+                    ]
+                    final_deformation_path = paths[
+                        "fallback_residual_deformation_audit"
+                    ]
+                else:
+                    continuation_label, continuation_command = (
+                        fallback_commands[6]
+                    )
+                    run_stage(
+                        continuation_label,
+                        continuation_command,
+                        timings,
+                        pipeline_order,
+                    )
+                    repair_manifest = require_weight_repair(
+                        paths[
+                            "fallback_residual_continuation_"
+                            "weight_repair_manifest"
+                        ],
+                        paths["fallback_residual_repaired_glb"],
+                        paths[
+                            "fallback_residual_continuation_repaired_glb"
+                        ],
+                        expected_parameters=(
+                            WEIGHT_REPAIR_FALLBACK_RESIDUAL_PARAMETERS
+                        ),
+                    )
+                    final_repair_manifest_path = paths[
+                        "fallback_residual_continuation_"
+                        "weight_repair_manifest"
+                    ]
+                    repair_attempts.append(
+                        weight_repair_attempt_record(
+                            "fallback_c",
+                            repair_manifest,
+                            paths[
+                                "fallback_residual_continuation_"
+                                "weight_repair_manifest"
+                            ],
+                            paths[
+                                "fallback_residual_continuation_repaired_glb"
+                            ],
+                        )
+                    )
+                    repair_strategy = (
+                        "low_slice_edge_average_residual_continuation"
+                    )
+                    repair_branch = "fallback_a_b_c"
+                    post_repair_commands = fallback_commands[7:]
+                    reviewed_glb = paths[
+                        "fallback_residual_continuation_repaired_glb"
+                    ]
+                    final_gait_path = paths[
+                        "fallback_residual_continuation_gait_audit"
+                    ]
+                    final_deformation_path = paths[
+                        "fallback_residual_continuation_deformation_audit"
+                    ]
         final_gait = None
         final_deformation = None
         for label, command in post_repair_commands:
@@ -3044,6 +3248,10 @@ def main(argv=None):
                 "gait_direction_repaired",
                 "gait_direction_repaired_low_slice_edge_average",
                 "gait_direction_repaired_low_slice_edge_average_residual",
+                (
+                    "gait_direction_repaired_low_slice_edge_average_"
+                    "residual_continuation"
+                ),
             }:
                 final_gait = require_gait_audit(
                     final_gait_path,
@@ -3054,6 +3262,10 @@ def main(argv=None):
                 "deformation_repaired",
                 "deformation_repaired_low_slice_edge_average",
                 "deformation_repaired_low_slice_edge_average_residual",
+                (
+                    "deformation_repaired_low_slice_edge_average_"
+                    "residual_continuation"
+                ),
             }:
                 final_deformation = require_deformation_audit(
                     final_deformation_path,

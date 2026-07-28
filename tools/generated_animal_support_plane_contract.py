@@ -23,8 +23,11 @@ MINIMUM_CONTACT_BAND_VERTICES = 10
 MINIMUM_WEIGHT_OWNER_SCORE = 0.1
 RIGID_TRANSFORM_ABSOLUTE_TOLERANCE_RATIO = 5.0e-7
 RIGID_TRANSFORM_RELATIVE_TOLERANCE = 1.0e-7
-OUTPUT_READBACK_SCHEMA = (
+LEGACY_OUTPUT_READBACK_SCHEMA = (
     "avengine_generated_animal_support_plane_output_readback_v1"
+)
+OUTPUT_READBACK_SCHEMA = (
+    "avengine_generated_animal_support_plane_output_readback_v2"
 )
 MAXIMUM_RIGID_VERTEX_DELTA_RATIO = 5.0e-6
 MAXIMUM_RIGID_BONE_ENDPOINT_DELTA_RATIO = 5.0e-6
@@ -723,9 +726,15 @@ def validate_output_glb_readback(
 ) -> dict:
     """Validate an independent Blender re-import of the leveled GLB bytes."""
 
+    readback_schema = (
+        readback.get("schema") if isinstance(readback, dict) else None
+    )
     if (
         not isinstance(readback, dict)
-        or readback.get("schema") != OUTPUT_READBACK_SCHEMA
+        or readback_schema not in {
+            LEGACY_OUTPUT_READBACK_SCHEMA,
+            OUTPUT_READBACK_SCHEMA,
+        }
         or readback.get("status") != "passed_independent_glb_reimport"
         or readback.get("formal_dataset_registration_authorized") is not False
     ):
@@ -767,16 +776,71 @@ def validate_output_glb_readback(
         label="pre-level readback mesh diagonal",
         absolute_tolerance=tolerance,
     )
-    post_diagonal_ratio_delta = abs(
-        post_validated["mesh_diagonal"] - transform["mesh_diagonal"]
-    ) / transform["mesh_diagonal"]
+    comparison = readback.get("comparison")
+    if not isinstance(comparison, dict) or comparison.get("passed") is not True:
+        raise SupportPlaneContractError(
+            "support-plane output comparison did not pass"
+        )
+    if readback_schema == OUTPUT_READBACK_SCHEMA:
+        if (
+            comparison.get("bbox_diagonal_reference_method")
+            != "pre_level_vertices_after_declared_rigid_transform_v1"
+            or "post_level_bbox_diagonal_ratio_delta" in comparison
+        ):
+            raise SupportPlaneContractError(
+                "post-level bounding-box reference is missing or unsupported"
+            )
+        expected_post_diagonal = _number(
+            comparison.get("expected_post_level_bbox_diagonal"),
+            label="expected post-level bounding-box diagonal",
+            positive=True,
+        )
+        declared_pre_diagonal = _number(
+            comparison.get("pre_level_bbox_diagonal"),
+            label="declared pre-level bounding-box diagonal",
+            positive=True,
+        )
+        declared_actual_post_diagonal = _number(
+            comparison.get("actual_post_level_bbox_diagonal"),
+            label="declared actual post-level bounding-box diagonal",
+            positive=True,
+        )
+        _transform_close(
+            declared_pre_diagonal,
+            pre_validated["mesh_diagonal"],
+            label="declared pre-level bounding-box diagonal",
+            absolute_tolerance=tolerance,
+        )
+        _transform_close(
+            declared_actual_post_diagonal,
+            post_validated["mesh_diagonal"],
+            label="declared actual post-level bounding-box diagonal",
+            absolute_tolerance=tolerance,
+        )
+        post_diagonal_ratio_delta = abs(
+            post_validated["mesh_diagonal"] - expected_post_diagonal
+        ) / expected_post_diagonal
+        bbox_ratio_field = (
+            "post_level_bbox_diagonal_ratio_delta_from_expected_rigid_transform"
+        )
+        bbox_threshold_field = (
+            "maximum_post_level_bbox_diagonal_ratio_delta_from_"
+            "expected_rigid_transform"
+        )
+    else:
+        expected_post_diagonal = transform["mesh_diagonal"]
+        post_diagonal_ratio_delta = abs(
+            post_validated["mesh_diagonal"] - expected_post_diagonal
+        ) / expected_post_diagonal
+        bbox_ratio_field = "post_level_bbox_diagonal_ratio_delta"
+        bbox_threshold_field = "maximum_post_level_bbox_diagonal_ratio_delta"
     if (
         post_diagonal_ratio_delta
         > MAXIMUM_POST_LEVEL_BBOX_DIAGONAL_RATIO_DELTA
     ):
         raise SupportPlaneContractError(
-            "post-level GLB bounding-box diagonal changed beyond the rigid "
-            "rotation allowance"
+            "post-level GLB bounding-box diagonal changed beyond its "
+            "declared rigid-transform reference"
         )
     source = validate_dual_authority_evidence(source_evidence)
     pre_primary_delta = _maximum_point_distance(
@@ -862,10 +926,21 @@ def validate_output_glb_readback(
         "maximum_post_level_floor_reacquisition_delta": transform[
             "band_thickness"
         ],
-        "maximum_post_level_bbox_diagonal_ratio_delta": (
-            MAXIMUM_POST_LEVEL_BBOX_DIAGONAL_RATIO_DELTA
-        ),
+        bbox_threshold_field: MAXIMUM_POST_LEVEL_BBOX_DIAGONAL_RATIO_DELTA,
     }
+    obsolete_bbox_threshold = (
+        "maximum_post_level_bbox_diagonal_ratio_delta"
+        if readback_schema == OUTPUT_READBACK_SCHEMA
+        else (
+            "maximum_post_level_bbox_diagonal_ratio_delta_from_"
+            "expected_rigid_transform"
+        )
+    )
+    if obsolete_bbox_threshold in thresholds:
+        raise SupportPlaneContractError(
+            "support-plane output readback mixes bounding-box threshold "
+            "contracts"
+        )
     for field, expected in exact_thresholds.items():
         _transform_close(
             thresholds.get(field),
@@ -961,11 +1036,6 @@ def validate_output_glb_readback(
                 f"output mesh {field} binding is incomplete"
             )
 
-    comparison = readback.get("comparison")
-    if not isinstance(comparison, dict) or comparison.get("passed") is not True:
-        raise SupportPlaneContractError(
-            "support-plane output comparison did not pass"
-        )
     recomputed_comparison = {
         "pre_level_primary_foot_delta": pre_primary_delta,
         "pre_level_crosscheck_foot_delta": pre_cross_delta,
@@ -973,7 +1043,7 @@ def validate_output_glb_readback(
         "post_level_crosscheck_foot_delta": post_cross_delta,
         "actual_minimum_primary_foot_z": actual_minimum_z,
         "primary_post_level_tilt_deg": post_tilt,
-        "post_level_bbox_diagonal_ratio_delta": post_diagonal_ratio_delta,
+        bbox_ratio_field: post_diagonal_ratio_delta,
     }
     for field, expected in recomputed_comparison.items():
         _transform_close(

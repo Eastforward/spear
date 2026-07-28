@@ -2753,6 +2753,12 @@ def _build_weight_repair_lineage(tmp_path, branch):
             "fallback_a": preparation.generated_review.WEIGHT_REPAIR_INCOMPLETE_STATUS,
             "fallback_b": preparation.generated_review.WEIGHT_REPAIR_READY_STATUS,
         },
+        "fallback_a_b_c": {
+            "primary": preparation.generated_review.WEIGHT_REPAIR_INCOMPLETE_STATUS,
+            "fallback_a": preparation.generated_review.WEIGHT_REPAIR_INCOMPLETE_STATUS,
+            "fallback_b": preparation.generated_review.WEIGHT_REPAIR_INCOMPLETE_STATUS,
+            "fallback_c": preparation.generated_review.WEIGHT_REPAIR_READY_STATUS,
+        },
     }[branch]
     outputs = {}
     authenticated = {}
@@ -2765,8 +2771,17 @@ def _build_weight_repair_lineage(tmp_path, branch):
         output_path = tmp_path / f"{stage}.glb"
         _write_glb(output_path)
         manifest_path = tmp_path / f"{stage}.json"
+        input_descriptor = contract["input_glb_output_descriptor"]
         input_path = (
-            stage_outputs["fallback_a"] if stage == "fallback_b" else retargeted
+            retargeted
+            if input_descriptor == "retargeted_animated_glb"
+            else stage_outputs[
+                {
+                    "weight_repair_primary_glb": "primary",
+                    "weight_repair_fallback_a_glb": "fallback_a",
+                    "weight_repair_fallback_b_glb": "fallback_b",
+                }[input_descriptor]
+            ]
         )
         payload = _write_weight_repair_manifest(
             manifest_path,
@@ -3229,7 +3244,10 @@ def test_rejects_rebound_source_registry_internal_authority_hash(
         )
 
 
-@pytest.mark.parametrize("branch", ("primary", "fallback_a", "fallback_a_b"))
+@pytest.mark.parametrize(
+    "branch",
+    ("primary", "fallback_a", "fallback_a_b", "fallback_a_b_c"),
+)
 def test_accepts_exact_authenticated_weight_repair_branch(tmp_path, branch):
     fixture = _build_weight_repair_lineage(tmp_path, branch)
 
@@ -3796,7 +3814,10 @@ def test_target_rig_lineage_rejects_bounded_closure_without_registry_repair(
         )
 
 
-@pytest.mark.parametrize("branch", ("primary", "fallback_a", "fallback_a_b"))
+@pytest.mark.parametrize(
+    "branch",
+    ("primary", "fallback_a", "fallback_a_b", "fallback_a_b_c"),
+)
 def test_v4_review_accepts_only_exact_branch_pipeline_and_outputs(
     approved_generated_animal,
     tmp_path,
@@ -3865,6 +3886,162 @@ def test_fallback_a_b_branch_rejects_b_input_other_than_a_output(tmp_path):
         contracts.ContractError, match="fallback_b weight repair manifest rejected"
     ):
         _validate_weight_repair_fixture(fixture)
+
+
+def test_fallback_a_b_c_requires_exact_residual_parameters_and_b_to_c_input(
+    tmp_path,
+):
+    assert preparation._weight_repair_parameters("fallback_c") == (
+        preparation.generated_review.WEIGHT_REPAIR_FALLBACK_RESIDUAL_PARAMETERS
+    )
+    assert preparation._weight_repair_parameters("fallback_c") == (
+        preparation._weight_repair_parameters("fallback_b")
+    )
+    with pytest.raises(
+        contracts.ContractError, match="stage is unsupported"
+    ):
+        preparation._weight_repair_parameters("fallback_d")
+
+    wrong_input_root = tmp_path / "wrong_input"
+    wrong_input_root.mkdir()
+    wrong_input = _build_weight_repair_lineage(
+        wrong_input_root, "fallback_a_b_c"
+    )
+    payload = wrong_input["payloads"]["fallback_c"]
+    payload["input"] = _record(wrong_input["stage_outputs"]["fallback_a"])
+    _write_json(wrong_input["stage_manifests"]["fallback_c"], payload)
+    with pytest.raises(
+        contracts.ContractError,
+        match="fallback_c weight repair manifest rejected",
+    ):
+        _validate_weight_repair_fixture(wrong_input)
+
+    wrong_parameters_root = tmp_path / "wrong_parameters"
+    wrong_parameters_root.mkdir()
+    wrong_parameters = _build_weight_repair_lineage(
+        wrong_parameters_root, "fallback_a_b_c"
+    )
+    payload = wrong_parameters["payloads"]["fallback_c"]
+    payload["parameters"]["maximum_passes"] += 1
+    _write_json(wrong_parameters["stage_manifests"]["fallback_c"], payload)
+    with pytest.raises(
+        contracts.ContractError,
+        match="fallback_c weight repair manifest rejected",
+    ):
+        _validate_weight_repair_fixture(wrong_parameters)
+
+
+def test_fallback_a_b_c_forbids_c_after_ready_b_and_rejects_incomplete_c(
+    tmp_path,
+):
+    unnecessary_c_root = tmp_path / "unnecessary_c"
+    unnecessary_c_root.mkdir()
+    unnecessary_c = _build_weight_repair_lineage(
+        unnecessary_c_root, "fallback_a_b_c"
+    )
+    unnecessary_c["gates"]["weight_repair_attempts"][2]["status"] = (
+        preparation.generated_review.WEIGHT_REPAIR_READY_STATUS
+    )
+    with pytest.raises(
+        contracts.ContractError,
+        match="weight-repair branch consistency rejected.*contradictory",
+    ):
+        _validate_weight_repair_fixture(unnecessary_c)
+
+    incomplete_c_root = tmp_path / "incomplete_c"
+    incomplete_c_root.mkdir()
+    incomplete_c = _build_weight_repair_lineage(
+        incomplete_c_root, "fallback_a_b_c"
+    )
+    c_manifest = incomplete_c["stage_manifests"]["fallback_c"]
+    _write_weight_repair_manifest(
+        c_manifest,
+        stage="fallback_c",
+        input_glb=incomplete_c["stage_outputs"]["fallback_b"],
+        output_glb=incomplete_c["stage_outputs"]["fallback_c"],
+        status=preparation.generated_review.WEIGHT_REPAIR_INCOMPLETE_STATUS,
+    )
+    with pytest.raises(
+        contracts.ContractError,
+        match="fallback_c weight repair manifest rejected",
+    ):
+        _validate_weight_repair_fixture(incomplete_c)
+
+
+def test_fallback_a_b_c_rejects_rebound_final_artifact_or_descriptors(
+    tmp_path,
+):
+    wrong_final_root = tmp_path / "wrong_final"
+    wrong_final_root.mkdir()
+    wrong_final = _build_weight_repair_lineage(
+        wrong_final_root, "fallback_a_b_c"
+    )
+    wrong_final["gates"]["weight_repair_final_artifact"] = (
+        preparation.generated_review.weight_repair_final_artifact(
+            "fallback_a_b"
+        )
+    )
+    with pytest.raises(
+        contracts.ContractError,
+        match="branch authority contradicts itself",
+    ):
+        _validate_weight_repair_fixture(wrong_final)
+
+    rebound_output_root = tmp_path / "rebound_output"
+    rebound_output_root.mkdir()
+    rebound_output = _build_weight_repair_lineage(
+        rebound_output_root, "fallback_a_b_c"
+    )
+    rebound_output["outputs"]["animated_glb"] = copy.deepcopy(
+        rebound_output["outputs"]["weight_repair_fallback_b_glb"]
+    )
+    rebound_output["authenticated"]["output:animated_glb"] = (
+        rebound_output["stage_outputs"]["fallback_b"].resolve()
+    )
+    rebound_output["final_glb"] = rebound_output["stage_outputs"][
+        "fallback_b"
+    ].resolve()
+    with pytest.raises(
+        contracts.ContractError,
+        match="final weight-repair lineage is inconsistent",
+    ):
+        _validate_weight_repair_fixture(rebound_output)
+
+
+def test_v4_fallback_a_b_c_rejects_fallback_b_pipeline_order(
+    approved_generated_animal,
+    tmp_path,
+):
+    repair_root = tmp_path / "repair_fallback_a_b_c_wrong_pipeline"
+    repair_root.mkdir()
+    repair = _build_weight_repair_lineage(
+        repair_root, "fallback_a_b_c"
+    )
+    review = contracts.load_json(approved_generated_animal["review_path"])
+    review["schema"] = preparation.BRANCHED_GENERATED_REVIEW_SCHEMA
+    review["automatic_admission_gates"] = repair["gates"]
+    review["pipeline_order"] = preparation._review_pipeline_order(
+        repair_branch="fallback_a_b"
+    )
+    review["timings_seconds"] = {
+        name: 0.1 for name in review["pipeline_order"]
+    }
+    review["outputs"].update(repair["outputs"])
+    review["outputs"]["media_lineage"] = _build_media_lineage(
+        approved_generated_animal["review_path"].parent,
+        input_glb=repair["final_glb"],
+        media=review["outputs"]["media"],
+    )
+    _rewrite_review_and_rebind_decision(approved_generated_animal, review)
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="pipeline/timings are invalid",
+    ):
+        _prepare(
+            approved_generated_animal,
+            tmp_path / "rejected_fallback_a_b_c_wrong_pipeline",
+        )
 
 
 def test_rejects_v3_review_with_v4_repair_fields(approved_generated_animal, tmp_path):

@@ -3430,6 +3430,7 @@ def _weight_repair_parameters(stage: str) -> Mapping[str, Any]:
         "primary": generated_review.WEIGHT_REPAIR_PARAMETERS,
         "fallback_a": generated_review.WEIGHT_REPAIR_FALLBACK_PARAMETERS,
         "fallback_b": generated_review.WEIGHT_REPAIR_FALLBACK_RESIDUAL_PARAMETERS,
+        "fallback_c": generated_review.WEIGHT_REPAIR_FALLBACK_RESIDUAL_PARAMETERS,
     }.get(stage)
     if parameters is None:
         raise contracts.ContractError(
@@ -3486,10 +3487,11 @@ def _validate_weight_repair_lineage(
         contract = generated_review.WEIGHT_REPAIR_STAGE_CONTRACTS[stage]
         manifest_name = contract["manifest_output_descriptor"]
         output_name = contract["output_glb_output_descriptor"]
-        if stage == "fallback_b":
-            input_glb = authenticated["output:weight_repair_fallback_a_glb"]
-        else:
+        input_name = contract["input_glb_output_descriptor"]
+        if input_name == "retargeted_animated_glb":
             input_glb = retargeted_glb
+        else:
+            input_glb = authenticated[f"output:{input_name}"]
         manifest_path = authenticated[f"output:{manifest_name}"]
         output_glb = authenticated[f"output:{output_name}"]
         repair = _runner_call(

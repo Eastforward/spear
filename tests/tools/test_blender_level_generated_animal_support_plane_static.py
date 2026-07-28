@@ -67,6 +67,13 @@ def test_output_glb_is_reimported_and_binds_semantics_transform_and_weights():
     assert "bpy.ops.import_scene.gltf" in text
     assert text.count("snapshot(") >= 3
     assert "directional_vertex_coverage" in text
+    assert "rigid_transform_aabb_reference" in text
+    assert (
+        "pre_level_vertices_after_declared_rigid_transform_v1" in text
+    )
+    assert "expected_post_level_bbox_diagonal" in text
+    assert "post_level_bbox_diagonal_ratio_delta_from_" in text
+    assert "expected_rigid_transform" in text
     assert "maximum_world_vertex_delta_from_declared_transform" in text
     assert "maximum_bone_endpoint_delta_from_declared_transform" in text
     assert "maximum_skin_weight_delta" in text
