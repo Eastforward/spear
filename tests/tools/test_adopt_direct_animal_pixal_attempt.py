@@ -812,6 +812,115 @@ def test_direct_source_authority_reauthenticates_adopted_batch(tmp_path):
     assert context["adoption_context"]["controlled"]["rig_profile"] == _rig()
 
 
+def test_cli_writes_canonical_direct_source_authority_after_adoption(
+    tmp_path,
+    capsys,
+):
+    spec_path, _spec = _imagegen_fixture(tmp_path / "source")
+    semantics_path = tmp_path / "source_authority_semantics.json"
+    _write_json(semantics_path, _shiba_direct_semantics())
+    output_root = tmp_path / "adopted"
+    authority_path = tmp_path / "authority" / "source_authority.json"
+
+    assert adopter.main(
+        [
+            "--spec",
+            str(spec_path),
+            "--output-root",
+            str(output_root),
+            "--source-authority-output",
+            str(authority_path),
+            "--source-authority-semantics",
+            str(semantics_path),
+        ]
+    ) == 0
+
+    stdout = capsys.readouterr().out
+    assert "DIRECT_ANIMAL_PIXAL_ADOPTION_OK" in stdout
+    assert "DIRECT_ANIMAL_SOURCE_AUTHORITY_OK" in stdout
+    loaded_path, authority, context = adopter.load_direct_source_authority(
+        authority_path,
+        expected_sha256=adopter._sha256_file(authority_path),
+    )
+    assert loaded_path == authority_path.resolve()
+    assert authority["instance_id"] == INSTANCE_ID
+    assert context["adopted_batch_path"] == (
+        output_root / "pixal_batch_manifest.json"
+    ).resolve()
+
+
+def test_cli_refuses_to_replace_existing_source_authority(
+    tmp_path,
+    capsys,
+):
+    spec_path, _spec = _imagegen_fixture(tmp_path / "source")
+    semantics_path = tmp_path / "source_authority_semantics.json"
+    _write_json(semantics_path, _shiba_direct_semantics())
+    output_root = tmp_path / "adopted"
+    authority_path = tmp_path / "authority" / "source_authority.json"
+    authority_path.parent.mkdir(parents=True)
+    original = b"existing authority must remain unchanged\n"
+    authority_path.write_bytes(original)
+
+    assert adopter.main(
+        [
+            "--spec",
+            str(spec_path),
+            "--output-root",
+            str(output_root),
+            "--source-authority-output",
+            str(authority_path),
+            "--source-authority-semantics",
+            str(semantics_path),
+        ]
+    ) == 2
+
+    assert authority_path.read_bytes() == original
+    assert (output_root / "pixal_batch_manifest.json").is_file()
+    assert "refusing to replace" in capsys.readouterr().err
+    assert not list(
+        authority_path.parent.glob(f".{authority_path.name}.*.staging")
+    )
+
+
+def test_cli_default_does_not_build_or_write_source_authority(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    output_root = tmp_path / "adopted"
+    manifest = output_root / "pixal_batch_manifest.json"
+
+    def adopt_attempt(_spec_path, requested_output_root):
+        assert requested_output_root == output_root
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text("{}\n", encoding="utf-8")
+        return manifest
+
+    def unexpected_authority_build(*_args, **_kwargs):
+        raise AssertionError("default adoption must not build source authority")
+
+    monkeypatch.setattr(adopter, "adopt_attempt", adopt_attempt)
+    monkeypatch.setattr(
+        adopter,
+        "build_direct_source_authority",
+        unexpected_authority_build,
+    )
+
+    assert adopter.main(
+        [
+            "--spec",
+            str(tmp_path / "unused_spec.json"),
+            "--output-root",
+            str(output_root),
+        ]
+    ) == 0
+    assert capsys.readouterr().out.strip() == (
+        f"DIRECT_ANIMAL_PIXAL_ADOPTION_OK output={manifest}"
+    )
+    assert not list(tmp_path.rglob("source_authority.json"))
+
+
 def test_direct_source_authority_rejects_semantic_profile_reseal(tmp_path):
     spec_path, _spec = _imagegen_fixture(tmp_path / "source")
     batch_path = adopter.adopt_attempt(spec_path, tmp_path / "adopted")

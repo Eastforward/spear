@@ -160,6 +160,14 @@ _SOURCE_AUTHORITY_FIELDS = frozenset(
         "authority_sha256",
     }
 )
+_SOURCE_AUTHORITY_SEMANTICS_FIELDS = frozenset(
+    {
+        "taxonomy",
+        "fixed_attributes",
+        "lineage_group_id",
+        "acoustic_profile",
+    }
+)
 _MODEL_REVISIONS = {
     "pixal3d": pixal_inputs.PIXAL_MODEL_REVISION,
     "dino": pixal_inputs.DINO_REVISION,
@@ -1426,7 +1434,7 @@ def _copy_no_replace(source: Path, destination: Path) -> None:
 
 
 def _rename_no_replace(source: Path, destination: Path) -> None:
-    """Atomically publish a directory without replacing a concurrent peer."""
+    """Atomically publish one path without replacing a concurrent peer."""
 
     libc = ctypes.CDLL(None, use_errno=True)
     function = getattr(libc, "renameat2", None)
@@ -2011,21 +2019,123 @@ def load_direct_source_authority(
     )
 
 
+def _load_source_authority_semantics(path: Path) -> dict[str, Any]:
+    unresolved = Path(path).absolute()
+    if unresolved.is_symlink() or not unresolved.is_file():
+        raise contracts.ContractError(
+            f"direct source authority semantics are missing: {unresolved}"
+        )
+    semantics = _require_mapping(
+        contracts.load_json(unresolved.resolve()),
+        "direct source authority semantics",
+    )
+    if not _SOURCE_AUTHORITY_SEMANTICS_FIELDS.issubset(semantics):
+        raise contracts.ContractError(
+            "direct source authority semantics are incomplete"
+        )
+    return {
+        name: copy.deepcopy(semantics[name])
+        for name in _SOURCE_AUTHORITY_SEMANTICS_FIELDS
+    }
+
+
+def _write_direct_source_authority_no_replace(
+    path: Path,
+    authority: Mapping[str, Any],
+) -> Path:
+    destination = Path(path).absolute()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        payload = (contracts.canonical_json(authority) + "\n").encode("utf-8")
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{destination.name}.",
+            suffix=".staging",
+            dir=destination.parent,
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        load_direct_source_authority(
+            temporary,
+            expected_sha256=_sha256_file(temporary),
+        )
+        _rename_no_replace(temporary, destination)
+        temporary = None
+        directory_fd = os.open(
+            destination.parent,
+            os.O_RDONLY | os.O_DIRECTORY,
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except Exception:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        raise
+    return destination.resolve()
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spec", required=True, type=Path)
     parser.add_argument("--output-root", required=True, type=Path)
+    parser.add_argument(
+        "--source-authority-output",
+        type=Path,
+        help=(
+            "optionally publish a canonical direct source authority after "
+            "successful adoption"
+        ),
+    )
+    parser.add_argument(
+        "--source-authority-semantics",
+        type=Path,
+        help=(
+            "JSON object containing taxonomy, fixed_attributes, "
+            "lineage_group_id, and acoustic_profile"
+        ),
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_argument_parser().parse_args(argv)
     try:
+        if (args.source_authority_output is None) != (
+            args.source_authority_semantics is None
+        ):
+            raise ValueError(
+                "--source-authority-output and "
+                "--source-authority-semantics must be provided together"
+            )
+        semantics = (
+            _load_source_authority_semantics(args.source_authority_semantics)
+            if args.source_authority_semantics is not None
+            else None
+        )
         manifest = adopt_attempt(args.spec, args.output_root)
+        authority_path: Path | None = None
+        if args.source_authority_output is not None:
+            assert semantics is not None
+            authority = build_direct_source_authority(
+                manifest,
+                **semantics,
+            )
+            authority_path = _write_direct_source_authority_no_replace(
+                args.source_authority_output,
+                authority,
+            )
     except (contracts.ContractError, OSError, ValueError) as error:
         print(f"DIRECT_ANIMAL_PIXAL_ADOPTION_FAILED {error}", file=sys.stderr)
         return 2
     print(f"DIRECT_ANIMAL_PIXAL_ADOPTION_OK output={manifest}")
+    if authority_path is not None:
+        print(f"DIRECT_ANIMAL_SOURCE_AUTHORITY_OK output={authority_path}")
     return 0
 
 
