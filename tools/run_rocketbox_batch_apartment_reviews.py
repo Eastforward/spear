@@ -49,6 +49,18 @@ STABLE_PENDING_REVIEW_STATUSES = {
     "agent_selected_pending_human_review",
     "local_ofat_visual_review_pending",
 }
+CONTROLLED_ANIMAL_MANIFEST_SCHEMAS = frozenset(
+    {
+        "controlled_animal_walk_idle_apartment_specs_v1",
+        "controlled_animal_walk_idle_apartment_specs_v2",
+    }
+)
+CONTROLLED_ANIMAL_GATE_SCHEMAS = frozenset(
+    {
+        "controlled_animal_apartment_gate_v1",
+        "controlled_animal_apartment_gate_v2",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -109,11 +121,77 @@ def _authenticated_artifact_json(artifact: dict) -> dict:
     return value
 
 
+def _artifact_identity_matches(left: object, right: object) -> bool:
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+    return all(
+        left.get(field) == right.get(field)
+        for field in ("path", "sha256", "size_bytes")
+    )
+
+
+def _controlled_animal_v2_gate_is_valid(
+    *,
+    source: dict,
+    gate: dict,
+    decision: dict,
+    imported: dict,
+) -> bool:
+    try:
+        _authenticated_artifact_json(gate["ue_import_preparation"])
+        receipt = _authenticated_artifact_json(
+            gate["animation_decision_freeze_receipt"]
+        )
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        OSError,
+        json.JSONDecodeError,
+    ):
+        return False
+
+    results = imported.get("results")
+    if not isinstance(results, list):
+        return False
+    matching_results = [
+        item
+        for item in results
+        if isinstance(item, dict)
+        and item.get("asset_id") == source.get("asset_id")
+    ]
+    if len(matching_results) != 1:
+        return False
+    result = matching_results[0]
+    result_preparation = imported.get("preparation_manifest")
+    receipt_decision = receipt.get("animation_decision")
+    return bool(
+        imported.get("schema") == "pixal_animal_ue_import_result_v2"
+        and imported.get("status") == "passed"
+        and result.get("job_type") == "user_approved_generated_animal"
+        and result.get("asset_id") == source.get("asset_id")
+        and result.get("tag") == source.get("tag")
+        and result.get("source_sha256") == gate.get("ue_source_sha256")
+        and set(result.get("actions", [])) == {"Idle", "Walking"}
+        and result.get("status") == "passed"
+        and _artifact_identity_matches(
+            result_preparation,
+            gate["ue_import_preparation"],
+        )
+        and receipt.get("status") == "frozen"
+        and _artifact_identity_matches(
+            receipt_decision,
+            gate["animation_decision"],
+        )
+        and receipt.get("decision_sha256") == decision.get("decision_sha256")
+    )
+
+
 def _controlled_animal_source_gate_is_valid(source: dict) -> bool:
     gate = source.get("controlled_animal_gate", {})
     if (
         source.get("asset_class") != "animal"
-        or gate.get("schema") != "controlled_animal_apartment_gate_v1"
+        or gate.get("schema") not in CONTROLLED_ANIMAL_GATE_SCHEMAS
         or gate.get("status") != "approved_for_research_candidate_apartment"
         or gate.get("asset_id") != source.get("asset_id")
         or gate.get("tag") != source.get("tag")
@@ -127,20 +205,34 @@ def _controlled_animal_source_gate_is_valid(source: dict) -> bool:
         imported = _authenticated_artifact_json(import_artifact)
     except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
         return False
-    result = {
-        item.get("legacy_tag"): item for item in imported.get("results", [])
-    }.get(source.get("asset_id"))
-    return bool(
+    decision_valid = bool(
         decision.get("asset_id") == source.get("asset_id")
         and decision.get("decision") == "approved_for_ue_apartment"
         and decision.get("decision_sha256")
         == decision_artifact.get("decision_sha256")
-        and imported.get("schema") == "pixal_animal_ue_import_result_v1"
-        and result
-        and result.get("tag") == source.get("tag")
-        and result.get("source_sha256") == gate.get("ue_source_sha256")
-        and set(result.get("actions", [])) == {"Idle", "Walking"}
     )
+    if not decision_valid:
+        return False
+    if gate.get("schema") == "controlled_animal_apartment_gate_v1":
+        result = {
+            item.get("legacy_tag"): item for item in imported.get("results", [])
+        }.get(source.get("asset_id"))
+        return bool(
+            imported.get("schema") == "pixal_animal_ue_import_result_v1"
+            and result
+            and result.get("tag") == source.get("tag")
+            and result.get("source_sha256") == gate.get("ue_source_sha256")
+            and set(result.get("actions", [])) == {"Idle", "Walking"}
+        )
+    try:
+        return _controlled_animal_v2_gate_is_valid(
+            source=source,
+            gate=gate,
+            decision=decision,
+            imported=imported,
+        )
+    except (KeyError, TypeError, ValueError, OSError):
+        return False
 
 
 def _stable_animal_source_gate_is_valid(source: dict) -> bool:
@@ -256,7 +348,7 @@ def build_jobs(
         expected_action_set = {"Walking"}
         expected_clip_count = len(records)
         require_original_tag = False
-    elif schema == "controlled_animal_walk_idle_apartment_specs_v1":
+    elif schema in CONTROLLED_ANIMAL_MANIFEST_SCHEMAS:
         expected_action_set = {"Walking", "Idle"}
         expected_clip_count = len(records) * 2
         require_original_tag = False
@@ -1028,7 +1120,7 @@ def main() -> int:
     status = {
         "schema": (
             "controlled_animal_apartment_render_status_v1"
-            if manifest_schema == "controlled_animal_walk_idle_apartment_specs_v1"
+            if manifest_schema in CONTROLLED_ANIMAL_MANIFEST_SCHEMAS
             else (
                 "stable_animal_apartment_render_status_v1"
                 if manifest_schema == "stable_animal_walk_idle_apartment_specs_v1"

@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 
 REPO = Path(__file__).resolve().parents[3]
@@ -467,6 +468,81 @@ def test_finalize_controlled_animal_clip_publishes_authenticated_registry(
     assert payload["formal_registry_promotion"] is False
     assert payload["species"] == "dog"
     assert payload["clips"]["Walking"]["clip_id"] == "controlled_dog_walk"
+
+
+def test_publish_controlled_animal_v2_clip_accepts_key_import_bindings(
+    tmp_path,
+):
+    import human_apartment_evidence as evidence
+    from tests.tools import (
+        test_run_rocketbox_batch_apartment_reviews as runner_support,
+    )
+
+    manifest = runner_support._upgrade_controlled_animal_manifest_to_v2(
+        runner_support._controlled_animal_manifest(tmp_path / "input")
+    )
+    record = json.loads(manifest.read_text())["records"][0]
+    source = json.loads(
+        Path(record["actions"]["Walking"]["spec"]).read_text()
+    )["sources"][0]
+    source["controlled_animal_gate"]["producer_note"] = "forward-compatible"
+    clip_dir = tmp_path / "clip"
+    _write(clip_dir / "spec.json", {"sources": [source]})
+    _write(clip_dir / "runtime_gate.json", {"human_gate_evidence": []})
+    _write(
+        clip_dir / "videos" / "actor_visual_metadata.json",
+        {"automatic_checks": {"overall": "passed"}},
+    )
+    _write(clip_dir / "videos" / "apartment_v1_view0.mp4")
+    _write(clip_dir / "videos" / "topdown_review.mp4")
+    _write(clip_dir / "videos" / "side_by_side_review_annotated.mp4")
+
+    registry_path = evidence.publish_controlled_animal_registry_clip(
+        registry_root=tmp_path / "registry",
+        source=source,
+        action_name="Walking",
+        clip_id="controlled_cat_v2_walk",
+        clip_dir=clip_dir,
+    )
+
+    registry = json.loads(registry_path.read_text())
+    assert registry["asset_id"] == record["asset_id"]
+    assert registry["clips"]["Walking"]["clip_id"] == "controlled_cat_v2_walk"
+
+
+def test_publish_controlled_animal_v2_clip_rejects_preparation_rebind(
+    tmp_path,
+):
+    import human_apartment_evidence as evidence
+    from tests.tools import (
+        test_run_rocketbox_batch_apartment_reviews as runner_support,
+    )
+
+    manifest = runner_support._upgrade_controlled_animal_manifest_to_v2(
+        runner_support._controlled_animal_manifest(tmp_path / "input")
+    )
+    record = json.loads(manifest.read_text())["records"][0]
+    source = json.loads(
+        Path(record["actions"]["Walking"]["spec"]).read_text()
+    )["sources"][0]
+    replacement_preparation = _write(
+        tmp_path / "replacement_preparation.json",
+        {"producer_note": "unrelated preparation"},
+    )
+    source["controlled_animal_gate"]["ue_import_preparation"] = {
+        "path": str(replacement_preparation.resolve()),
+        "sha256": evidence.sha256_file(replacement_preparation),
+        "size_bytes": replacement_preparation.stat().st_size,
+    }
+
+    with pytest.raises(ValueError, match="lineage changed"):
+        evidence.publish_controlled_animal_registry_clip(
+            registry_root=tmp_path / "registry",
+            source=source,
+            action_name="Walking",
+            clip_id="controlled_cat_v2_walk",
+            clip_dir=tmp_path / "unused",
+        )
 
 
 def test_finalize_stable_animal_clip_publishes_pending_human_registry(

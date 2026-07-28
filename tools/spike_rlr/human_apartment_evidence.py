@@ -29,6 +29,12 @@ CONTROLLED_ANIMAL_REGISTRY_SCHEMA = (
     "controlled_animal_apartment_research_candidate_registry_v1"
 )
 CONTROLLED_ANIMAL_GATE_SCHEMA = "controlled_animal_apartment_gate_v1"
+CONTROLLED_ANIMAL_GATE_SCHEMAS = frozenset(
+    {
+        CONTROLLED_ANIMAL_GATE_SCHEMA,
+        "controlled_animal_apartment_gate_v2",
+    }
+)
 STABLE_ANIMAL_REGISTRY_SCHEMA = (
     "stable_animal_apartment_research_candidate_registry_v1"
 )
@@ -422,6 +428,74 @@ def _verified_artifact_descriptor(artifact: dict, *, label: str) -> tuple[Path, 
     return path, payload
 
 
+def _artifact_identity_matches(left: object, right: object) -> bool:
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+    return all(
+        left.get(field) == right.get(field)
+        for field in ("path", "sha256", "size_bytes")
+    )
+
+
+def _validate_controlled_animal_v2_gate(
+    *,
+    source: dict,
+    gate: dict,
+    decision: dict,
+    imported: dict,
+) -> dict:
+    _preparation_path, preparation = _verified_artifact_descriptor(
+        gate.get("ue_import_preparation", {}),
+        label="UE import preparation",
+    )
+    _receipt_path, receipt = _verified_artifact_descriptor(
+        gate.get("animation_decision_freeze_receipt", {}),
+        label="animation decision freeze receipt",
+    )
+
+    results = imported.get("results")
+    matching_results = (
+        [
+            item
+            for item in results
+            if isinstance(item, dict)
+            and item.get("asset_id") == source.get("asset_id")
+        ]
+        if isinstance(results, list)
+        else []
+    )
+    imported_result = matching_results[0] if len(matching_results) == 1 else {}
+    result_preparation = imported.get("preparation_manifest")
+    receipt_decision = (
+        receipt.get("animation_decision") if isinstance(receipt, dict) else None
+    )
+    if (
+        imported.get("schema") != "pixal_animal_ue_import_result_v2"
+        or imported.get("status") != "passed"
+        or len(matching_results) != 1
+        or imported_result.get("job_type") != "user_approved_generated_animal"
+        or imported_result.get("asset_id") != source.get("asset_id")
+        or imported_result.get("tag") != source.get("tag")
+        or imported_result.get("source_sha256") != gate.get("ue_source_sha256")
+        or set(imported_result.get("actions", [])) != {"Idle", "Walking"}
+        or imported_result.get("status") != "passed"
+        or not isinstance(preparation, dict)
+        or not _artifact_identity_matches(
+            result_preparation,
+            gate.get("ue_import_preparation"),
+        )
+        or not isinstance(receipt, dict)
+        or receipt.get("status") != "frozen"
+        or not _artifact_identity_matches(
+            receipt_decision,
+            gate.get("animation_decision"),
+        )
+        or receipt.get("decision_sha256") != decision.get("decision_sha256")
+    ):
+        raise ValueError("controlled-animal v2 approval/import lineage changed")
+    return imported_result
+
+
 def publish_controlled_animal_registry_clip(
     *,
     registry_root: Path,
@@ -443,7 +517,7 @@ def publish_controlled_animal_registry_clip(
         source.get("asset_class") != "animal"
         or not asset_id
         or not species
-        or gate.get("schema") != CONTROLLED_ANIMAL_GATE_SCHEMA
+        or gate.get("schema") not in CONTROLLED_ANIMAL_GATE_SCHEMAS
         or gate.get("status") != "approved_for_research_candidate_apartment"
         or gate.get("asset_id") != asset_id
         or gate.get("tag") != tag
@@ -457,21 +531,35 @@ def publish_controlled_animal_registry_clip(
     import_path, imported = _verified_artifact_descriptor(
         gate.get("ue_import_result", {}), label="UE import result"
     )
-    imported_result = {
-        item.get("legacy_tag"): item for item in imported.get("results", [])
-    }.get(asset_id)
     if (
         decision.get("asset_id") != asset_id
         or decision.get("decision") != "approved_for_ue_apartment"
         or decision.get("decision_sha256")
         != gate.get("animation_decision", {}).get("decision_sha256")
-        or imported.get("schema") != "pixal_animal_ue_import_result_v1"
-        or not imported_result
-        or imported_result.get("tag") != tag
-        or imported_result.get("source_sha256") != gate.get("ue_source_sha256")
-        or set(imported_result.get("actions", [])) != {"Idle", "Walking"}
     ):
         raise ValueError("controlled-animal approval/import evidence is inconsistent")
+    if gate.get("schema") == CONTROLLED_ANIMAL_GATE_SCHEMA:
+        imported_result = {
+            item.get("legacy_tag"): item for item in imported.get("results", [])
+        }.get(asset_id)
+        if (
+            imported.get("schema") != "pixal_animal_ue_import_result_v1"
+            or not imported_result
+            or imported_result.get("tag") != tag
+            or imported_result.get("source_sha256")
+            != gate.get("ue_source_sha256")
+            or set(imported_result.get("actions", [])) != {"Idle", "Walking"}
+        ):
+            raise ValueError(
+                "controlled-animal approval/import evidence is inconsistent"
+            )
+    else:
+        imported_result = _validate_controlled_animal_v2_gate(
+            source=source,
+            gate=gate,
+            decision=decision,
+            imported=imported,
+        )
 
     clip_dir = Path(clip_dir).resolve()
     evidence = {

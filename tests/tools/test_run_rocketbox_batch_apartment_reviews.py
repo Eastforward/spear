@@ -222,6 +222,83 @@ def _controlled_animal_manifest(tmp_path: Path) -> Path:
     return manifest
 
 
+def _upgrade_controlled_animal_manifest_to_v2(manifest: Path) -> Path:
+    root = manifest.parent
+    payload = json.loads(manifest.read_text())
+    record = payload["records"][0]
+    asset_id = record["asset_id"]
+    tag = record["tag"]
+    spec_paths = [Path(action["spec"]) for action in record["actions"].values()]
+    original_gate = json.loads(spec_paths[0].read_text())["sources"][0][
+        "controlled_animal_gate"
+    ]
+    decision_path = Path(original_gate["animation_decision"]["path"])
+    decision = json.loads(decision_path.read_text())
+
+    def artifact(path: Path) -> dict:
+        data = path.read_bytes()
+        return {
+            "path": str(path.resolve()),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "size_bytes": len(data),
+        }
+
+    receipt = {
+        "status": "frozen",
+        "animation_decision": artifact(decision_path),
+        "decision_sha256": decision["decision_sha256"],
+    }
+    receipt_path = root / "evidence" / "decision_freeze_receipt.json"
+    receipt_path.write_text(json.dumps(receipt))
+    preparation = {
+        "status": "ready_for_new_ue_import",
+        "animation_decision": artifact(decision_path),
+        "animation_decision_freeze_receipt": artifact(receipt_path),
+    }
+    preparation_path = root / "evidence" / "ue_preparation.json"
+    preparation_path.write_text(json.dumps(preparation))
+    preparation_descriptor = artifact(preparation_path)
+    receipt_descriptor = artifact(receipt_path)
+
+    import_path = Path(original_gate["ue_import_result"]["path"])
+    imported = {
+        "schema": "pixal_animal_ue_import_result_v2",
+        "status": "passed",
+        "preparation_manifest": preparation_descriptor,
+        "results": [
+            {
+                "job_type": "user_approved_generated_animal",
+                "asset_id": asset_id,
+                "tag": tag,
+                "source_sha256": original_gate["ue_source_sha256"],
+                "actions": ["Idle", "Walking"],
+                "status": "passed",
+            }
+        ],
+    }
+    import_path.write_text(json.dumps(imported))
+    gate = {
+        "schema": "controlled_animal_apartment_gate_v2",
+        "status": "approved_for_research_candidate_apartment",
+        "asset_id": asset_id,
+        "tag": tag,
+        "animation_decision": original_gate["animation_decision"],
+        "animation_decision_freeze_receipt": receipt_descriptor,
+        "ue_import_preparation": preparation_descriptor,
+        "ue_import_result": artifact(import_path),
+        "ue_source_sha256": original_gate["ue_source_sha256"],
+        "producer_metadata": {"ignored_by_runtime_reader": True},
+        "formal_dataset_registration_authorized": False,
+    }
+    for spec_path in spec_paths:
+        spec = json.loads(spec_path.read_text())
+        spec["sources"][0]["controlled_animal_gate"] = gate
+        spec_path.write_text(json.dumps(spec))
+    payload["schema"] = "controlled_animal_walk_idle_apartment_specs_v2"
+    manifest.write_text(json.dumps(payload))
+    return manifest
+
+
 def _stable_animal_manifest(tmp_path: Path) -> Path:
     root = tmp_path / "stable_animals"
     asset_id = "quaternius_ultimate_husky_v1"
@@ -378,6 +455,99 @@ def test_build_jobs_accepts_controlled_animal_walk_idle_and_instance_scale(tmp_p
         ("cat_siamese_bindpose_example", "Walking"),
     ]
     assert build_jobs(manifest, actions={"Idle"})[0].action == "Idle"
+
+
+def test_build_jobs_accepts_key_bound_controlled_animal_v2_gate(tmp_path):
+    manifest = _upgrade_controlled_animal_manifest_to_v2(
+        _controlled_animal_manifest(tmp_path)
+    )
+
+    jobs = build_jobs(manifest)
+
+    assert [(job.base_avatar_id, job.action) for job in jobs] == [
+        ("cat_siamese_bindpose_example", "Idle"),
+        ("cat_siamese_bindpose_example", "Walking"),
+    ]
+
+
+def test_controlled_animal_v2_gate_rejects_missing_freeze_receipt(tmp_path):
+    manifest = _upgrade_controlled_animal_manifest_to_v2(
+        _controlled_animal_manifest(tmp_path)
+    )
+    payload = json.loads(manifest.read_text())
+    spec_path = Path(payload["records"][0]["actions"]["Walking"]["spec"])
+    spec = json.loads(spec_path.read_text())
+    spec["sources"][0]["controlled_animal_gate"].pop(
+        "animation_decision_freeze_receipt"
+    )
+    spec_path.write_text(json.dumps(spec))
+
+    with pytest.raises(RuntimeError, match="review spec identity changed"):
+        build_jobs(manifest)
+
+
+def test_controlled_animal_v2_gate_rejects_v1_result_downgrade(tmp_path):
+    manifest = _upgrade_controlled_animal_manifest_to_v2(
+        _controlled_animal_manifest(tmp_path)
+    )
+    payload = json.loads(manifest.read_text())
+    spec_paths = [
+        Path(action["spec"])
+        for action in payload["records"][0]["actions"].values()
+    ]
+    first = json.loads(spec_paths[0].read_text())
+    gate = first["sources"][0]["controlled_animal_gate"]
+    import_path = Path(gate["ue_import_result"]["path"])
+    imported = json.loads(import_path.read_text())
+    imported["schema"] = "pixal_animal_ue_import_result_v1"
+    import_path.write_text(json.dumps(imported))
+    descriptor = {
+        "path": str(import_path.resolve()),
+        "sha256": hashlib.sha256(import_path.read_bytes()).hexdigest(),
+        "size_bytes": import_path.stat().st_size,
+    }
+    for spec_path in spec_paths:
+        spec = json.loads(spec_path.read_text())
+        spec["sources"][0]["controlled_animal_gate"][
+            "ue_import_result"
+        ] = descriptor
+        spec_path.write_text(json.dumps(spec))
+
+    with pytest.raises(RuntimeError, match="review spec identity changed"):
+        build_jobs(manifest)
+
+
+def test_controlled_animal_v2_gate_rejects_preparation_path_rebind(tmp_path):
+    manifest = _upgrade_controlled_animal_manifest_to_v2(
+        _controlled_animal_manifest(tmp_path)
+    )
+    payload = json.loads(manifest.read_text())
+    spec_paths = [
+        Path(action["spec"])
+        for action in payload["records"][0]["actions"].values()
+    ]
+    first = json.loads(spec_paths[0].read_text())
+    preparation = Path(
+        first["sources"][0]["controlled_animal_gate"][
+            "ue_import_preparation"
+        ]["path"]
+    )
+    rebound = preparation.with_name("rebound_ue_preparation.json")
+    rebound.write_bytes(preparation.read_bytes())
+    rebound_descriptor = {
+        "path": str(rebound.resolve()),
+        "sha256": hashlib.sha256(rebound.read_bytes()).hexdigest(),
+        "size_bytes": rebound.stat().st_size,
+    }
+    for spec_path in spec_paths:
+        spec = json.loads(spec_path.read_text())
+        spec["sources"][0]["controlled_animal_gate"][
+            "ue_import_preparation"
+        ] = rebound_descriptor
+        spec_path.write_text(json.dumps(spec))
+
+    with pytest.raises(RuntimeError, match="review spec identity changed"):
+        build_jobs(manifest)
 
 
 def test_build_jobs_accepts_stable_animal_without_claiming_human_approval(tmp_path):
