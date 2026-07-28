@@ -61,6 +61,10 @@ def authenticated_review(tmp_path, monkeypatch):
     animated_glb.write_bytes(b"fixture animated GLB")
     review_audit = tmp_path / "review_audit.json"
     review_audit.write_text('{"fixture":"review-audit"}\n', encoding="utf-8")
+    idle_side = tmp_path / "idle_side.mp4"
+    idle_side.write_bytes(b"current Pixel3D Idle side readback")
+    walking_side = tmp_path / "walking_side.mp4"
+    walking_side.write_bytes(b"current Pixel3D Walking side readback")
     presentation_root = tmp_path / "presentation"
     presentation_root.mkdir()
     presentation_video = presentation_root / freezer.presentation.OUTPUT_VIDEO_NAME
@@ -71,6 +75,12 @@ def authenticated_review(tmp_path, monkeypatch):
         "formal_dataset_registration_authorized": False,
         "automatic_admission_gates": {
             "all_automatic_gates_passed": True,
+        },
+        "outputs": {
+            "media": {
+                "idle_side": freezer.bridge._absolute_record(idle_side),
+                "walking_side": freezer.bridge._absolute_record(walking_side),
+            }
         },
     }
     source_asset = {
@@ -215,6 +225,8 @@ def authenticated_review(tmp_path, monkeypatch):
         "source_artifact": source_artifact,
         "animated_glb": animated_glb,
         "review_audit": review_audit,
+        "idle_side": idle_side,
+        "walking_side": walking_side,
         "presentation_root": presentation_root,
         "presentation_video": presentation_video,
         "presentation_payload": presentation_payload,
@@ -251,6 +263,83 @@ def _freeze(authority, output_root, **overrides):
     }
     values.update(overrides)
     return freezer.freeze_decision(**values)
+
+
+def _compact_evidence_arguments(
+    authority,
+    tmp_path,
+    *,
+    rebind_current_readback_to_style_video=False,
+):
+    style_approval = {
+        "schema": freezer.bridge.MOTION_STYLE_APPROVAL_SCHEMA,
+        "status": "approved_for_idle_walking_motion_style",
+        "actions": copy.deepcopy(freezer.bridge.ANIMATION_ACTIONS),
+        "evidence_video": freezer.bridge._absolute_record(
+            authority["presentation_video"]
+        ),
+    }
+    style_approval["approval_sha256"] = freezer.bridge._hash_without(
+        style_approval,
+        "approval_sha256",
+    )
+    style_path = tmp_path / "motion_style_approval.json"
+    style_path.write_text(
+        json.dumps(style_approval, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    action_readbacks = {
+        "Idle": freezer.bridge._absolute_record(authority["idle_side"]),
+        "Walking": freezer.bridge._absolute_record(authority["walking_side"]),
+    }
+    if rebind_current_readback_to_style_video:
+        action_readbacks["Walking"] = freezer.bridge._absolute_record(
+            authority["presentation_video"]
+        )
+    short_readback = {
+        "schema": freezer.bridge.CURRENT_ASSET_SHORT_READBACK_SCHEMA,
+        "status": "passed_current_asset_geometry_and_actions",
+        "asset_id": authority["source_asset"]["asset_id"],
+        "animation_review": freezer.bridge._absolute_record(
+            authority["review_path"]
+        ),
+        "reviewed_animated_glb": freezer.bridge._absolute_record(
+            authority["animated_glb"]
+        ),
+        "actions": copy.deepcopy(freezer.bridge.ANIMATION_ACTIONS),
+        "action_readbacks": action_readbacks,
+        "checks": copy.deepcopy(
+            freezer.bridge.CURRENT_ASSET_SHORT_READBACK_CHECKS
+        ),
+    }
+    short_readback["receipt_sha256"] = freezer.bridge._hash_without(
+        short_readback,
+        "receipt_sha256",
+    )
+    readback_path = tmp_path / "current_asset_short_readback.json"
+    readback_path.write_text(
+        json.dumps(short_readback, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "presentation_receipt_path": None,
+        "expected_presentation_receipt_sha256": None,
+        "user_explicit_presentation_receipt_sha256": None,
+        "checks": None,
+        "notes": (
+            "Reused the approved Idle/Walking motion style; the current review "
+            "machine readback passed."
+        ),
+        "user_explicit_decision": None,
+        "user_explicit_review_sha256": None,
+        "motion_style_approval_path": style_path,
+        "expected_motion_style_approval_sha256": _sha256(style_path),
+        "current_asset_short_readback_path": readback_path,
+        "expected_current_asset_short_readback_sha256": _sha256(
+            readback_path
+        ),
+        "user_explicit_motion_style_approval_sha256": _sha256(style_path),
+    }
 
 
 def test_freezes_exact_approved_record_and_external_hash_receipt(
@@ -347,6 +436,74 @@ def test_freezes_exact_approved_record_and_external_hash_receipt(
     assert {path.name for path in decision_path.parent.iterdir()} == (
         freezer.PUBLISHED_FILE_NAMES
     )
+
+
+def test_freezes_motion_style_baseline_with_current_asset_short_readback(
+    authenticated_review,
+    tmp_path,
+):
+    arguments = _compact_evidence_arguments(
+        authenticated_review,
+        tmp_path,
+    )
+    decision_path = _freeze(
+        authenticated_review,
+        tmp_path / "frozen_compact_approval",
+        **arguments,
+    )
+    receipt = contracts.load_json(
+        decision_path.parent / "decision_freeze_receipt.json"
+    )
+    decision = contracts.load_json(decision_path)
+
+    assert receipt["presentation_evidence"]["mode"] == (
+        freezer.MOTION_STYLE_AND_CURRENT_READBACK_MODE
+    )
+    assert set(receipt["presentation_evidence"]) == (
+        freezer.MOTION_STYLE_AND_CURRENT_READBACK_EVIDENCE_FIELDS
+    )
+    assert receipt["user_instruction_binding"] == {
+        "decision": freezer.APPROVED,
+        "motion_style_approval_file_sha256": (
+            arguments["expected_motion_style_approval_sha256"]
+        ),
+        "current_asset_short_readback_file_sha256": (
+            arguments["expected_current_asset_short_readback_sha256"]
+        ),
+        "current_asset_readback_is_machine_gate": True,
+    }
+    assert all(decision["checks"].values())
+    assert decision["notes"] == (
+        "Reused the approved Idle/Walking motion style; the current review "
+        "machine readback passed."
+    )
+    assert receipt["receipt_sha256"] == freezer.bridge._hash_without(
+        receipt,
+        "receipt_sha256",
+    )
+
+
+def test_old_style_video_cannot_masquerade_as_current_review_action_readback(
+    authenticated_review,
+    tmp_path,
+):
+    arguments = _compact_evidence_arguments(
+        authenticated_review,
+        tmp_path,
+        rebind_current_readback_to_style_video=True,
+    )
+    output = tmp_path / "rejected_style_video_as_current_readback"
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="current geometry/action binding is invalid",
+    ):
+        _freeze(
+            authenticated_review,
+            output,
+            **arguments,
+        )
+    assert not output.exists()
 
 
 def test_freeze_reauthenticates_direct_derived_source_authority(
@@ -978,14 +1135,21 @@ def test_cleanup_unknown_artifact_is_quarantined(tmp_path):
         os.close(parent_fd)
 
 
-def test_v1_style_invocation_cannot_omit_presentation_authority():
+def test_freezer_exposes_both_complete_approval_evidence_modes():
     parameters = inspect.signature(freezer.freeze_decision).parameters
     for name in (
         "presentation_receipt_path",
         "expected_presentation_receipt_sha256",
         "user_explicit_presentation_receipt_sha256",
+        "motion_style_approval_path",
+        "expected_motion_style_approval_sha256",
+        "current_asset_short_readback_path",
+        "expected_current_asset_short_readback_sha256",
+        "user_explicit_motion_style_approval_sha256",
+        "checks",
+        "user_explicit_decision",
     ):
-        assert parameters[name].default is parameters[name].empty
+        assert parameters[name].default is None
 
 
 def test_publisher_uses_renameat2_no_replace_not_plain_rename():

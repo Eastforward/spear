@@ -35,6 +35,12 @@ APPROVED = "approved_for_ue_apartment"
 REJECTED = "rejected"
 DECISIONS = (APPROVED, REJECTED)
 PRESENTATION_EVIDENCE_FIELDS = bridge.PRESENTATION_EVIDENCE_FIELDS
+MOTION_STYLE_AND_CURRENT_READBACK_MODE = (
+    bridge.MOTION_STYLE_AND_CURRENT_READBACK_MODE
+)
+MOTION_STYLE_AND_CURRENT_READBACK_EVIDENCE_FIELDS = (
+    bridge.MOTION_STYLE_AND_CURRENT_READBACK_EVIDENCE_FIELDS
+)
 CHECK_ARGUMENTS = {
     "walking_direction": "--walking-direction",
     "walking_limb_deformation": "--walking-limb-deformation",
@@ -717,6 +723,95 @@ def authenticate_presentation(
     return evidence, authority_guards
 
 
+def authenticate_motion_style_and_current_readback(
+    *,
+    motion_style_approval_path: Path,
+    expected_motion_style_approval_sha256: str,
+    current_asset_short_readback_path: Path,
+    expected_current_asset_short_readback_sha256: str,
+    expected_asset_id: str,
+    animation_review_path: Path,
+    animation_review_payload: Mapping[str, Any],
+    expected_animation_review_sha256: str,
+    reviewed_animated_glb: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Authenticate reusable motion style separately from current geometry."""
+
+    expected_review_sha256 = bridge._require_sha256(
+        expected_animation_review_sha256,
+        "expected animation review file sha256",
+    )
+    expected_style_sha256 = bridge._require_sha256(
+        expected_motion_style_approval_sha256,
+        "expected motion-style approval file sha256",
+    )
+    expected_readback_sha256 = bridge._require_sha256(
+        expected_current_asset_short_readback_sha256,
+        "expected current-asset short-readback file sha256",
+    )
+    review_path = bridge._direct_file(
+        animation_review_path,
+        "target-native animation review",
+    )
+    animated_glb = bridge._direct_file(
+        reviewed_animated_glb,
+        "current reviewed animated GLB",
+    )
+    if bridge._sha256_file(review_path) != expected_review_sha256:
+        raise contracts.ContractError(
+            "animation review changed before compact approval authentication"
+        )
+    (
+        _style_path,
+        _style_payload,
+        style_descriptor,
+        _style_video,
+    ) = bridge.load_motion_style_approval(
+        motion_style_approval_path,
+        expected_file_sha256=expected_style_sha256,
+    )
+    (
+        _readback_path,
+        _readback_payload,
+        readback_descriptor,
+        _readback_videos,
+    ) = bridge.load_current_asset_short_readback(
+        current_asset_short_readback_path,
+        expected_file_sha256=expected_readback_sha256,
+        expected_asset_id=expected_asset_id,
+        review_path=review_path,
+        review_payload=animation_review_payload,
+        reviewed_animated_glb=animated_glb,
+    )
+    evidence = {
+        "mode": MOTION_STYLE_AND_CURRENT_READBACK_MODE,
+        "motion_style_approval": style_descriptor,
+        "current_asset_short_readback": readback_descriptor,
+    }
+    canonical_evidence, canonical_paths = (
+        bridge.load_motion_style_and_current_readback_evidence(
+            evidence,
+            expected_asset_id=expected_asset_id,
+            review_path=review_path,
+            review_payload=animation_review_payload,
+            reviewed_animated_glb=animated_glb,
+        )
+    )
+    if canonical_evidence != evidence:
+        raise contracts.ContractError(
+            "compact animation approval evidence changed during authentication"
+        )
+    guarded_paths = {
+        "animation_review": review_path,
+        "reviewed_animated_glb": animated_glb,
+        **canonical_paths,
+    }
+    snapshots = _snapshot_paths(guarded_paths)
+    return evidence, {
+        name: snapshot["guard"] for name, snapshot in snapshots.items()
+    }
+
+
 def authenticate_review(
     *,
     source_registry_manifest_path: Path,
@@ -862,56 +957,135 @@ def freeze_decision(
     source_asset_path: Path,
     animation_review_path: Path,
     expected_animation_review_sha256: str,
-    presentation_receipt_path: Path,
-    expected_presentation_receipt_sha256: str,
+    presentation_receipt_path: Path | None = None,
+    expected_presentation_receipt_sha256: str | None = None,
+    motion_style_approval_path: Path | None = None,
+    expected_motion_style_approval_sha256: str | None = None,
+    current_asset_short_readback_path: Path | None = None,
+    expected_current_asset_short_readback_sha256: str | None = None,
     decision: str,
-    checks: Mapping[str, bool],
+    checks: Mapping[str, bool] | None = None,
     caveats: Sequence[str],
     notes: str,
-    user_explicit_decision: str,
-    user_explicit_review_sha256: str,
-    user_explicit_presentation_receipt_sha256: str,
+    user_explicit_decision: str | None = None,
+    user_explicit_review_sha256: str | None = None,
+    user_explicit_presentation_receipt_sha256: str | None = None,
+    user_explicit_motion_style_approval_sha256: str | None = None,
     output_root: Path,
     artifact_roots: Mapping[str, Path] | None = None,
 ) -> Path:
-    if decision not in DECISIONS or user_explicit_decision != decision:
-        raise contracts.ContractError(
-            "the frozen verdict must match the user's explicit decision"
-        )
-    bridge._require_sha256(
-        user_explicit_review_sha256,
-        "user-explicit animation review sha256",
-    )
-    if user_explicit_review_sha256 != expected_animation_review_sha256:
-        raise contracts.ContractError(
-            "the user's explicit instruction is not bound to the expected review"
-        )
-    expected_presentation_receipt_sha256 = bridge._require_sha256(
+    if decision not in DECISIONS:
+        raise contracts.ContractError("animation decision is invalid")
+    presentation_arguments = (
+        presentation_receipt_path,
         expected_presentation_receipt_sha256,
-        "expected presentation receipt file sha256",
-    )
-    bridge._require_sha256(
         user_explicit_presentation_receipt_sha256,
-        "user-explicit presentation receipt file sha256",
     )
+    compact_arguments = (
+        motion_style_approval_path,
+        expected_motion_style_approval_sha256,
+        current_asset_short_readback_path,
+        expected_current_asset_short_readback_sha256,
+        user_explicit_motion_style_approval_sha256,
+    )
+    presentation_mode = all(value is not None for value in presentation_arguments)
+    compact_mode = all(value is not None for value in compact_arguments)
     if (
-        user_explicit_presentation_receipt_sha256
-        != expected_presentation_receipt_sha256
+        presentation_mode == compact_mode
+        or (
+            any(value is not None for value in presentation_arguments)
+            and not presentation_mode
+        )
+        or (
+            any(value is not None for value in compact_arguments)
+            and not compact_mode
+        )
     ):
         raise contracts.ContractError(
-            "the user's explicit instruction is not bound to the expected "
-            "presentation receipt"
+            "supply exactly one complete animation approval evidence mode"
         )
-    if (
-        not isinstance(checks, Mapping)
-        or set(checks) != bridge.DECISION_CHECK_FIELDS
-        or any(not isinstance(value, bool) for value in checks.values())
-    ):
+    if presentation_mode:
+        if user_explicit_decision != decision:
+            raise contracts.ContractError(
+                "the frozen verdict must match the user's explicit decision"
+            )
+        bridge._require_sha256(
+            user_explicit_review_sha256,
+            "user-explicit animation review sha256",
+        )
+        if user_explicit_review_sha256 != expected_animation_review_sha256:
+            raise contracts.ContractError(
+                "the user's explicit instruction is not bound to the expected "
+                "review"
+            )
+        expected_presentation_receipt_sha256 = bridge._require_sha256(
+            expected_presentation_receipt_sha256,
+            "expected presentation receipt file sha256",
+        )
+        bridge._require_sha256(
+            user_explicit_presentation_receipt_sha256,
+            "user-explicit presentation receipt file sha256",
+        )
+        if (
+            user_explicit_presentation_receipt_sha256
+            != expected_presentation_receipt_sha256
+        ):
+            raise contracts.ContractError(
+                "the user's explicit instruction is not bound to the expected "
+                "presentation receipt"
+            )
+    else:
+        if decision != APPROVED:
+            raise contracts.ContractError(
+                "motion-style/current-readback evidence only authorizes approval"
+            )
+        if (
+            user_explicit_decision is not None
+            and user_explicit_decision != decision
+        ):
+            raise contracts.ContractError(
+                "an optional compact verdict cannot contradict the authenticated "
+                "approval evidence"
+            )
+        expected_motion_style_approval_sha256 = bridge._require_sha256(
+            expected_motion_style_approval_sha256,
+            "expected motion-style approval file sha256",
+        )
+        expected_current_asset_short_readback_sha256 = bridge._require_sha256(
+            expected_current_asset_short_readback_sha256,
+            "expected current-asset short-readback file sha256",
+        )
+        bridge._require_sha256(
+            user_explicit_motion_style_approval_sha256,
+            "user-explicit motion-style approval file sha256",
+        )
+        if (
+            user_explicit_motion_style_approval_sha256
+            != expected_motion_style_approval_sha256
+        ):
+            raise contracts.ContractError(
+                "the user's explicit instruction is not bound to the approved "
+                "motion-style baseline"
+            )
+    supplied_checks_are_valid = bool(
+        isinstance(checks, Mapping)
+        and set(checks) == bridge.DECISION_CHECK_FIELDS
+        and all(isinstance(value, bool) for value in checks.values())
+    )
+    if presentation_mode and not supplied_checks_are_valid:
         raise contracts.ContractError(
             "all six animation decision checks must be explicit booleans"
         )
-    if decision == APPROVED and not all(checks.values()):
+    if (
+        presentation_mode
+        and decision == APPROVED
+        and not all(checks.values())
+    ):
         raise contracts.ContractError("approval requires all six checks to pass")
+    if not presentation_mode and checks is not None and not supplied_checks_are_valid:
+        raise contracts.ContractError(
+            "compact decision checks, when supplied, must be complete booleans"
+        )
     if (
         not isinstance(notes, str)
         or not notes.strip()
@@ -938,18 +1112,62 @@ def freeze_decision(
     review_path = authority["review_path"]
     review_artifacts = authority["review_artifacts"]
     authority_graph = authority["authority_graph"]
-    presentation_evidence, presentation_guards = authenticate_presentation(
-        presentation_receipt_path=presentation_receipt_path,
-        expected_presentation_receipt_sha256=(expected_presentation_receipt_sha256),
-        animation_review_path=review_path,
-        expected_animation_review_sha256=expected_animation_review_sha256,
-    )
+    if presentation_mode:
+        presentation_evidence, presentation_guards = authenticate_presentation(
+            presentation_receipt_path=presentation_receipt_path,
+            expected_presentation_receipt_sha256=(
+                expected_presentation_receipt_sha256
+            ),
+            animation_review_path=review_path,
+            expected_animation_review_sha256=expected_animation_review_sha256,
+        )
+    else:
+        presentation_evidence, presentation_guards = (
+            authenticate_motion_style_and_current_readback(
+                motion_style_approval_path=motion_style_approval_path,
+                expected_motion_style_approval_sha256=(
+                    expected_motion_style_approval_sha256
+                ),
+                current_asset_short_readback_path=(
+                    current_asset_short_readback_path
+                ),
+                expected_current_asset_short_readback_sha256=(
+                    expected_current_asset_short_readback_sha256
+                ),
+                expected_asset_id=source_asset["asset_id"],
+                animation_review_path=review_path,
+                animation_review_payload=authority["review"],
+                expected_animation_review_sha256=(
+                    expected_animation_review_sha256
+                ),
+                reviewed_animated_glb=authority["animated_glb"],
+            )
+        )
+    if presentation_mode:
+        decision_checks = dict(checks)
+    else:
+        decision_checks = {
+            name: True for name in bridge.DECISION_CHECK_FIELDS
+        }
+        if checks is not None and dict(checks) != decision_checks:
+            raise contracts.ContractError(
+                "caller-supplied compact checks contradict the authenticated "
+                "motion-style and current-review machine gates"
+            )
+    if presentation_guards["animation_review"] != authority_graph[
+        "animation_review"
+    ]["guard"]:
+        raise contracts.ContractError(
+            "animation review authority changed between review and approval "
+            "authentication"
+        )
     if (
-        presentation_guards["animation_review"]
-        != authority_graph["animation_review"]["guard"]
+        not presentation_mode
+        and presentation_guards["reviewed_animated_glb"]
+        != authority_graph["reviewed_animated_glb"]["guard"]
     ):
         raise contracts.ContractError(
-            "animation review authority changed between review and presentation "
+            "reviewed animated GLB changed between review and short readback "
             "authentication"
         )
     (
@@ -989,7 +1207,8 @@ def freeze_decision(
             "review_sha256": expected_animation_review_sha256,
             "decision": decision,
             "checks": {
-                name: checks[name] for name in sorted(bridge.DECISION_CHECK_FIELDS)
+                name: decision_checks[name]
+                for name in sorted(bridge.DECISION_CHECK_FIELDS)
             },
             "caveats": list(caveats),
             "notes": notes,
@@ -1004,6 +1223,26 @@ def freeze_decision(
             "animation_decision.json",
             record,
         )
+        if presentation_mode:
+            user_instruction_binding = {
+                "decision": decision,
+                "review_sha256": user_explicit_review_sha256,
+                "all_six_checks_explicit": True,
+                "presentation_receipt_file_sha256": (
+                    user_explicit_presentation_receipt_sha256
+                ),
+            }
+        else:
+            user_instruction_binding = {
+                "decision": decision,
+                "motion_style_approval_file_sha256": (
+                    user_explicit_motion_style_approval_sha256
+                ),
+                "current_asset_short_readback_file_sha256": (
+                    expected_current_asset_short_readback_sha256
+                ),
+                "current_asset_readback_is_machine_gate": True,
+            }
         receipt: dict[str, Any] = {
             "schema": RECEIPT_SCHEMA,
             "status": "frozen",
@@ -1022,14 +1261,7 @@ def freeze_decision(
             ),
             "expected_animation_review_file_sha256": (expected_animation_review_sha256),
             "presentation_evidence": presentation_evidence,
-            "user_instruction_binding": {
-                "decision": decision,
-                "review_sha256": user_explicit_review_sha256,
-                "presentation_receipt_file_sha256": (
-                    user_explicit_presentation_receipt_sha256
-                ),
-                "all_six_checks_explicit": True,
-            },
+            "user_instruction_binding": user_instruction_binding,
             "user_instruction_authority": dict(bridge.USER_INSTRUCTION_AUTHORITY),
             "authenticated_review_artifact_count": len(review_artifacts),
             "animation_decision": decision_record,
@@ -1057,20 +1289,52 @@ def freeze_decision(
                 "complete source and review authority graph changed before "
                 "decision publication"
             )
-        final_presentation, final_presentation_guards = authenticate_presentation(
-            presentation_receipt_path=presentation_receipt_path,
-            expected_presentation_receipt_sha256=(expected_presentation_receipt_sha256),
-            animation_review_path=final_authority["review_path"],
-            expected_animation_review_sha256=expected_animation_review_sha256,
-        )
+        if presentation_mode:
+            final_presentation, final_presentation_guards = authenticate_presentation(
+                presentation_receipt_path=presentation_receipt_path,
+                expected_presentation_receipt_sha256=(
+                    expected_presentation_receipt_sha256
+                ),
+                animation_review_path=final_authority["review_path"],
+                expected_animation_review_sha256=expected_animation_review_sha256,
+            )
+        else:
+            final_presentation, final_presentation_guards = (
+                authenticate_motion_style_and_current_readback(
+                    motion_style_approval_path=motion_style_approval_path,
+                    expected_motion_style_approval_sha256=(
+                        expected_motion_style_approval_sha256
+                    ),
+                    current_asset_short_readback_path=(
+                        current_asset_short_readback_path
+                    ),
+                    expected_current_asset_short_readback_sha256=(
+                        expected_current_asset_short_readback_sha256
+                    ),
+                    expected_asset_id=final_authority["source_asset"]["asset_id"],
+                    animation_review_path=final_authority["review_path"],
+                    animation_review_payload=final_authority["review"],
+                    expected_animation_review_sha256=(
+                        expected_animation_review_sha256
+                    ),
+                    reviewed_animated_glb=final_authority["animated_glb"],
+                )
+            )
         if (
             final_presentation != presentation_evidence
             or final_presentation_guards != presentation_guards
             or final_presentation_guards["animation_review"]
             != final_authority["authority_graph"]["animation_review"]["guard"]
+            or (
+                not presentation_mode
+                and final_presentation_guards["reviewed_animated_glb"]
+                != final_authority["authority_graph"]["reviewed_animated_glb"][
+                    "guard"
+                ]
+            )
         ):
             raise contracts.ContractError(
-                "presentation evidence changed before decision publication"
+                "animation approval evidence changed before decision publication"
             )
         _require_parent_path_matches_fd(
             lexical_output_parent,
@@ -1147,33 +1411,43 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-asset", required=True, type=Path)
     parser.add_argument("--animation-review", required=True, type=Path)
     parser.add_argument("--expected-animation-review-sha256", required=True)
-    parser.add_argument("--presentation-receipt", required=True, type=Path)
-    parser.add_argument("--expected-presentation-receipt-sha256", required=True)
+    parser.add_argument("--presentation-receipt", type=Path)
+    parser.add_argument("--expected-presentation-receipt-sha256")
+    parser.add_argument("--motion-style-approval", type=Path)
+    parser.add_argument("--expected-motion-style-approval-sha256")
+    parser.add_argument("--current-asset-short-readback", type=Path)
+    parser.add_argument("--expected-current-asset-short-readback-sha256")
     parser.add_argument("--decision", choices=DECISIONS, required=True)
     parser.add_argument(
         "--user-explicit-decision",
         choices=DECISIONS,
-        required=True,
         help=(
-            "Pass only after the user explicitly issued this exact verdict; "
-            "it must equal --decision."
+            "Required for full-presentation mode and must equal --decision. "
+            "Compact mode derives approval from the user-bound motion-style "
+            "approval plus the current machine readback."
         ),
     )
     parser.add_argument(
         "--user-explicit-review-sha256",
-        required=True,
         help=(
-            "SHA-256 of the exact review covered by the user's instruction; "
-            "it must equal --expected-animation-review-sha256."
+            "For full-presentation mode, SHA-256 of the exact review covered "
+            "by the user's instruction. Compact mode uses the current review "
+            "only as a machine-bound readback authority."
         ),
     )
     parser.add_argument(
         "--user-explicit-presentation-receipt-sha256",
-        required=True,
         help=(
             "Raw file SHA-256 of the exact sealed presentation receipt covered "
             "by the user's instruction; it must equal "
             "--expected-presentation-receipt-sha256."
+        ),
+    )
+    parser.add_argument(
+        "--user-explicit-motion-style-approval-sha256",
+        help=(
+            "Raw file SHA-256 of the reusable Idle/Walking motion-style approval "
+            "covered by the user's instruction."
         ),
     )
     for name, flag in CHECK_ARGUMENTS.items():
@@ -1182,7 +1456,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
             dest=name,
             type=_explicit_bool,
             choices=(True, False),
-            required=True,
+            help=(
+                "Required in full-presentation mode. Compact mode derives the "
+                "decision checks from authenticated style and current-review "
+                "machine gates."
+            ),
         )
     parser.add_argument("--notes", required=True)
     parser.add_argument("--caveat", action="append", default=[])
@@ -1209,14 +1487,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_presentation_receipt_sha256=(
                 args.expected_presentation_receipt_sha256
             ),
+            motion_style_approval_path=args.motion_style_approval,
+            expected_motion_style_approval_sha256=(
+                args.expected_motion_style_approval_sha256
+            ),
+            current_asset_short_readback_path=(
+                args.current_asset_short_readback
+            ),
+            expected_current_asset_short_readback_sha256=(
+                args.expected_current_asset_short_readback_sha256
+            ),
             decision=args.decision,
-            checks={name: getattr(args, name) for name in CHECK_ARGUMENTS},
+            checks=(
+                None
+                if all(getattr(args, name) is None for name in CHECK_ARGUMENTS)
+                else {
+                    name: getattr(args, name)
+                    for name in CHECK_ARGUMENTS
+                }
+            ),
             caveats=args.caveat,
             notes=args.notes,
             user_explicit_decision=args.user_explicit_decision,
             user_explicit_review_sha256=args.user_explicit_review_sha256,
             user_explicit_presentation_receipt_sha256=(
                 args.user_explicit_presentation_receipt_sha256
+            ),
+            user_explicit_motion_style_approval_sha256=(
+                args.user_explicit_motion_style_approval_sha256
             ),
             output_root=args.output_root,
             artifact_roots=bridge.parse_artifact_roots(args.artifact_root),

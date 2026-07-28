@@ -1925,6 +1925,30 @@ def _rewrite_freeze_receipt(fixture, *, review=None):
         review_artifact_count = contracts.load_json(fixture["receipt_path"])[
             "authenticated_review_artifact_count"
         ]
+    presentation_evidence = copy.deepcopy(fixture["presentation_evidence"])
+    if (
+        presentation_evidence.get("mode")
+        == preparation.MOTION_STYLE_AND_CURRENT_READBACK_MODE
+    ):
+        user_instruction_binding = {
+            "decision": "approved_for_ue_apartment",
+            "motion_style_approval_file_sha256": presentation_evidence[
+                "motion_style_approval"
+            ]["sha256"],
+            "current_asset_short_readback_file_sha256": presentation_evidence[
+                "current_asset_short_readback"
+            ]["sha256"],
+            "current_asset_readback_is_machine_gate": True,
+        }
+    else:
+        user_instruction_binding = {
+            "decision": "approved_for_ue_apartment",
+            "review_sha256": _sha256(fixture["review_path"]),
+            "all_six_checks_explicit": True,
+            "presentation_receipt_file_sha256": presentation_evidence[
+                "expected_presentation_receipt_file_sha256"
+            ],
+        }
     receipt = {
         "schema": preparation.DECISION_FREEZE_RECEIPT_SCHEMA,
         "status": "frozen",
@@ -1938,14 +1962,7 @@ def _rewrite_freeze_receipt(fixture, *, review=None):
         "source_asset": _record(fixture["source_path"]),
         "animation_review": _record(fixture["review_path"]),
         "expected_animation_review_file_sha256": _sha256(fixture["review_path"]),
-        "user_instruction_binding": {
-            "decision": "approved_for_ue_apartment",
-            "review_sha256": _sha256(fixture["review_path"]),
-            "all_six_checks_explicit": True,
-            "presentation_receipt_file_sha256": fixture["presentation_evidence"][
-                "expected_presentation_receipt_file_sha256"
-            ],
-        },
+        "user_instruction_binding": user_instruction_binding,
         "user_instruction_authority": copy.deepcopy(
             preparation.USER_INSTRUCTION_AUTHORITY
         ),
@@ -1955,13 +1972,82 @@ def _rewrite_freeze_receipt(fixture, *, review=None):
             fixture["receipt_path"].parent,
         ),
         "decision_sha256": decision["decision_sha256"],
-        "presentation_evidence": copy.deepcopy(fixture["presentation_evidence"]),
+        "presentation_evidence": presentation_evidence,
     }
     receipt["receipt_sha256"] = preparation._hash_without(
         receipt,
         "receipt_sha256",
     )
     _write_json(fixture["receipt_path"], receipt)
+
+
+def _use_compact_approval_evidence(
+    fixture,
+    *,
+    rebind_current_readback_to_style_video=False,
+):
+    style_video = Path(
+        fixture["presentation_evidence"]["output_video"]["path"]
+    )
+    style_approval = {
+        "schema": preparation.MOTION_STYLE_APPROVAL_SCHEMA,
+        "status": "approved_for_idle_walking_motion_style",
+        "actions": copy.deepcopy(preparation.ANIMATION_ACTIONS),
+        "evidence_video": _record(style_video),
+    }
+    style_approval["approval_sha256"] = preparation._hash_without(
+        style_approval,
+        "approval_sha256",
+    )
+    style_path = fixture["receipt_path"].parent / "motion_style_approval.json"
+    _write_json(style_path, style_approval)
+    review = contracts.load_json(fixture["review_path"])
+    reviewed_glb = Path(review["outputs"]["animated_glb"]["path"])
+    review_media = review["outputs"]["media"]
+    action_readbacks = {
+        "Idle": {
+            name: review_media["idle_side"][name]
+            for name in ("path", "sha256", "size_bytes")
+        },
+        "Walking": {
+            name: review_media["walking_side"][name]
+            for name in ("path", "sha256", "size_bytes")
+        },
+    }
+    if rebind_current_readback_to_style_video:
+        action_readbacks["Walking"] = _record(style_video)
+    short_readback = {
+        "schema": preparation.CURRENT_ASSET_SHORT_READBACK_SCHEMA,
+        "status": "passed_current_asset_geometry_and_actions",
+        "asset_id": fixture["source_asset"]["asset_id"],
+        "animation_review": _record(fixture["review_path"]),
+        "reviewed_animated_glb": _record(reviewed_glb),
+        "actions": copy.deepcopy(preparation.ANIMATION_ACTIONS),
+        "action_readbacks": action_readbacks,
+        "checks": copy.deepcopy(
+            preparation.CURRENT_ASSET_SHORT_READBACK_CHECKS
+        ),
+    }
+    short_readback["receipt_sha256"] = preparation._hash_without(
+        short_readback,
+        "receipt_sha256",
+    )
+    short_readback_path = (
+        fixture["receipt_path"].parent / "current_asset_short_readback.json"
+    )
+    _write_json(short_readback_path, short_readback)
+    fixture["presentation_evidence"] = {
+        "mode": preparation.MOTION_STYLE_AND_CURRENT_READBACK_MODE,
+        "motion_style_approval": {
+            **_record(style_path),
+            "approval_sha256": style_approval["approval_sha256"],
+        },
+        "current_asset_short_readback": {
+            **_record(short_readback_path),
+            "receipt_sha256": short_readback["receipt_sha256"],
+        },
+    }
+    _rewrite_freeze_receipt(fixture, review=review)
 
 
 def _assert_failed_without_preparation_output(output):
@@ -2284,6 +2370,59 @@ def test_prepares_fresh_canonical_job_and_does_not_rewrite_old_job(
     assert job["sampled_attributes"] == source["sampled_attributes"]
     assert job["request_sha256"] == source["request_sha256"]
     assert old_job.read_bytes() == old_bytes
+
+
+def test_prepares_from_motion_style_baseline_and_current_asset_short_readback(
+    approved_generated_animal,
+    tmp_path,
+):
+    _use_compact_approval_evidence(approved_generated_animal)
+
+    manifest_path = _prepare(
+        approved_generated_animal,
+        tmp_path / "compact_approval_ue_import",
+    )
+    manifest = contracts.load_json(manifest_path)
+
+    assert manifest["presentation_evidence"] == (
+        approved_generated_animal["presentation_evidence"]
+    )
+    assert manifest["presentation_evidence"]["mode"] == (
+        preparation.MOTION_STYLE_AND_CURRENT_READBACK_MODE
+    )
+    for name, expected in (
+        preparation.MOTION_STYLE_AND_CURRENT_READBACK_AUTOMATIC_CHECKS.items()
+    ):
+        assert manifest["automatic_checks"][name] is expected
+    assert not (
+        set(preparation.PRESENTATION_AUTOMATIC_CHECKS)
+        & set(manifest["automatic_checks"])
+    )
+    assert manifest["reviewed_animated_glb"] == _record(
+        Path(
+            contracts.load_json(approved_generated_animal["review_path"])[
+                "outputs"
+            ]["animated_glb"]["path"]
+        )
+    )
+
+
+def test_prepare_rejects_style_video_as_current_review_action_readback(
+    approved_generated_animal,
+    tmp_path,
+):
+    _use_compact_approval_evidence(
+        approved_generated_animal,
+        rebind_current_readback_to_style_video=True,
+    )
+    output = tmp_path / "rejected_style_video_current_geometry"
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="current geometry/action binding is invalid",
+    ):
+        _prepare(approved_generated_animal, output)
+    _assert_failed_without_preparation_output(output)
 
 
 def test_texture_transcode_authenticates_full_graph_and_preserves_non_webp(

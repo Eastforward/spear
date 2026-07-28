@@ -130,6 +130,66 @@ PRESENTATION_AUTOMATIC_CHECKS = {
     "presentation_exact_v4_review_sha256_reauthenticated": True,
     "presentation_output_video_bytes_and_directory_reauthenticated": True,
 }
+MOTION_STYLE_APPROVAL_SCHEMA = (
+    "avengine_generated_animal_motion_style_approval_v1"
+)
+CURRENT_ASSET_SHORT_READBACK_SCHEMA = (
+    "avengine_generated_animal_current_asset_short_readback_v1"
+)
+MOTION_STYLE_AND_CURRENT_READBACK_MODE = (
+    "motion_style_approval_plus_current_asset_short_readback_v1"
+)
+ANIMATION_ACTIONS = ["Idle", "Walking"]
+MOTION_STYLE_APPROVAL_FIELDS = frozenset(
+    {
+        "schema",
+        "status",
+        "actions",
+        "evidence_video",
+        "approval_sha256",
+    }
+)
+CURRENT_ASSET_SHORT_READBACK_CHECKS = {
+    "current_review_action_media_bound": True,
+    "reviewed_animated_glb_bound": True,
+    "idle_action_present": True,
+    "walking_action_present": True,
+}
+CURRENT_ASSET_SHORT_READBACK_FIELDS = frozenset(
+    {
+        "schema",
+        "status",
+        "asset_id",
+        "animation_review",
+        "reviewed_animated_glb",
+        "actions",
+        "action_readbacks",
+        "checks",
+        "receipt_sha256",
+    }
+)
+MOTION_STYLE_AND_CURRENT_READBACK_EVIDENCE_FIELDS = frozenset(
+    {
+        "mode",
+        "motion_style_approval",
+        "current_asset_short_readback",
+    }
+)
+MOTION_STYLE_AND_CURRENT_READBACK_AUTOMATIC_CHECKS = {
+    "motion_style_approval_file_and_video_sha256_reauthenticated": True,
+    "motion_style_idle_walking_approval_reauthenticated": True,
+    "current_asset_short_readback_file_and_video_sha256_reauthenticated": True,
+    "current_reviewed_glb_geometry_and_idle_walking_binding_reauthenticated": True,
+}
+
+
+def _has_idle_walking_actions(value: Any) -> bool:
+    return bool(
+        isinstance(value, list)
+        and len(value) == 2
+        and all(isinstance(action, str) for action in value)
+        and set(value) == set(ANIMATION_ACTIONS)
+    )
 DECISION_CHECK_FIELDS = frozenset(
     {
         "walking_direction",
@@ -3287,6 +3347,247 @@ def _require_unchanged_guard(
         raise contracts.ContractError(f"{label} identity changed during authentication")
 
 
+def load_motion_style_approval(
+    path: Path,
+    *,
+    expected_file_sha256: str,
+) -> tuple[Path, dict[str, Any], dict[str, Any], Path]:
+    """Load the reusable Idle/Walking style approval without presentation QA."""
+
+    expected_file_sha256 = _require_sha256(
+        expected_file_sha256,
+        "expected motion-style approval file sha256",
+    )
+    path = _direct_file(path, "motion-style approval")
+    if _sha256_file(path) != expected_file_sha256:
+        raise contracts.ContractError(
+            "motion-style approval does not match the expected SHA-256"
+        )
+    payload = _load_finite_json(path, "motion-style approval")
+    if (
+        set(payload) != MOTION_STYLE_APPROVAL_FIELDS
+        or payload.get("schema") != MOTION_STYLE_APPROVAL_SCHEMA
+        or payload.get("status") != "approved_for_idle_walking_motion_style"
+        or not _has_idle_walking_actions(payload.get("actions"))
+        or payload.get("approval_sha256")
+        != _hash_without(payload, "approval_sha256")
+    ):
+        raise contracts.ContractError(
+            "motion-style approval contract is invalid"
+        )
+    evidence_video = _verify_descriptor(
+        payload.get("evidence_video"),
+        "motion-style evidence video",
+    )
+    if payload["evidence_video"] != _absolute_record(evidence_video):
+        raise contracts.ContractError(
+            "motion-style evidence video descriptor is non-canonical"
+        )
+    descriptor = {
+        **_absolute_record(path),
+        "approval_sha256": payload["approval_sha256"],
+    }
+    return path, payload, descriptor, evidence_video
+
+
+def load_current_asset_short_readback(
+    path: Path,
+    *,
+    expected_file_sha256: str,
+    expected_asset_id: str,
+    review_path: Path,
+    review_payload: Mapping[str, Any],
+    reviewed_animated_glb: Path,
+) -> tuple[Path, dict[str, Any], dict[str, Any], dict[str, Path]]:
+    """Load the minimal current-geometry/action readback receipt."""
+
+    expected_file_sha256 = _require_sha256(
+        expected_file_sha256,
+        "expected current-asset short-readback file sha256",
+    )
+    path = _direct_file(path, "current-asset short-readback receipt")
+    if _sha256_file(path) != expected_file_sha256:
+        raise contracts.ContractError(
+            "current-asset short-readback receipt does not match the expected "
+            "SHA-256"
+        )
+    review_path = _direct_file(review_path, "current animation review")
+    reviewed_animated_glb = _direct_file(
+        reviewed_animated_glb,
+        "current reviewed animated GLB",
+    )
+    payload = _load_finite_json(
+        path,
+        "current-asset short-readback receipt",
+    )
+    review_media = (
+        review_payload.get("outputs", {}).get("media")
+        if isinstance(review_payload, Mapping)
+        and isinstance(review_payload.get("outputs"), Mapping)
+        else None
+    )
+    if (
+        not isinstance(review_media, Mapping)
+        or not isinstance(review_media.get("idle_side"), Mapping)
+        or not isinstance(review_media.get("walking_side"), Mapping)
+        or not {"path", "sha256", "size_bytes"}.issubset(
+            review_media["idle_side"]
+        )
+        or not {"path", "sha256", "size_bytes"}.issubset(
+            review_media["walking_side"]
+        )
+    ):
+        raise contracts.ContractError(
+            "current animation review lacks authenticated Idle/Walking side media"
+        )
+    expected_action_readbacks = {
+        "Idle": {
+            name: review_media["idle_side"][name]
+            for name in ("path", "sha256", "size_bytes")
+        },
+        "Walking": {
+            name: review_media["walking_side"][name]
+            for name in ("path", "sha256", "size_bytes")
+        },
+    }
+    if (
+        set(payload) != CURRENT_ASSET_SHORT_READBACK_FIELDS
+        or payload.get("schema") != CURRENT_ASSET_SHORT_READBACK_SCHEMA
+        or payload.get("status")
+        != "passed_current_asset_geometry_and_actions"
+        or payload.get("asset_id") != expected_asset_id
+        or payload.get("animation_review") != _absolute_record(review_path)
+        or payload.get("reviewed_animated_glb")
+        != _absolute_record(reviewed_animated_glb)
+        or not _has_idle_walking_actions(payload.get("actions"))
+        or payload.get("action_readbacks") != expected_action_readbacks
+        or payload.get("checks") != CURRENT_ASSET_SHORT_READBACK_CHECKS
+        or payload.get("receipt_sha256")
+        != _hash_without(payload, "receipt_sha256")
+    ):
+        raise contracts.ContractError(
+            "current-asset short-readback contract or current geometry/action "
+            "binding is invalid"
+        )
+    readback_videos = {
+        action: _verify_descriptor(
+            descriptor,
+            f"current-asset {action} short-readback video",
+        )
+        for action, descriptor in expected_action_readbacks.items()
+    }
+    if any(
+        expected_action_readbacks[action] != _absolute_record(path)
+        for action, path in readback_videos.items()
+    ):
+        raise contracts.ContractError(
+            "current-asset action readback descriptor is non-canonical"
+        )
+    descriptor = {
+        **_absolute_record(path),
+        "receipt_sha256": payload["receipt_sha256"],
+    }
+    return path, payload, descriptor, readback_videos
+
+
+def load_motion_style_and_current_readback_evidence(
+    value: Any,
+    *,
+    expected_asset_id: str,
+    review_path: Path,
+    review_payload: Mapping[str, Any],
+    reviewed_animated_glb: Path,
+) -> tuple[dict[str, Any], dict[str, Path]]:
+    if (
+        not isinstance(value, Mapping)
+        or set(value)
+        != MOTION_STYLE_AND_CURRENT_READBACK_EVIDENCE_FIELDS
+        or value.get("mode") != MOTION_STYLE_AND_CURRENT_READBACK_MODE
+    ):
+        raise contracts.ContractError(
+            "motion-style/current-readback evidence fields are invalid"
+        )
+    style_descriptor = value.get("motion_style_approval")
+    readback_descriptor = value.get("current_asset_short_readback")
+    if (
+        not isinstance(style_descriptor, Mapping)
+        or set(style_descriptor)
+        != {"path", "sha256", "size_bytes", "approval_sha256"}
+        or not isinstance(readback_descriptor, Mapping)
+        or set(readback_descriptor)
+        != {"path", "sha256", "size_bytes", "receipt_sha256"}
+        or not isinstance(style_descriptor.get("path"), str)
+        or not Path(style_descriptor["path"]).is_absolute()
+        or not isinstance(readback_descriptor.get("path"), str)
+        or not Path(readback_descriptor["path"]).is_absolute()
+    ):
+        raise contracts.ContractError(
+            "motion-style/current-readback evidence descriptors are invalid"
+        )
+    (
+        style_path,
+        style_payload,
+        canonical_style_descriptor,
+        style_video,
+    ) = load_motion_style_approval(
+        Path(style_descriptor["path"]),
+        expected_file_sha256=_require_sha256(
+            style_descriptor.get("sha256"),
+            "motion-style approval descriptor sha256",
+        ),
+    )
+    (
+        readback_path,
+        readback_payload,
+        canonical_readback_descriptor,
+        readback_videos,
+    ) = load_current_asset_short_readback(
+        Path(readback_descriptor["path"]),
+        expected_file_sha256=_require_sha256(
+            readback_descriptor.get("sha256"),
+            "current-asset short-readback descriptor sha256",
+        ),
+        expected_asset_id=expected_asset_id,
+        review_path=review_path,
+        review_payload=review_payload,
+        reviewed_animated_glb=reviewed_animated_glb,
+    )
+    if (
+        style_descriptor != canonical_style_descriptor
+        or readback_descriptor != canonical_readback_descriptor
+        or style_descriptor.get("approval_sha256")
+        != style_payload["approval_sha256"]
+        or readback_descriptor.get("receipt_sha256")
+        != readback_payload["receipt_sha256"]
+    ):
+        raise contracts.ContractError(
+            "motion-style/current-readback evidence is non-canonical"
+        )
+    if any(
+        style_video == readback_video
+        or _sha256_file(style_video) == _sha256_file(readback_video)
+        for readback_video in readback_videos.values()
+    ):
+        raise contracts.ContractError(
+            "motion-style baseline video cannot stand in for the current-asset "
+            "geometry/action readback"
+        )
+    canonical = {
+        "mode": MOTION_STYLE_AND_CURRENT_READBACK_MODE,
+        "motion_style_approval": canonical_style_descriptor,
+        "current_asset_short_readback": canonical_readback_descriptor,
+    }
+    return canonical, {
+        "motion_style_approval": style_path,
+        "motion_style_video": style_video,
+        "current_asset_short_readback": readback_path,
+        **{
+            f"current_asset_{action.lower()}_short_readback_video": path
+            for action, path in readback_videos.items()
+        },
+    }
+
+
 def load_presentation_evidence(
     value: Any,
     *,
@@ -3425,6 +3726,9 @@ def load_animation_decision_freeze_receipt(
     source_registry_validation_mode: str,
     source_asset_path: Path,
     review_path: Path,
+    review_payload: Mapping[str, Any],
+    reviewed_animated_glb: Path,
+    expected_asset_id: str,
     decision_path: Path,
     decision_payload: Mapping[str, Any],
     authenticated_review_artifact_count: int,
@@ -3451,6 +3755,27 @@ def load_animation_decision_freeze_receipt(
     instruction = payload.get("user_instruction_binding")
     authority = payload.get("user_instruction_authority")
     review_sha256 = _sha256_file(review_path)
+    evidence_value = payload.get("presentation_evidence")
+    compact_evidence = (
+        isinstance(evidence_value, Mapping)
+        and evidence_value.get("mode")
+        == MOTION_STYLE_AND_CURRENT_READBACK_MODE
+    )
+    expected_instruction_fields = (
+        {
+            "decision",
+            "motion_style_approval_file_sha256",
+            "current_asset_short_readback_file_sha256",
+            "current_asset_readback_is_machine_gate",
+        }
+        if compact_evidence
+        else {
+            "decision",
+            "review_sha256",
+            "all_six_checks_explicit",
+            "presentation_receipt_file_sha256",
+        }
+    )
     if (
         set(payload) != DECISION_FREEZE_RECEIPT_FIELDS
         or payload.get("schema") != DECISION_FREEZE_RECEIPT_SCHEMA
@@ -3464,16 +3789,20 @@ def load_animation_decision_freeze_receipt(
         != source_registry_validation_mode
         or payload.get("expected_animation_review_file_sha256") != review_sha256
         or not isinstance(instruction, Mapping)
-        or set(instruction)
-        != {
-            "decision",
-            "review_sha256",
-            "all_six_checks_explicit",
-            "presentation_receipt_file_sha256",
-        }
+        or set(instruction) != expected_instruction_fields
         or instruction.get("decision") != "approved_for_ue_apartment"
-        or instruction.get("review_sha256") != review_sha256
-        or instruction.get("all_six_checks_explicit") is not True
+        or (
+            not compact_evidence
+            and (
+                instruction.get("review_sha256") != review_sha256
+                or instruction.get("all_six_checks_explicit") is not True
+            )
+        )
+        or (
+            compact_evidence
+            and instruction.get("current_asset_readback_is_machine_gate")
+            is not True
+        )
         or authority != USER_INSTRUCTION_AUTHORITY
         or isinstance(payload.get("authenticated_review_artifact_count"), bool)
         or not isinstance(
@@ -3521,19 +3850,41 @@ def load_animation_decision_freeze_receipt(
         raise contracts.ContractError(
             "animation decision freeze receipt decision identity changed"
         )
-    presentation_evidence, _presentation_payload, _output_video = (
-        load_presentation_evidence(
-            payload.get("presentation_evidence"),
-            review_path=review_path,
+    if compact_evidence:
+        presentation_evidence, _compact_paths = (
+            load_motion_style_and_current_readback_evidence(
+                evidence_value,
+                expected_asset_id=expected_asset_id,
+                review_path=review_path,
+                review_payload=review_payload,
+                reviewed_animated_glb=reviewed_animated_glb,
+            )
         )
-    )
-    if (
-        instruction.get("presentation_receipt_file_sha256")
-        != presentation_evidence["expected_presentation_receipt_file_sha256"]
-    ):
-        raise contracts.ContractError(
-            "animation decision freeze receipt presentation instruction binding changed"
+        if (
+            instruction.get("motion_style_approval_file_sha256")
+            != presentation_evidence["motion_style_approval"]["sha256"]
+            or instruction.get("current_asset_short_readback_file_sha256")
+            != presentation_evidence["current_asset_short_readback"]["sha256"]
+        ):
+            raise contracts.ContractError(
+                "animation decision freeze receipt compact approval instruction "
+                "binding changed"
+            )
+    else:
+        presentation_evidence, _presentation_payload, _output_video = (
+            load_presentation_evidence(
+                evidence_value,
+                review_path=review_path,
+            )
         )
+        if (
+            instruction.get("presentation_receipt_file_sha256")
+            != presentation_evidence["expected_presentation_receipt_file_sha256"]
+        ):
+            raise contracts.ContractError(
+                "animation decision freeze receipt presentation instruction "
+                "binding changed"
+            )
     return path, payload, presentation_evidence
 
 
@@ -3916,10 +4267,41 @@ def _authenticate_import_authority(
         source_registry_validation_mode=source_registry_validation_mode,
         source_asset_path=source_path,
         review_path=review_path,
+        review_payload=review,
+        reviewed_animated_glb=animated_glb,
+        expected_asset_id=source_asset["asset_id"],
         decision_path=decision_path,
         decision_payload=decision,
         authenticated_review_artifact_count=len(review_artifacts),
     )
+    compact_approval_evidence = (
+        presentation_evidence.get("mode")
+        == MOTION_STYLE_AND_CURRENT_READBACK_MODE
+    )
+    if compact_approval_evidence:
+        _canonical_compact_evidence, compact_paths = (
+            load_motion_style_and_current_readback_evidence(
+                presentation_evidence,
+                expected_asset_id=source_asset["asset_id"],
+                review_path=review_path,
+                review_payload=review,
+                reviewed_animated_glb=animated_glb,
+            )
+        )
+        approval_evidence_paths = set(compact_paths.values())
+        presentation_directory_guard = None
+    else:
+        approval_evidence_paths = {
+            Path(presentation_evidence["presentation_receipt"]["path"]),
+            Path(presentation_evidence["output_video"]["path"]),
+        }
+        presentation_root = Path(
+            presentation_evidence["presentation_receipt"]["path"]
+        ).parent
+        presentation_directory_guard = _directory_guard(
+            presentation_root,
+            "owner-review presentation directory",
+        )
     guarded_paths = {
         source_registry_path,
         source_path,
@@ -3929,16 +4311,12 @@ def _authenticate_import_authority(
         animated_glb,
         *source_artifacts.values(),
         *review_artifacts.values(),
-        Path(presentation_evidence["presentation_receipt"]["path"]),
-        Path(presentation_evidence["output_video"]["path"]),
+        *approval_evidence_paths,
     }
     file_guards = {
         str(path): _file_guard(path, f"authority artifact {path.name}")
         for path in sorted(guarded_paths, key=str)
     }
-    presentation_root = Path(
-        presentation_evidence["presentation_receipt"]["path"]
-    ).parent
     return {
         "source_registry_path": source_registry_path,
         "source_registry_payload": source_registry_payload,
@@ -3957,11 +4335,9 @@ def _authenticate_import_authority(
         "freeze_receipt_path": freeze_receipt_path,
         "freeze_receipt": freeze_receipt,
         "presentation_evidence": presentation_evidence,
+        "compact_approval_evidence": compact_approval_evidence,
         "file_guards": file_guards,
-        "presentation_directory_guard": _directory_guard(
-            presentation_root,
-            "owner-review presentation directory",
-        ),
+        "presentation_directory_guard": presentation_directory_guard,
     }
 
 
@@ -4028,6 +4404,11 @@ def prepare_import(
     freeze_receipt_path = authority["freeze_receipt_path"]
     freeze_receipt = authority["freeze_receipt"]
     presentation_evidence = authority["presentation_evidence"]
+    approval_automatic_checks = (
+        MOTION_STYLE_AND_CURRENT_READBACK_AUTOMATIC_CHECKS
+        if authority["compact_approval_evidence"]
+        else PRESENTATION_AUTOMATIC_CHECKS
+    )
 
     output_root = _new_output_path(Path(output_root), "output")
     output_root.parent.mkdir(parents=True, exist_ok=True)
@@ -4180,7 +4561,7 @@ def prepare_import(
                 "all_six_animation_render_encode_receipts_reauthenticated": True,
                 "human_animation_approval_matched_external_expected_sha256": True,
                 "animation_decision_freeze_receipt_reauthenticated": True,
-                **PRESENTATION_AUTOMATIC_CHECKS,
+                **approval_automatic_checks,
                 "user_instruction_authority_preserved_without_cryptographic_upgrade": True,
                 "reviewed_glb_has_embedded_skin_weights_and_exact_idle_walking_actions": True,
                 "job_identity_and_attributes_copied_exactly_from_source_asset_v2": True,
