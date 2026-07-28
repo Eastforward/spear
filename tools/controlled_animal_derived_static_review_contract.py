@@ -20,6 +20,8 @@ from tools import controlled_source_asset_schema as contracts
 REVIEW_SCHEMA = "avengine_controlled_animal_derived_static_review_v1"
 REVIEW_STATUS = "rendered_pending_human_derived_static_review"
 NEXT_GATE = "explicit_human_derived_static_review_decision"
+REPAIR_MANIFEST_SCHEMA = "avengine_pixal_same_mesh_mirrored_limb_repair_v1"
+REPAIR_IMPLEMENTATION_CONTRACT = "bounded_local_surface_identity_v2"
 VIEWS = ("front", "back", "side", "top", "quarter")
 FRONT_AXES = frozenset({"negative-x", "positive-x", "negative-y", "positive-y"})
 HUMAN_CHECK_FIELDS = frozenset(
@@ -55,6 +57,23 @@ AUTOMATIC_CHECK_FIELDS = frozenset(
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
+REPAIR_CHECK_FIELDS = frozenset(
+    {
+        "authenticated_same_pixal_mesh_only",
+        "near_side_front_and_hind_donor_masks_passed",
+        "height_independent_source_tail_identified",
+        "tail_region_never_selected_for_replacement_or_mirroring",
+        "source_topology_outside_corridors_already_closed",
+        "four_independent_low_limb_chains",
+        "no_low_cross_limb_membrane",
+        "one_connected_output_component",
+        "watertight_manifold_topology",
+        "output_within_authenticated_source_envelope",
+        "outside_corridor_position_index_uv_material_preserved",
+        "authenticated_source_tail_surface_preserved",
+        "embedded_textures_and_pbr_unchanged",
+    }
+)
 
 
 class DerivedStaticReviewContractError(ValueError):
@@ -116,6 +135,14 @@ def _sha256(value: Any, label: str) -> str:
 def _positive_integer(value: Any, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise DerivedStaticReviewContractError(f"{label} must be a positive integer")
+    return value
+
+
+def _nonnegative_integer(value: Any, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise DerivedStaticReviewContractError(
+            f"{label} must be a nonnegative integer"
+        )
     return value
 
 
@@ -200,6 +227,460 @@ def _view_evidence(
             absolute=False,
         )
     return copy.deepcopy(dict(evidence))
+
+
+def _surface_identity_audit(value: Any, label: str) -> Mapping[str, Any]:
+    audit = _exact(
+        value,
+        {
+            "method",
+            "expected_triangle_count",
+            "actual_matching_triangle_count",
+            "missing_triangle_count",
+            "unexpected_duplicate_triangle_count",
+            "expected_signature_sha256",
+            "missing_signature_sha256",
+            "unexpected_duplicate_signature_sha256",
+            "passed",
+        },
+        label,
+    )
+    if (
+        audit["method"]
+        != "exact_float32_position_uv_material_triangle_multiset_with_winding_preserved"
+    ):
+        raise DerivedStaticReviewContractError(
+            f"{label} surface-identity method changed"
+        )
+    expected = _positive_integer(
+        audit["expected_triangle_count"],
+        f"{label}.expected_triangle_count",
+    )
+    actual = _positive_integer(
+        audit["actual_matching_triangle_count"],
+        f"{label}.actual_matching_triangle_count",
+    )
+    missing = _nonnegative_integer(
+        audit["missing_triangle_count"],
+        f"{label}.missing_triangle_count",
+    )
+    duplicates = _nonnegative_integer(
+        audit["unexpected_duplicate_triangle_count"],
+        f"{label}.unexpected_duplicate_triangle_count",
+    )
+    for name in (
+        "expected_signature_sha256",
+        "missing_signature_sha256",
+        "unexpected_duplicate_signature_sha256",
+    ):
+        _sha256(audit[name], f"{label}.{name}")
+    if (
+        audit["passed"] is not True
+        or actual != expected
+        or missing != 0
+        or duplicates != 0
+    ):
+        raise DerivedStaticReviewContractError(
+            f"{label} did not preserve the complete source-surface identity"
+        )
+    return audit
+
+
+def _closed_topology_audit(value: Any, label: str) -> Mapping[str, Any]:
+    audit = _mapping(value, label)
+    if (
+        audit.get("method")
+        != "exact_position_logical_edge_incidence_outside_authorized_corridors"
+        or audit.get("passed") is not True
+        or audit.get("failure_meaning") is not None
+        or audit.get("immutable_component_count") != 1
+        or audit.get("outside_corridor_boundary_edges") != 0
+        or audit.get("outside_corridor_edges_over_two_faces") != 0
+        or audit.get("outside_corridor_orientation_mismatch_edges") != 0
+        or audit.get("degenerate_triangle_count") != 0
+    ):
+        raise DerivedStaticReviewContractError(
+            f"{label} does not prove closed immutable topology"
+        )
+    for name in (
+        "raw_vertex_count",
+        "logical_position_count",
+        "triangle_count",
+        "logical_edge_count",
+        "logical_component_count",
+        "immutable_component_count",
+    ):
+        _positive_integer(audit.get(name), f"{label}.{name}")
+    _nonnegative_integer(
+        audit.get("wholly_mutable_component_count"),
+        f"{label}.wholly_mutable_component_count",
+    )
+    return audit
+
+
+def validate_bounded_repair_manifest(value: Any) -> dict[str, Any]:
+    """Validate the current bounded local repair result without filesystem I/O.
+
+    The original v1 producer used the same schema string while globally voxel
+    remeshing, smoothing, and decimating the animal.  The implementation
+    contract and export readback are therefore mandatory parts of the schema
+    identity; a schema-only consumer is unsafe.
+    """
+
+    manifest = _exact(
+        value,
+        {
+            "schema",
+            "implementation_contract",
+            "created_at",
+            "lineage",
+            "repair_spec",
+            "coordinate_contract",
+            "source_pbr_contract",
+            "tail_source_surface",
+            "mask_audit",
+            "face_scope",
+            "source_topology_preflight",
+            "mutation",
+            "topology",
+            "low_slice_dynamic_geometry_gate",
+            "output_envelope",
+            "export_readback",
+            "checks",
+            "decision",
+            "output",
+            "formal_dataset_registration_authorized",
+        },
+        "bounded geometry repair manifest",
+    )
+    _finite_json(manifest, "bounded geometry repair manifest")
+    if (
+        manifest["schema"] != REPAIR_MANIFEST_SCHEMA
+        or manifest["implementation_contract"] != REPAIR_IMPLEMENTATION_CONTRACT
+    ):
+        raise DerivedStaticReviewContractError(
+            "bounded geometry repair schema/implementation contract changed"
+        )
+    _text(manifest["created_at"], "bounded repair created_at")
+    if manifest["formal_dataset_registration_authorized"] is not False:
+        raise DerivedStaticReviewContractError(
+            "bounded repair cannot authorize formal registration"
+        )
+
+    lineage = _exact(
+        manifest["lineage"],
+        {
+            "instance_id",
+            "approved_reference",
+            "owner_review",
+            "owner_review_decision",
+            "owner_single_tail_gate",
+            "pixal_manifest",
+            "pixal_source",
+            "static_decision",
+            "static_decision_state",
+            "raw_four_limbs_usable",
+            "raw_pose_riggable",
+        },
+        "bounded repair lineage",
+    )
+    _identifier(lineage["instance_id"], "bounded repair lineage.instance_id")
+    for name in (
+        "approved_reference",
+        "owner_review",
+        "pixal_manifest",
+        "pixal_source",
+        "static_decision",
+    ):
+        _file_record(
+            lineage[name],
+            f"bounded repair lineage.{name}",
+            absolute=True,
+        )
+    if (
+        lineage["owner_review_decision"] != "approved_for_pixal3d"
+        or lineage["owner_single_tail_gate"] != "passed"
+        or lineage["static_decision_state"] != "rejected"
+        or lineage["raw_four_limbs_usable"] is not False
+        or lineage["raw_pose_riggable"] is not False
+    ):
+        raise DerivedStaticReviewContractError(
+            "bounded repair lineage changed the frozen raw decisions"
+        )
+
+    repair_spec = _exact(
+        manifest["repair_spec"],
+        {
+            "source_side",
+            "head_direction",
+            "front_foot_x_fraction",
+            "front_attachment_x_fraction",
+            "hind_foot_x_fraction",
+            "hind_attachment_x_fraction",
+            "attachment_height_fraction",
+            "foot_half_width_fraction",
+            "attachment_half_width_fraction",
+            "source_side_guard_fraction",
+            "central_attachment_bridge_start_fraction",
+            "mirrored_attachment_taper_start_fraction",
+            "mirrored_attachment_top_lateral_scale",
+            "tail_protection_x_fraction",
+            "tail_protection_height_fraction",
+            "low_slice_height_fraction",
+        },
+        "bounded repair spec",
+    )
+    if repair_spec["source_side"] not in {"positive-y", "negative-y"}:
+        raise DerivedStaticReviewContractError("bounded repair source side changed")
+    if repair_spec["head_direction"] not in {"positive-x", "negative-x"}:
+        raise DerivedStaticReviewContractError("bounded repair head direction changed")
+
+    source_pbr = _exact(
+        manifest["source_pbr_contract"],
+        {"payload_sha256", "embedded_image_bytes_compared"},
+        "bounded repair source PBR contract",
+    )
+    _sha256(source_pbr["payload_sha256"], "bounded repair source PBR payload")
+    if source_pbr["embedded_image_bytes_compared"] is not True:
+        raise DerivedStaticReviewContractError(
+            "bounded repair did not compare embedded source images"
+        )
+
+    tail = _mapping(manifest["tail_source_surface"], "bounded repair tail surface")
+    if (
+        tail.get("method")
+        != "most_posterior_authenticated_source_surface_component_height_independent"
+        or tail.get("height_used_for_selection") is not False
+        or tail.get("passed") is not True
+        or tail.get("rejection_reasons") != []
+    ):
+        raise DerivedStaticReviewContractError(
+            "bounded repair lacks a passed height-independent source-tail proof"
+        )
+    _positive_integer(tail.get("vertex_count"), "bounded repair tail vertex_count")
+
+    mask = _mapping(manifest["mask_audit"], "bounded repair mask audit")
+    if (
+        mask.get("passed") is not True
+        or mask.get("tail_protected_donor_overlap_vertex_count") != 0
+        or mask.get("tail_protected_replacement_overlap_vertex_count") != 0
+    ):
+        raise DerivedStaticReviewContractError(
+            "bounded repair mask escaped the authenticated limb corridors"
+        )
+
+    face_scope = _exact(
+        manifest["face_scope"],
+        {
+            "source_triangle_count",
+            "mutable_triangle_count",
+            "donor_triangle_count",
+            "immutable_triangle_count",
+            "tail_triangle_count",
+            "mutation_rule",
+        },
+        "bounded repair face scope",
+    )
+    source_triangles = _positive_integer(
+        face_scope["source_triangle_count"],
+        "bounded repair source_triangle_count",
+    )
+    mutable_triangles = _positive_integer(
+        face_scope["mutable_triangle_count"],
+        "bounded repair mutable_triangle_count",
+    )
+    immutable_triangles = _positive_integer(
+        face_scope["immutable_triangle_count"],
+        "bounded repair immutable_triangle_count",
+    )
+    if (
+        mutable_triangles + immutable_triangles != source_triangles
+        or face_scope["mutation_rule"]
+        != "only_triangles_wholly_inside_limb_corridor_and_not_on_authenticated_tail_surface"
+    ):
+        raise DerivedStaticReviewContractError(
+            "bounded repair face-scope accounting changed"
+        )
+
+    _closed_topology_audit(
+        manifest["source_topology_preflight"],
+        "bounded repair source topology preflight",
+    )
+    mutation = _exact(
+        manifest["mutation"],
+        {
+            "mirrored_geometry_source",
+            "external_geometry_inputs",
+            "external_skeleton_inputs",
+            "external_weight_inputs",
+            "external_material_inputs",
+            "external_texture_inputs",
+            "animation_inputs",
+            "tail_geometry_selected_for_mirroring",
+            "whole_animal_voxel_remesh",
+            "whole_animal_smoothing",
+            "whole_animal_decimation",
+            "base_edit",
+            "donor_edit",
+            "mirrored_attachment",
+            "local_weld",
+        },
+        "bounded repair mutation",
+    )
+    if (
+        mutation["mirrored_geometry_source"]
+        != "same_authenticated_pixal_mesh_only"
+        or mutation["tail_geometry_selected_for_mirroring"] is not False
+        or mutation["whole_animal_voxel_remesh"] is not False
+        or mutation["whole_animal_smoothing"] is not False
+        or mutation["whole_animal_decimation"] is not False
+        or any(
+            mutation[name] != []
+            for name in (
+                "external_geometry_inputs",
+                "external_skeleton_inputs",
+                "external_weight_inputs",
+                "external_material_inputs",
+                "external_texture_inputs",
+                "animation_inputs",
+            )
+        )
+    ):
+        raise DerivedStaticReviewContractError(
+            "bounded repair mutation widened beyond the local Pixal surface"
+        )
+
+    topology = _exact(
+        manifest["topology"],
+        {
+            "raw_blender_after_local_weld",
+            "exact_position_logical_after_local_weld",
+        },
+        "bounded repair output topology",
+    )
+    _mapping(
+        topology["raw_blender_after_local_weld"],
+        "bounded repair Blender topology",
+    )
+    _closed_topology_audit(
+        topology["exact_position_logical_after_local_weld"],
+        "bounded repair output logical topology",
+    )
+
+    low_slice = _mapping(
+        manifest["low_slice_dynamic_geometry_gate"],
+        "bounded repair low-slice gate",
+    )
+    low_slice_checks = _mapping(
+        low_slice.get("checks"),
+        "bounded repair low-slice checks",
+    )
+    if (
+        low_slice.get("method")
+        != "four_disconnected_floor_to_attachment_induced_components"
+        or low_slice.get("passed") is not True
+        or low_slice.get("rejection_reasons") != []
+        or not low_slice_checks
+        or any(value is not True for value in low_slice_checks.values())
+    ):
+        raise DerivedStaticReviewContractError(
+            "bounded repair low-slice dynamic gate did not pass"
+        )
+
+    envelope = _mapping(
+        manifest["output_envelope"],
+        "bounded repair output envelope",
+    )
+    if envelope.get("passed") is not True or envelope.get("allowed_range") != [
+        -0.06,
+        1.06,
+    ]:
+        raise DerivedStaticReviewContractError(
+            "bounded repair output escaped the authenticated source envelope"
+        )
+
+    export = _exact(
+        manifest["export_readback"],
+        {"immutable_outside_corridor_surface", "tail_surface", "pbr"},
+        "bounded repair export readback",
+    )
+    _surface_identity_audit(
+        export["immutable_outside_corridor_surface"],
+        "bounded repair immutable surface readback",
+    )
+    _surface_identity_audit(
+        export["tail_surface"],
+        "bounded repair tail surface readback",
+    )
+    pbr = _exact(
+        export["pbr"],
+        {
+            "method",
+            "source_payload_sha256",
+            "output_payload_sha256",
+            "embedded_image_sha256s",
+            "passed",
+        },
+        "bounded repair PBR readback",
+    )
+    source_payload = _sha256(
+        pbr["source_payload_sha256"],
+        "bounded repair PBR source payload",
+    )
+    output_payload = _sha256(
+        pbr["output_payload_sha256"],
+        "bounded repair PBR output payload",
+    )
+    embedded_images = pbr["embedded_image_sha256s"]
+    if not isinstance(embedded_images, list):
+        raise DerivedStaticReviewContractError(
+            "bounded repair embedded image hashes must be a list"
+        )
+    for index, digest in enumerate(embedded_images):
+        _sha256(digest, f"bounded repair embedded image {index}")
+    if (
+        pbr["method"]
+        != "source_glb_pbr_bindings_and_embedded_bytes_restored_exactly"
+        or pbr["passed"] is not True
+        or source_payload != output_payload
+        or source_payload != source_pbr["payload_sha256"]
+    ):
+        raise DerivedStaticReviewContractError(
+            "bounded repair PBR export readback changed"
+        )
+
+    checks = _exact(
+        manifest["checks"],
+        REPAIR_CHECK_FIELDS,
+        "bounded repair checks",
+    )
+    if any(value is not True for value in checks.values()):
+        raise DerivedStaticReviewContractError(
+            "all bounded repair checks must pass"
+        )
+    decision = _exact(
+        manifest["decision"],
+        {
+            "status",
+            "rejection_reasons",
+            "cat_semantic_retarget_authorized",
+            "next_gate",
+        },
+        "bounded repair decision",
+    )
+    if (
+        decision["status"]
+        != "passed_automatic_geometry_gate_pending_multiview_review"
+        or decision["rejection_reasons"] != []
+        or decision["cat_semantic_retarget_authorized"] is not False
+        or decision["next_gate"]
+        != "multiview_one_tail_four_limb_no_stray_visual_review"
+    ):
+        raise DerivedStaticReviewContractError(
+            "bounded repair decision is not a passed pending-review result"
+        )
+    _file_record(manifest["output"], "bounded repair output", absolute=True)
+    return copy.deepcopy(dict(manifest))
 
 
 def validate_review(value: Any) -> dict[str, Any]:
@@ -351,7 +832,10 @@ def validate_review(value: Any) -> dict[str, Any]:
         "independent_geometry_audit",
     ):
         _file_record(geometry[name], f"derived_geometry.{name}", absolute=True)
-    _text(geometry["repair_method"], "derived_geometry.repair_method")
+    if geometry["repair_method"] != REPAIR_IMPLEMENTATION_CONTRACT:
+        raise DerivedStaticReviewContractError(
+            "derived geometry repair implementation contract changed"
+        )
     if geometry["lineage_kind"] != "bounded_same_pixal_mesh_repair":
         raise DerivedStaticReviewContractError("derived geometry lineage kind changed")
     automatic_statuses = _exact(

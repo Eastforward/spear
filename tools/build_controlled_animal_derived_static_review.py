@@ -452,14 +452,25 @@ def _validate_geometry_closure(
     )
     repair_manifest = _strict_object(repair_manifest_path, "geometry repair manifest")
     geometry_audit = _strict_object(geometry_audit_path, "independent geometry audit")
-    if (
-        repair_manifest.get("schema")
-        != "avengine_pixal_same_mesh_mirrored_limb_repair_v1"
-        or repair_manifest.get("formal_dataset_registration_authorized") is not False
-        or repair_manifest.get("lineage", {}).get("instance_id")
-        != request["instance_id"]
+    untrusted_lineage = repair_manifest.get("lineage")
+    if isinstance(untrusted_lineage, Mapping) and (
+        untrusted_lineage.get("static_decision_state") != "rejected"
+        or untrusted_lineage.get("raw_four_limbs_usable") is not False
+        or untrusted_lineage.get("raw_pose_riggable") is not False
     ):
-        raise contracts.ContractError("geometry repair manifest boundary changed")
+        raise contracts.ContractError("repair manifest upgraded the raw rejection")
+    try:
+        repair_manifest = review_contract.validate_bounded_repair_manifest(
+            repair_manifest
+        )
+    except review_contract.DerivedStaticReviewContractError as error:
+        raise contracts.ContractError(
+            f"geometry repair manifest boundary changed: {error}"
+        ) from error
+    if (
+        repair_manifest["lineage"]["instance_id"] != request["instance_id"]
+    ):
+        raise contracts.ContractError("geometry repair manifest identity changed")
     _descriptor_matches(
         repair_manifest.get("lineage", {}).get("pixal_source"),
         source["raw_glb"],
@@ -480,6 +491,10 @@ def _validate_geometry_closure(
         source["decision_path"],
         "repair manifest raw static rejection",
     )
+    _descriptor_path(
+        repair_manifest.get("lineage", {}).get("owner_review"),
+        "repair manifest owner review",
+    )
     if (
         repair_manifest.get("lineage", {}).get("static_decision_state") != "rejected"
         or repair_manifest.get("lineage", {}).get("raw_four_limbs_usable") is not False
@@ -491,24 +506,6 @@ def _validate_geometry_closure(
         repaired_glb,
         "geometry repair output",
     )
-    repair_checks = repair_manifest.get("checks")
-    expected_repair_checks = {
-        "authenticated_same_pixal_mesh_only",
-        "near_side_front_and_hind_donor_masks_passed",
-        "tail_region_never_selected_for_replacement_or_mirroring",
-        "single_tail_preserved_by_protected_edit_scope",
-        "four_independent_low_limb_chains",
-        "no_low_cross_limb_membrane",
-        "one_connected_output_component",
-        "watertight_manifold_topology",
-        "output_within_authenticated_source_envelope",
-    }
-    if (
-        not isinstance(repair_checks, Mapping)
-        or not expected_repair_checks.issubset(repair_checks)
-        or any(repair_checks[name] is not True for name in expected_repair_checks)
-    ):
-        raise contracts.ContractError("bounded geometry repair checks are incomplete")
 
     repair = closure.get("repair")
     if (
@@ -648,6 +645,7 @@ def _validate_geometry_closure(
         "closure": closure,
         "repair_manifest_path": repair_manifest_path,
         "geometry_audit_path": geometry_audit_path,
+        "repair_method": repair_manifest["implementation_contract"],
         "automatic_statuses": automatic_statuses,
         "inherited_statuses": {
             "single_breed_valid_tail": inherited_statuses["single_breed_valid_tail"],
@@ -945,7 +943,7 @@ def publish_review(
                 "independent_geometry_audit": _absolute_record(
                     geometry["geometry_audit_path"]
                 ),
-                "repair_method": geometry["closure"]["repair"]["method"],
+                "repair_method": geometry["repair_method"],
                 "lineage_kind": "bounded_same_pixal_mesh_repair",
                 "automatic_gate_statuses": geometry["automatic_statuses"],
                 "inherited_manual_review_statuses": geometry["inherited_statuses"],

@@ -124,7 +124,7 @@ def _valid_review(tmp_path: Path) -> dict:
             "repaired_glb": _record(files["repaired"]),
             "repair_manifest": _record(files["repair_manifest"]),
             "independent_geometry_audit": _record(files["geometry_audit"]),
-            "repair_method": "bounded_same_source_fixture",
+            "repair_method": contract.REPAIR_IMPLEMENTATION_CONTRACT,
             "lineage_kind": "bounded_same_pixal_mesh_repair",
             "automatic_gate_statuses": {
                 "four_independent_leg_chains": "passed",
@@ -293,14 +293,54 @@ def _geometry_fixture(tmp_path: Path):
     raw = _file(tmp_path / "raw.glb", b"raw glb")
     raw_manifest = _json(tmp_path / "raw.manifest.json", {"backend": "pixal3d"})
     reference = _png(tmp_path / "reference.png")
+    owner_review = _json(tmp_path / "owner_review.json", {"decision": "approved"})
     decision = _json(tmp_path / "raw_decision.json", {"decision": "rejected"})
     repaired = _file(tmp_path / "repaired.glb", b"repaired glb")
+    topology_audit = {
+        "method": (
+            "exact_position_logical_edge_incidence_outside_authorized_corridors"
+        ),
+        "raw_vertex_count": 120,
+        "logical_position_count": 100,
+        "triangle_count": 180,
+        "logical_edge_count": 270,
+        "logical_component_count": 1,
+        "immutable_component_count": 1,
+        "wholly_mutable_component_count": 0,
+        "logical_component_sizes_descending": [100],
+        "outside_corridor_boundary_edges": 0,
+        "outside_corridor_edges_over_two_faces": 0,
+        "outside_corridor_orientation_mismatch_edges": 0,
+        "inside_corridor_defective_edges_available_for_local_repair": 4,
+        "degenerate_triangle_count": 0,
+        "passed": True,
+        "failure_meaning": None,
+    }
+    surface_audit = {
+        "method": (
+            "exact_float32_position_uv_material_triangle_multiset_"
+            "with_winding_preserved"
+        ),
+        "expected_triangle_count": 80,
+        "actual_matching_triangle_count": 80,
+        "missing_triangle_count": 0,
+        "unexpected_duplicate_triangle_count": 0,
+        "expected_signature_sha256": "7" * 64,
+        "missing_signature_sha256": "8" * 64,
+        "unexpected_duplicate_signature_sha256": "9" * 64,
+        "passed": True,
+    }
     repair_manifest = {
-        "schema": "avengine_pixal_same_mesh_mirrored_limb_repair_v1",
+        "schema": contract.REPAIR_MANIFEST_SCHEMA,
+        "implementation_contract": contract.REPAIR_IMPLEMENTATION_CONTRACT,
+        "created_at": "2026-07-28T00:00:00+00:00",
         "formal_dataset_registration_authorized": False,
         "lineage": {
             "instance_id": "cat_fixture_123456789abc",
             "approved_reference": _record(reference),
+            "owner_review": _record(owner_review),
+            "owner_review_decision": "approved_for_pixal3d",
+            "owner_single_tail_gate": "passed",
             "pixal_manifest": _record(raw_manifest),
             "pixal_source": _record(raw),
             "static_decision": _record(decision),
@@ -308,17 +348,117 @@ def _geometry_fixture(tmp_path: Path):
             "raw_four_limbs_usable": False,
             "raw_pose_riggable": False,
         },
+        "repair_spec": {
+            "source_side": "positive-y",
+            "head_direction": "negative-x",
+            "front_foot_x_fraction": 0.27,
+            "front_attachment_x_fraction": 0.36,
+            "hind_foot_x_fraction": 0.83,
+            "hind_attachment_x_fraction": 0.68,
+            "attachment_height_fraction": 0.58,
+            "foot_half_width_fraction": 0.065,
+            "attachment_half_width_fraction": 0.12,
+            "source_side_guard_fraction": 0.01,
+            "central_attachment_bridge_start_fraction": 0.38,
+            "mirrored_attachment_taper_start_fraction": 0.34,
+            "mirrored_attachment_top_lateral_scale": 0.35,
+            "tail_protection_x_fraction": 0.78,
+            "tail_protection_height_fraction": 0.38,
+            "low_slice_height_fraction": 0.2,
+        },
+        "coordinate_contract": {"blender_axes": {"up": "positive-z"}},
+        "source_pbr_contract": {
+            "payload_sha256": "a" * 64,
+            "embedded_image_bytes_compared": True,
+        },
+        "tail_source_surface": {
+            "method": (
+                "most_posterior_authenticated_source_surface_component_"
+                "height_independent"
+            ),
+            "height_used_for_selection": False,
+            "vertex_count": 32,
+            "passed": True,
+            "rejection_reasons": [],
+        },
+        "mask_audit": {
+            "passed": True,
+            "tail_protected_donor_overlap_vertex_count": 0,
+            "tail_protected_replacement_overlap_vertex_count": 0,
+        },
+        "face_scope": {
+            "source_triangle_count": 180,
+            "mutable_triangle_count": 100,
+            "donor_triangle_count": 70,
+            "immutable_triangle_count": 80,
+            "tail_triangle_count": 20,
+            "mutation_rule": (
+                "only_triangles_wholly_inside_limb_corridor_and_not_on_"
+                "authenticated_tail_surface"
+            ),
+        },
+        "source_topology_preflight": topology_audit,
+        "mutation": {
+            "mirrored_geometry_source": "same_authenticated_pixal_mesh_only",
+            "external_geometry_inputs": [],
+            "external_skeleton_inputs": [],
+            "external_weight_inputs": [],
+            "external_material_inputs": [],
+            "external_texture_inputs": [],
+            "animation_inputs": [],
+            "tail_geometry_selected_for_mirroring": False,
+            "whole_animal_voxel_remesh": False,
+            "whole_animal_smoothing": False,
+            "whole_animal_decimation": False,
+            "base_edit": {"faces_removed": 100},
+            "donor_edit": {"faces_removed": 110},
+            "mirrored_attachment": {"method": "fixture"},
+            "local_weld": {"merged_vertex_count": 4},
+        },
+        "topology": {
+            "raw_blender_after_local_weld": {"faces": 200},
+            "exact_position_logical_after_local_weld": topology_audit,
+        },
+        "low_slice_dynamic_geometry_gate": {
+            "method": "four_disconnected_floor_to_attachment_induced_components",
+            "checks": {
+                "four_substantial_low_components": True,
+                "one_component_per_limb_quadrant": True,
+                "four_floor_contacts": True,
+                "four_floor_to_attachment_chains": True,
+                "no_ambiguous_fifth_component": True,
+                "no_low_cross_limb_membrane": True,
+            },
+            "rejection_reasons": [],
+            "passed": True,
+        },
+        "output_envelope": {
+            "allowed_range": [-0.06, 1.06],
+            "passed": True,
+        },
+        "export_readback": {
+            "immutable_outside_corridor_surface": surface_audit,
+            "tail_surface": surface_audit,
+            "pbr": {
+                "method": (
+                    "source_glb_pbr_bindings_and_embedded_bytes_"
+                    "restored_exactly"
+                ),
+                "source_payload_sha256": "a" * 64,
+                "output_payload_sha256": "a" * 64,
+                "embedded_image_sha256s": ["b" * 64],
+                "passed": True,
+            },
+        },
         "output": _record(repaired),
         "checks": {
-            "authenticated_same_pixal_mesh_only": True,
-            "near_side_front_and_hind_donor_masks_passed": True,
-            "tail_region_never_selected_for_replacement_or_mirroring": True,
-            "single_tail_preserved_by_protected_edit_scope": True,
-            "four_independent_low_limb_chains": True,
-            "no_low_cross_limb_membrane": True,
-            "one_connected_output_component": True,
-            "watertight_manifold_topology": True,
-            "output_within_authenticated_source_envelope": True,
+            name: True for name in sorted(contract.REPAIR_CHECK_FIELDS)
+        },
+        "decision": {
+            "status": "passed_automatic_geometry_gate_pending_multiview_review",
+            "rejection_reasons": [],
+            "cat_semantic_retarget_authorized": False,
+            "next_gate": "multiview_one_tail_four_limb_no_stray_visual_review",
         },
     }
     repair_manifest_path = _json(tmp_path / "repair_manifest.json", repair_manifest)
@@ -442,6 +582,54 @@ def test_geometry_closure_preserves_raw_rejection_and_pending_pbr(tmp_path):
     assert result["clay"]["front_axis"] == "negative-x"
 
 
+def test_geometry_closure_rejects_legacy_global_remesh_manifest(tmp_path):
+    closure_path, repaired, source = _geometry_fixture(tmp_path)
+    closure = contracts.load_json(closure_path)
+    repair_path = Path(closure["output"]["repair_manifest"]["path"])
+    repair = contracts.load_json(repair_path)
+    del repair["implementation_contract"]
+    repair["mutation"] = {
+        "mirrored_geometry_source": "same_authenticated_pixal_mesh_only",
+        "voxel_resolution": 220,
+        "smooth_iterations": 1,
+        "target_faces": 100000,
+    }
+    repair_path.unlink()
+    _json(repair_path, repair)
+    closure["output"]["repair_manifest"]["sha256"] = _sha256(repair_path)
+    closure_path.unlink()
+    _json(closure_path, closure)
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="implementation_contract",
+    ):
+        producer._validate_geometry_closure(
+            closure_path=closure_path,
+            repaired_glb=repaired,
+            source=source,
+        )
+
+
+def test_geometry_closure_reauthenticates_nested_owner_review(tmp_path):
+    closure_path, repaired, source = _geometry_fixture(tmp_path)
+    closure = contracts.load_json(closure_path)
+    repair_path = Path(closure["output"]["repair_manifest"]["path"])
+    repair = contracts.load_json(repair_path)
+    owner_review = Path(repair["lineage"]["owner_review"]["path"])
+    owner_review.write_bytes(b"tampered owner review")
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="repair manifest owner review SHA-256 changed",
+    ):
+        producer._validate_geometry_closure(
+            closure_path=closure_path,
+            repaired_glb=repaired,
+            source=source,
+        )
+
+
 def test_geometry_closure_rejects_raw_decision_upgrade(tmp_path):
     closure_path, repaired, source = _geometry_fixture(tmp_path)
     repair_path = Path(
@@ -528,6 +716,7 @@ def test_publish_review_outputs_no_decision_registry_or_ue_job(tmp_path, monkeyp
         "closure": {"repair": {"method": "bounded_same_source_fixture"}},
         "repair_manifest_path": source_files["repair_manifest"],
         "geometry_audit_path": source_files["audit"],
+        "repair_method": contract.REPAIR_IMPLEMENTATION_CONTRACT,
         "automatic_statuses": {
             "four_independent_leg_chains": "passed",
             "no_low_cross_limb_membrane": "passed",

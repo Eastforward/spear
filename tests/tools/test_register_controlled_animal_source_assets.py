@@ -8,6 +8,9 @@ from tools import build_controlled_source_asset_inputs as input_builder
 from tools import controlled_source_asset_schema as contracts
 from tools import prepare_controlled_source_asset_execution as preparation
 from tools import register_controlled_animal_source_assets as registry
+from tests.tools import (
+    test_build_controlled_animal_derived_static_review as derived_review_support,
+)
 
 
 PROFILE = (
@@ -86,6 +89,56 @@ def test_spear_artifact_rejects_paths_outside_repo(tmp_path):
 
     with pytest.raises(contracts.ContractError, match="outside SPEAR"):
         registry.spear_artifact(path)
+
+
+def test_registration_replays_current_bounded_repair_contract(tmp_path):
+    (
+        closure_path,
+        repaired,
+        source,
+    ) = derived_review_support._geometry_fixture(tmp_path)
+    closure = contracts.load_json(closure_path)
+    repair_path = Path(closure["output"]["repair_manifest"]["path"])
+    audit_path = Path(
+        closure["output"]["independent_geometry_audit"]["path"]
+    )
+    review = {
+        "derived_geometry": {
+            "repair_method": (
+                registry.derived_review_contract.REPAIR_IMPLEMENTATION_CONTRACT
+            )
+        }
+    }
+    kwargs = {
+        "review": review,
+        "raw_pixal_path": source["raw_glb"],
+        "reviewed_reference_path": source["reference"],
+        "raw_decision_path": source["decision_path"],
+        "raw_attempt_manifest_path": source["raw_attempt_manifest"],
+        "repaired_glb_path": repaired,
+        "geometry_closure_path": closure_path,
+        "repair_manifest_path": repair_path,
+        "geometry_audit_path": audit_path,
+    }
+
+    registry._reauthenticate_bounded_derived_geometry(**kwargs)
+
+    legacy = contracts.load_json(repair_path)
+    del legacy["implementation_contract"]
+    legacy["mutation"] = {
+        "mirrored_geometry_source": "same_authenticated_pixal_mesh_only",
+        "voxel_resolution": 220,
+        "smooth_iterations": 1,
+        "target_faces": 100000,
+    }
+    repair_path.unlink()
+    contracts.write_json_no_replace(repair_path, legacy)
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="current bounded contract.*implementation_contract",
+    ):
+        registry._reauthenticate_bounded_derived_geometry(**kwargs)
 
 
 def test_spear_artifact_rejects_leaf_symlink(tmp_path, monkeypatch):
