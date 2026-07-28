@@ -918,3 +918,683 @@ def test_static_decision_record_hash_is_checked_before_strict_parse(
 
     with pytest.raises(contracts.ContractError, match="static decision record changed"):
         registry.load_decision_batch(static_decision_batch["batch_path"])
+
+
+def _direct_geometry_source_asset_provenance_fixture(
+    frozen_historical_preflight,
+):
+    preflight_path, _input_dir = frozen_historical_preflight
+    _preflight, requests, _profiles = registry.load_source_contract(
+        preflight_path,
+        frozen_historical_preflight=True,
+    )
+    request = next(iter(requests.values()))
+    execution_job_id = f"direct_{request['request_sha256'][:16]}"
+    authority = {
+        "instance_id": request["instance_id"],
+        "profile_schema_id": request["profile_schema_id"],
+        "profile_sha256": request["profile_sha256"],
+        "request_sha256": request["request_sha256"],
+        "lineage_group_id": request["lineage_group_id"],
+        "taxonomy": copy.deepcopy(request["taxonomy"]),
+        "fixed_attributes": copy.deepcopy(request["fixed_attributes"]),
+        "acoustic_profile": copy.deepcopy(request["acoustic_profile"]),
+    }
+    models = copy.deepcopy(
+        request["generation_plan"]["model_revisions"]
+    )
+    direct_context = {
+        "adopted_batch": {"models": models},
+        "attempt": {
+            "instance_id": request["instance_id"],
+            "execution_job_id": execution_job_id,
+            "request_sha256": request["request_sha256"],
+            "profile_schema_id": request["profile_schema_id"],
+            "sampled_attributes": copy.deepcopy(
+                request["sampled_attributes"]
+            ),
+            "target_physical_profile": copy.deepcopy(
+                request["target_physical_profile"]
+            ),
+        },
+        "source_spec": {"instance_id": request["instance_id"]},
+        "adoption_context": {
+            "controlled": {
+                "request_sha256": request["request_sha256"],
+                "profile_schema_id": request["profile_schema_id"],
+                "rig_profile": copy.deepcopy(request["rig_profile"]),
+            }
+        },
+    }
+    artifact = {
+        "root_id": "spear_repo",
+        "path": "tmp/direct_geometry_fixture.bin",
+        "sha256": "8" * 64,
+        "size_bytes": 1,
+    }
+    raw_decision = {
+        "decision": "approved_for_lod_and_binding",
+        "state_classification": "research_candidate",
+        "formal_dataset_registration_authorized": False,
+        "decision_sha256": "9" * 64,
+    }
+    closure = {
+        "state_classification": "research_candidate",
+        "formal_dataset_registration_authorized": False,
+        "manifest_sha256": "a" * 64,
+        "inherited_static_judgment": {
+            "authority": "canonical_raw_static_approval_v1",
+            "decision_sha256": raw_decision["decision_sha256"],
+            "new_human_approval_created": False,
+        },
+    }
+    return {
+        "authority": authority,
+        "direct_context": direct_context,
+        "artifacts": {
+            "raw_static_decision": copy.deepcopy(artifact),
+            "derived_geometry_closure": copy.deepcopy(artifact),
+        },
+        "raw_decision": raw_decision,
+        "closure": closure,
+        "execution_job_id": execution_job_id,
+        "models": models,
+    }
+
+
+def test_direct_geometry_source_asset_provenance_uses_exact_raw_and_closure(
+    frozen_historical_preflight,
+):
+    case = _direct_geometry_source_asset_provenance_fixture(
+        frozen_historical_preflight
+    )
+
+    source_asset = registry._build_direct_source_asset_v2(
+        authority=case["authority"],
+        direct_context=case["direct_context"],
+        artifacts=case["artifacts"],
+        canonical_raw_decision=case["raw_decision"],
+        bounded_geometry_closure=case["closure"],
+    )
+
+    assert source_asset["provenance"]["attempt_id"] == (
+        f"direct_geometry_{case['execution_job_id']}"
+    )
+    assert source_asset["provenance"]["models"] == {
+        **case["models"],
+        registry.DIRECT_GEOMETRY_RAW_DECISION_PROVENANCE_MODEL: (
+            case["raw_decision"]["decision_sha256"]
+        ),
+        registry.DIRECT_GEOMETRY_CLOSURE_PROVENANCE_MODEL: (
+            case["closure"]["manifest_sha256"]
+        ),
+    }
+    assert "derived_static" not in contracts.canonical_json(
+        source_asset["provenance"]
+    )
+
+
+def test_direct_geometry_source_asset_provenance_rejects_authority_tamper(
+    frozen_historical_preflight,
+):
+    case = _direct_geometry_source_asset_provenance_fixture(
+        frozen_historical_preflight
+    )
+    case["closure"]["inherited_static_judgment"][
+        "decision_sha256"
+    ] = "b" * 64
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="direct geometry provenance authorities changed",
+    ):
+        registry._build_direct_source_asset_v2(
+            authority=case["authority"],
+            direct_context=case["direct_context"],
+            artifacts=case["artifacts"],
+            canonical_raw_decision=case["raw_decision"],
+            bounded_geometry_closure=case["closure"],
+        )
+
+
+def _direct_geometry_registration_fixture(
+    tmp_path,
+    monkeypatch,
+    *,
+    removed_triangle_count=0,
+):
+    from tools import (
+        publish_generated_animal_geometry_closure as geometry_closures,
+    )
+
+    instance_id = "dog_direct_fixture_123456789abc"
+
+    def fixture_file(relative, payload):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(payload, bytes):
+            path.write_bytes(payload)
+        else:
+            contracts.write_json_no_replace(path, payload)
+        return path
+
+    original_raw = fixture_file("original/raw.glb", b"raw Pixel3D bytes")
+    original_manifest = fixture_file(
+        "original/attempt.json",
+        b"original Pixel3D manifest bytes",
+    )
+    original_input = fixture_file(
+        "original/input.png",
+        b"original Pixel3D input bytes",
+    )
+    adopted_root = tmp_path / "adopted"
+    adopted_raw = fixture_file(
+        "adopted/artifacts/raw.glb",
+        original_raw.read_bytes(),
+    )
+    adopted_manifest = fixture_file(
+        "adopted/artifacts/attempt.json",
+        original_manifest.read_bytes(),
+    )
+    adopted_input = fixture_file(
+        "adopted/artifacts/input.png",
+        original_input.read_bytes(),
+    )
+    pixal_batch_path = fixture_file("adopted/pixal_batch.json", b"batch")
+    source_spec_path = fixture_file("adopted/source_spec.json", b"source spec")
+    direct_authority_path = fixture_file(
+        "authority/direct_source_authority.json",
+        b"direct authority",
+    )
+
+    review_root = tmp_path / "raw_static_review"
+    review_batch_path = fixture_file(
+        "raw_static_review/static_review_batch.json",
+        b"static review batch",
+    )
+    review_path = fixture_file(
+        f"raw_static_review/{instance_id}/static_review.json",
+        b"static review",
+    )
+    review_reference = fixture_file(
+        f"raw_static_review/{instance_id}/reference.png",
+        original_input.read_bytes(),
+    )
+    review_contact = fixture_file(
+        f"raw_static_review/{instance_id}/contact.png",
+        b"raw static contact sheet",
+    )
+    decision_batch_path = fixture_file(
+        "raw_static_decision/static_decision_batch.json",
+        b"static decision batch",
+    )
+    decision_path = fixture_file(
+        f"raw_static_decision/{instance_id}/static_decision.json",
+        b"static decision",
+    )
+    geometry_closure_path = fixture_file(
+        "geometry/geometry_closure.json",
+        b"geometry closure",
+    )
+    repair_manifest_path = fixture_file(
+        "geometry/repair_manifest.json",
+        b"repair manifest",
+    )
+    repaired_glb_path = fixture_file(
+        "geometry/repaired.glb",
+        (
+            original_raw.read_bytes()
+            if removed_triangle_count == 0
+            else b"zero-area triangle filtered bytes"
+        ),
+    )
+    geometry_audit_path = fixture_file(
+        "geometry/geometry_audit.json",
+        b"geometry audit",
+    )
+    clay_render_manifest_path = fixture_file(
+        "geometry/clay/render_manifest.json",
+        b"clay render manifest",
+    )
+    clay_contact_path = fixture_file(
+        "geometry/clay/contact.png",
+        b"clay contact sheet",
+    )
+
+    attempt = {
+        "instance_id": instance_id,
+        "execution_job_id": "direct_fixture_job",
+        "request_sha256": "1" * 64,
+        "profile_schema_id": "dog_direct_fixture_v1",
+        "sampled_attributes": {
+            "coat_color": "red",
+            "size": "medium",
+        },
+        "target_physical_profile": {
+            "control_attribute": "size",
+            "measurement": "shoulder_height_cm",
+        },
+        "output": _relative_record(adopted_raw, adopted_root),
+        "attempt_manifest": _relative_record(
+            adopted_manifest,
+            adopted_root,
+        ),
+        "pixal_input": _relative_record(adopted_input, adopted_root),
+    }
+    direct_authority = {
+        "instance_id": instance_id,
+        "profile_schema_id": attempt["profile_schema_id"],
+        "profile_sha256": "2" * 64,
+        "request_sha256": attempt["request_sha256"],
+        "adopted_batch": {"batch_sha256": "3" * 64},
+        "authority_sha256": "4" * 64,
+    }
+    pixal_batch = {
+        "batch_sha256": direct_authority["adopted_batch"]["batch_sha256"],
+    }
+    direct_context = {
+        "adopted_batch_path": pixal_batch_path,
+        "adopted_batch": copy.deepcopy(pixal_batch),
+        "attempt": attempt,
+        "source_spec_path": source_spec_path,
+        "source_spec": {"instance_id": instance_id},
+        "adoption_context": {
+            "bundle_sources": {
+                "pixal_raw_glb": original_raw,
+                "pixal_attempt_manifest": original_manifest,
+                "pixal_input_rgba": original_input,
+            }
+        },
+    }
+    checks = {
+        name: True for name in registry.static_decisions.CHECK_FIELDS
+    }
+    raw_payload = {
+        "decision": "approved_for_lod_and_binding",
+        "state_classification": "research_candidate",
+        "formal_dataset_registration_authorized": False,
+        "next_gate": "lod_then_species_rig_binding",
+        "decision_sha256": "5" * 64,
+        "checks": checks,
+        "attribute_evidence": {
+            "coat_color": "passed_static_visual",
+            "size": "deferred_to_metric_3d",
+        },
+    }
+    raw_review = {
+        "instance_id": instance_id,
+        "request_sha256": attempt["request_sha256"],
+        "profile_schema_id": attempt["profile_schema_id"],
+        "sampled_attributes": copy.deepcopy(attempt["sampled_attributes"]),
+        "target_physical_profile": copy.deepcopy(
+            attempt["target_physical_profile"]
+        ),
+        "pixal_output": copy.deepcopy(attempt["output"]),
+        "reference_rgba": _relative_record(
+            review_reference,
+            review_root,
+        ),
+        "contact_sheet": _relative_record(review_contact, review_root),
+    }
+    raw_decisions = {
+        instance_id: {
+            "payload": raw_payload,
+            "path": decision_path,
+            "static_review": {
+                "payload": raw_review,
+                "path": review_path,
+            },
+        }
+    }
+    decision_batch = {
+        "decision_batch_sha256": "6" * 64,
+        "static_review_batch": {
+            "path": str(review_batch_path.resolve()),
+        },
+    }
+    closure_manifest = {
+        "schema": geometry_closures.SCHEMA,
+        "state_classification": "research_candidate",
+        "formal_dataset_registration_authorized": False,
+        "manifest_sha256": "7" * 64,
+        "bounded_repair": {
+            "implementation_contract": (
+                geometry_closures.oriented_repair.IMPLEMENTATION_CONTRACT
+            ),
+            "mutation_class": geometry_closures.MUTATION_CLASS,
+            "removed_exact_position_degenerate_triangle_count": (
+                removed_triangle_count
+            ),
+            "output_byte_identical_to_raw": (
+                removed_triangle_count == 0
+            ),
+        },
+        "inherited_static_judgment": {
+            "authority": "canonical_raw_static_approval_v1",
+            "decision_sha256": raw_payload["decision_sha256"],
+            "checks": copy.deepcopy(checks),
+            "inheritance_scope": geometry_closures.INHERITANCE_SCOPE,
+            "new_human_approval_created": False,
+            "clay_render_human_approval_claimed": False,
+        },
+        "downstream": {
+            "tokenrig_entry_authorized": True,
+            "tokenrig_execution_performed": False,
+            "formal_dataset_registration_authorized": False,
+        },
+    }
+    closure_replay = {
+        "manifest": closure_manifest,
+        "paths": {
+            "raw_pixal_glb": original_raw,
+            "pixal_manifest": original_manifest,
+            "source_reference": review_reference,
+            "raw_static_decision_batch": decision_batch_path,
+            "raw_static_decision": decision_path,
+            "raw_static_review": review_path,
+            "repair_manifest": repair_manifest_path,
+            "repaired_glb": repaired_glb_path,
+            "geometry_audit": geometry_audit_path,
+            "clay_render_manifest": clay_render_manifest_path,
+            "clay_contact_sheet": clay_contact_path,
+        },
+    }
+    closure_call = {}
+
+    def load_closure(_path, **kwargs):
+        closure_call.update(kwargs)
+        return copy.deepcopy(closure_replay)
+
+    built = {}
+
+    def build_source_asset(
+        *,
+        authority,
+        direct_context,
+        artifacts,
+        canonical_raw_decision,
+        bounded_geometry_closure,
+    ):
+        built.update(
+            {
+                "authority": copy.deepcopy(authority),
+                "direct_context": copy.deepcopy(direct_context),
+                "artifacts": copy.deepcopy(artifacts),
+                "canonical_raw_decision": copy.deepcopy(
+                    canonical_raw_decision
+                ),
+                "bounded_geometry_closure": copy.deepcopy(
+                    bounded_geometry_closure
+                ),
+            }
+        )
+        return {
+            "schema": contracts.SOURCE_ASSET_SCHEMA,
+            "asset_id": authority["instance_id"],
+            "state_classification": "research_candidate",
+            "artifacts": copy.deepcopy(dict(artifacts)),
+        }
+
+    monkeypatch.setattr(registry, "SPEAR_ROOT", tmp_path)
+    monkeypatch.setattr(
+        registry.direct_adopter,
+        "load_direct_source_authority",
+        lambda *_args, **_kwargs: (
+            direct_authority_path,
+            copy.deepcopy(direct_authority),
+            copy.deepcopy(direct_context),
+        ),
+    )
+    monkeypatch.setattr(
+        registry.direct_adopter,
+        "load_adopted_batch",
+        lambda _path: (pixal_batch_path, copy.deepcopy(pixal_batch)),
+    )
+    monkeypatch.setattr(
+        registry,
+        "load_decision_batch",
+        lambda _path: (
+            decision_batch_path,
+            copy.deepcopy(decision_batch),
+            copy.deepcopy(raw_decisions),
+        ),
+    )
+    monkeypatch.setattr(
+        geometry_closures,
+        "load_geometry_closure_v2",
+        load_closure,
+    )
+    monkeypatch.setattr(
+        registry,
+        "_build_direct_source_asset_v2",
+        build_source_asset,
+    )
+    return {
+        "instance_id": instance_id,
+        "authority_path": direct_authority_path,
+        "authority_sha256": _sha256(direct_authority_path),
+        "batch_path": pixal_batch_path,
+        "decision_batch_path": decision_batch_path,
+        "decision_path": decision_path,
+        "closure_path": geometry_closure_path,
+        "closure_sha256": _sha256(geometry_closure_path),
+        "closure_replay": closure_replay,
+        "closure_call": closure_call,
+        "built": built,
+        "attempt": attempt,
+        "raw_review": raw_review,
+        "original_raw": original_raw,
+        "adopted_raw": adopted_raw,
+        "repaired_glb": repaired_glb_path,
+    }
+
+
+def _run_direct_geometry_registration(case, tmp_path):
+    return registry.register_direct_geometry(
+        case["authority_path"],
+        case["authority_sha256"],
+        case["batch_path"],
+        case["decision_batch_path"],
+        case["closure_path"],
+        case["closure_sha256"],
+        tmp_path / "registered",
+    )
+
+
+def test_register_direct_geometry_accepts_byte_copy_bridge_and_noop(
+    tmp_path,
+    monkeypatch,
+):
+    case = _direct_geometry_registration_fixture(
+        tmp_path,
+        monkeypatch,
+        removed_triangle_count=0,
+    )
+
+    manifest_path = _run_direct_geometry_registration(case, tmp_path)
+    manifest = contracts.load_json(manifest_path)
+
+    assert manifest["schema"] == registry.DIRECT_GEOMETRY_REGISTRY_SCHEMA
+    assert manifest["formal_dataset_registration_authorized"] is False
+    assert "derived_static_decisions" not in manifest
+    assert manifest["automatic_checks"] == (
+        registry.DIRECT_GEOMETRY_REGISTRY_AUTOMATIC_CHECKS
+    )
+    assert (
+        "raw_owner_static_approval_inherited_without_new_human_claim"
+        not in manifest["automatic_checks"]
+    )
+    assert manifest["automatic_checks"][
+        "canonical_raw_static_approval_inherited_without_new_human_claim"
+    ] is True
+    assert manifest["automatic_checks"][
+        "derived_static_decision_not_created"
+    ] is True
+    assert manifest["source_assets"][0]["attribute_evidence"] == {
+        "coat_color": "passed_static_visual",
+        "size": "deferred_to_metric_3d",
+    }
+    assert (
+        case["closure_call"]["expected_raw_pixal_glb"]
+        == case["original_raw"]
+    )
+    assert "derived_static_decision" not in case["built"]["artifacts"]
+    assert case["built"]["canonical_raw_decision"]["decision_sha256"] == (
+        case["closure_replay"]["manifest"]["inherited_static_judgment"][
+            "decision_sha256"
+        ]
+    )
+    assert case["built"]["bounded_geometry_closure"]["manifest_sha256"] == (
+        case["closure_replay"]["manifest"]["manifest_sha256"]
+    )
+
+
+def test_register_direct_geometry_accepts_zero_area_filter(
+    tmp_path,
+    monkeypatch,
+):
+    case = _direct_geometry_registration_fixture(
+        tmp_path,
+        monkeypatch,
+        removed_triangle_count=1,
+    )
+
+    manifest_path = _run_direct_geometry_registration(case, tmp_path)
+
+    assert manifest_path.is_file()
+    assert _sha256(case["original_raw"]) != _sha256(case["repaired_glb"])
+
+
+def test_register_direct_geometry_rejects_non_copy_adopted_bytes(
+    tmp_path,
+    monkeypatch,
+):
+    case = _direct_geometry_registration_fixture(tmp_path, monkeypatch)
+    case["adopted_raw"].write_bytes(b"different adopted bytes")
+    case["attempt"]["output"].update(
+        {
+            "sha256": _sha256(case["adopted_raw"]),
+            "size_bytes": case["adopted_raw"].stat().st_size,
+        }
+    )
+    case["raw_review"]["pixal_output"] = copy.deepcopy(
+        case["attempt"]["output"]
+    )
+
+    with pytest.raises(contracts.ContractError, match="is not a byte copy"):
+        _run_direct_geometry_registration(case, tmp_path)
+
+
+def test_register_direct_geometry_rejects_raw_decision_path_rebind(
+    tmp_path,
+    monkeypatch,
+):
+    case = _direct_geometry_registration_fixture(tmp_path, monkeypatch)
+    rebound = tmp_path / "geometry" / "rebound_decision.json"
+    rebound.write_bytes(case["decision_path"].read_bytes())
+    case["closure_replay"]["paths"]["raw_static_decision"] = rebound
+
+    with pytest.raises(contracts.ContractError, match="was rebound"):
+        _run_direct_geometry_registration(case, tmp_path)
+
+
+def test_register_direct_geometry_rejects_repair_scope_expansion(
+    tmp_path,
+    monkeypatch,
+):
+    case = _direct_geometry_registration_fixture(tmp_path, monkeypatch)
+    case["closure_replay"]["manifest"]["bounded_repair"][
+        "mutation_class"
+    ] = "arbitrary_geometry_rewrite_v1"
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="research-only inherited approval boundary",
+    ):
+        _run_direct_geometry_registration(case, tmp_path)
+
+
+def test_register_direct_geometry_rejects_formal_authorization(
+    tmp_path,
+    monkeypatch,
+):
+    case = _direct_geometry_registration_fixture(tmp_path, monkeypatch)
+    case["closure_replay"]["manifest"][
+        "formal_dataset_registration_authorized"
+    ] = True
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="research-only inherited approval boundary",
+    ):
+        _run_direct_geometry_registration(case, tmp_path)
+
+
+def test_register_direct_geometry_rejects_false_noop_claim(
+    tmp_path,
+    monkeypatch,
+):
+    case = _direct_geometry_registration_fixture(tmp_path, monkeypatch)
+    case["repaired_glb"].write_bytes(b"silently rewritten geometry")
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="repair bytes contradict",
+    ):
+        _run_direct_geometry_registration(case, tmp_path)
+
+
+def test_main_rejects_derived_and_direct_geometry_modes_together(
+    tmp_path,
+    capsys,
+):
+    result = registry.main(
+        [
+            "--direct-source-authority",
+            str(tmp_path / "authority.json"),
+            "--expected-direct-source-authority-sha256",
+            "1" * 64,
+            "--pixal-batch",
+            str(tmp_path / "batch.json"),
+            "--static-decision-batch",
+            str(tmp_path / "decision_batch.json"),
+            "--derived-static-decision",
+            str(tmp_path / "derived.json"),
+            "--expected-derived-static-decision-sha256",
+            "2" * 64,
+            "--geometry-closure",
+            str(tmp_path / "closure.json"),
+            "--expected-geometry-closure-sha256",
+            "3" * 64,
+            "--output-root",
+            str(tmp_path / "registered"),
+        ]
+    )
+
+    assert result == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_main_rejects_incomplete_geometry_closure_hash_pair(
+    tmp_path,
+    capsys,
+):
+    result = registry.main(
+        [
+            "--direct-source-authority",
+            str(tmp_path / "authority.json"),
+            "--expected-direct-source-authority-sha256",
+            "1" * 64,
+            "--pixal-batch",
+            str(tmp_path / "batch.json"),
+            "--static-decision-batch",
+            str(tmp_path / "decision_batch.json"),
+            "--geometry-closure",
+            str(tmp_path / "closure.json"),
+            "--output-root",
+            str(tmp_path / "registered"),
+        ]
+    )
+
+    assert result == 2
+    assert "geometry closure path and expected SHA-256" in capsys.readouterr().err

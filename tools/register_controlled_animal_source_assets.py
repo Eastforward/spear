@@ -32,6 +32,15 @@ LEGACY_DERIVED_REGISTRY_SCHEMA = (
     "avengine_controlled_animal_source_asset_registry_v2"
 )
 DERIVED_REGISTRY_SCHEMA = "avengine_controlled_animal_source_asset_registry_v3"
+DIRECT_GEOMETRY_REGISTRY_SCHEMA = (
+    "avengine_controlled_animal_source_asset_registry_v4"
+)
+DIRECT_GEOMETRY_RAW_DECISION_PROVENANCE_MODEL = (
+    "canonical_raw_static_decision_sha256"
+)
+DIRECT_GEOMETRY_CLOSURE_PROVENANCE_MODEL = (
+    "bounded_geometry_closure_manifest_sha256"
+)
 DERIVED_REGISTRY_AUTOMATIC_CHECKS = {
     "all_requests_reauthenticated": True,
     "all_pixal_input_attempt_request_identities_reauthenticated": True,
@@ -60,6 +69,21 @@ DIRECT_DERIVED_REGISTRY_AUTOMATIC_CHECKS = {
     "raw_static_decision_preserved_without_rewrite": True,
     "derived_static_decision_reauthenticated": True,
     "repaired_glb_and_geometry_closure_reauthenticated": True,
+    "source_asset_v2_bare_validated_and_bound_to_direct_authority": True,
+    "research_candidate_state_preserved": True,
+    "formal_dataset_registration_not_authorized": True,
+    "rights_blockers_preserved": True,
+    "overall": "passed",
+}
+DIRECT_GEOMETRY_REGISTRY_AUTOMATIC_CHECKS = {
+    "direct_source_authority_reauthenticated": True,
+    "adopted_pixal_batch_and_source_spec_reauthenticated": True,
+    "original_adopted_and_static_review_byte_copies_reauthenticated": True,
+    "raw_static_decision_preserved_without_rewrite": True,
+    "exact_geometry_closure_replayed": True,
+    "repair_limited_to_zero_area_filter_or_byte_identical_noop": True,
+    "canonical_raw_static_approval_inherited_without_new_human_claim": True,
+    "derived_static_decision_not_created": True,
     "source_asset_v2_bare_validated_and_bound_to_direct_authority": True,
     "research_candidate_state_preserved": True,
     "formal_dataset_registration_not_authorized": True,
@@ -220,6 +244,42 @@ def _verified_descriptor_target(
     if not identical:
         raise contracts.ContractError(f"{label} points to a different file")
     return path
+
+
+def _authenticated_byte_copy_pair(
+    source: Path,
+    copy_path: Path,
+    label: str,
+) -> tuple[Path, Path]:
+    """Authenticate two direct files and prove that their bytes are identical."""
+
+    authenticated = []
+    for role, value in (("source", source), ("copy", copy_path)):
+        literal = Path(value).absolute()
+        path = literal.resolve()
+        if literal.is_symlink() or not path.is_file() or path.stat().st_size <= 0:
+            raise contracts.ContractError(
+                f"{label} {role} is missing or non-direct"
+            )
+        authenticated.append(path)
+    source_path, copied_path = authenticated
+    if (
+        source_path.stat().st_size != copied_path.stat().st_size
+        or _sha256_file(source_path) != _sha256_file(copied_path)
+    ):
+        raise contracts.ContractError(f"{label} is not a byte copy")
+    return source_path, copied_path
+
+
+def _require_same_file(first: Path, second: Path, label: str) -> None:
+    """Require one canonical authority file, not merely equivalent bytes."""
+
+    try:
+        identical = os.path.samefile(Path(first).resolve(), Path(second).resolve())
+    except OSError as error:
+        raise contracts.ContractError(f"cannot compare {label}") from error
+    if not identical:
+        raise contracts.ContractError(f"{label} was rebound to another file")
 
 
 def license_records() -> list[dict[str, Any]]:
@@ -1427,6 +1487,8 @@ def _build_direct_source_asset_v2(
     authority: Mapping[str, Any],
     direct_context: Mapping[str, Any],
     artifacts: Mapping[str, Any],
+    canonical_raw_decision: Mapping[str, Any] | None = None,
+    bounded_geometry_closure: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build and bare-validate a direct asset, then bind every authority field."""
 
@@ -1444,6 +1506,88 @@ def _build_direct_source_asset_v2(
     ):
         raise contracts.ContractError(
             "authenticated direct batch/spec identity changed"
+        )
+    direct_geometry_provenance = (
+        canonical_raw_decision is not None
+        or bounded_geometry_closure is not None
+    )
+    if direct_geometry_provenance and (
+        not isinstance(canonical_raw_decision, Mapping)
+        or not isinstance(bounded_geometry_closure, Mapping)
+    ):
+        raise contracts.ContractError(
+            "direct geometry provenance requires both canonical raw decision "
+            "and bounded geometry closure authorities"
+        )
+    provenance_models = copy.deepcopy(batch["models"])
+    provenance_attempt_id = f"derived_static_{attempt['execution_job_id']}"
+    if direct_geometry_provenance:
+        inherited = bounded_geometry_closure.get(
+            "inherited_static_judgment"
+        )
+        raw_decision_sha256 = canonical_raw_decision.get("decision_sha256")
+        closure_manifest_sha256 = bounded_geometry_closure.get(
+            "manifest_sha256"
+        )
+        if (
+            canonical_raw_decision.get("decision")
+            != "approved_for_lod_and_binding"
+            or canonical_raw_decision.get("state_classification")
+            != "research_candidate"
+            or canonical_raw_decision.get(
+                "formal_dataset_registration_authorized"
+            )
+            is not False
+            or not isinstance(raw_decision_sha256, str)
+            or len(raw_decision_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in raw_decision_sha256
+            )
+            or bounded_geometry_closure.get("state_classification")
+            != "research_candidate"
+            or bounded_geometry_closure.get(
+                "formal_dataset_registration_authorized"
+            )
+            is not False
+            or not isinstance(closure_manifest_sha256, str)
+            or len(closure_manifest_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in closure_manifest_sha256
+            )
+            or not isinstance(inherited, Mapping)
+            or inherited.get("authority")
+            != "canonical_raw_static_approval_v1"
+            or inherited.get("decision_sha256") != raw_decision_sha256
+            or inherited.get("new_human_approval_created") is not False
+        ):
+            raise contracts.ContractError(
+                "direct geometry provenance authorities changed"
+            )
+        reserved_models = {
+            DIRECT_GEOMETRY_RAW_DECISION_PROVENANCE_MODEL,
+            DIRECT_GEOMETRY_CLOSURE_PROVENANCE_MODEL,
+        }
+        if not isinstance(provenance_models, Mapping) or (
+            set(provenance_models) & reserved_models
+        ):
+            raise contracts.ContractError(
+                "adopted model provenance collides with direct geometry "
+                "authority records"
+            )
+        provenance_models.update(
+            {
+                DIRECT_GEOMETRY_RAW_DECISION_PROVENANCE_MODEL: (
+                    raw_decision_sha256
+                ),
+                DIRECT_GEOMETRY_CLOSURE_PROVENANCE_MODEL: (
+                    closure_manifest_sha256
+                ),
+            }
+        )
+        provenance_attempt_id = (
+            f"direct_geometry_{attempt['execution_job_id']}"
         )
     semantic_attributes = {
         **copy.deepcopy(authority["taxonomy"]),
@@ -1470,9 +1614,9 @@ def _build_direct_source_asset_v2(
         "rig": copy.deepcopy(controlled["rig_profile"]),
         "acoustic_profile": copy.deepcopy(authority["acoustic_profile"]),
         "provenance": {
-            "attempt_id": f"derived_static_{attempt['execution_job_id']}",
+            "attempt_id": provenance_attempt_id,
             "request_sha256": authority["request_sha256"],
-            "models": copy.deepcopy(batch["models"]),
+            "models": provenance_models,
         },
         "rights": {
             "status": "review_required",
@@ -1519,15 +1663,450 @@ def _build_direct_source_asset_v2(
                 f"direct source_asset_v2 {field} escaped its authority"
             )
     if (
-        validated["provenance"]["request_sha256"]
+        validated["provenance"]["attempt_id"] != provenance_attempt_id
+        or validated["provenance"]["request_sha256"]
         != authority["request_sha256"]
         or contracts.canonical_json(validated["provenance"]["models"])
-        != contracts.canonical_json(batch["models"])
+        != contracts.canonical_json(provenance_models)
     ):
         raise contracts.ContractError(
             "direct source_asset_v2 provenance escaped its adopted batch"
         )
     return validated
+
+
+def register_direct_geometry(
+    direct_source_authority_path: Path,
+    expected_direct_source_authority_sha256: str,
+    pixal_batch_path: Path,
+    decision_batch_path: Path,
+    geometry_closure_path: Path,
+    expected_geometry_closure_sha256: str,
+    output_root: Path,
+) -> Path:
+    """Register one direct asset from its preserved raw approval and v2 closure.
+
+    This mode deliberately does not manufacture a derived static review or a
+    second human decision.  It inherits the exact canonical raw approval
+    through the geometry closure's bounded no-op/zero-area-filter contract.
+    """
+
+    (
+        direct_authority_path,
+        direct_authority,
+        direct_context,
+    ) = direct_adopter.load_direct_source_authority(
+        direct_source_authority_path,
+        expected_sha256=expected_direct_source_authority_sha256,
+    )
+    supplied_batch_literal = Path(pixal_batch_path).absolute()
+    if supplied_batch_literal.is_symlink() or not supplied_batch_literal.is_file():
+        raise contracts.ContractError("adopted Pixal batch is missing or unsafe")
+    pixal_batch_path, pixal_batch = direct_adopter.load_adopted_batch(
+        supplied_batch_literal
+    )
+    _require_same_file(
+        pixal_batch_path,
+        direct_context["adopted_batch_path"],
+        "direct authority adopted Pixal batch",
+    )
+    if (
+        pixal_batch["batch_sha256"]
+        != direct_authority["adopted_batch"]["batch_sha256"]
+        or pixal_batch["batch_sha256"]
+        != direct_context["adopted_batch"]["batch_sha256"]
+    ):
+        raise contracts.ContractError(
+            "direct authority points to a different adopted Pixal batch"
+        )
+
+    attempt = direct_context["attempt"]
+    instance_id = direct_authority["instance_id"]
+    if (
+        attempt.get("instance_id") != instance_id
+        or attempt.get("request_sha256") != direct_authority["request_sha256"]
+        or attempt.get("profile_schema_id")
+        != direct_authority["profile_schema_id"]
+    ):
+        raise contracts.ContractError(
+            "direct authority adopted attempt identity changed"
+        )
+
+    decision_batch_path, decision_batch, raw_decisions = load_decision_batch(
+        decision_batch_path
+    )
+    if set(raw_decisions) != {instance_id}:
+        raise contracts.ContractError(
+            "direct geometry registration requires exactly one matching raw "
+            "static decision"
+        )
+    raw_decision = raw_decisions[instance_id]
+    raw_payload = raw_decision.get("payload")
+    raw_review_record = raw_decision.get("static_review")
+    raw_review = (
+        raw_review_record.get("payload")
+        if isinstance(raw_review_record, Mapping)
+        else None
+    )
+    raw_review_path = (
+        raw_review_record.get("path")
+        if isinstance(raw_review_record, Mapping)
+        else None
+    )
+    if (
+        not isinstance(raw_payload, Mapping)
+        or raw_payload.get("decision") != "approved_for_lod_and_binding"
+        or raw_payload.get("state_classification") != "research_candidate"
+        or raw_payload.get("formal_dataset_registration_authorized") is not False
+        or raw_payload.get("next_gate") != "lod_then_species_rig_binding"
+        or not isinstance(raw_payload.get("checks"), Mapping)
+        or set(raw_payload["checks"]) != static_decisions.CHECK_FIELDS
+        or any(value is not True for value in raw_payload["checks"].values())
+        or not isinstance(raw_review, Mapping)
+        or not isinstance(raw_review_path, Path)
+        or raw_review.get("instance_id") != instance_id
+        or raw_review.get("request_sha256")
+        != direct_authority["request_sha256"]
+        or raw_review.get("profile_schema_id")
+        != direct_authority["profile_schema_id"]
+        or contracts.canonical_json(raw_review.get("sampled_attributes"))
+        != contracts.canonical_json(attempt["sampled_attributes"])
+        or contracts.canonical_json(raw_review.get("target_physical_profile"))
+        != contracts.canonical_json(attempt["target_physical_profile"])
+        or raw_review.get("pixal_output") != attempt["output"]
+    ):
+        raise contracts.ContractError(
+            "raw static approval/direct authority identity changed"
+        )
+
+    adopted_root = pixal_batch_path.parent
+    adopted_raw_path = _verified_file_record(
+        attempt["output"],
+        "adopted Pixel3D raw GLB",
+        root=adopted_root,
+    )
+    adopted_manifest_path = _verified_file_record(
+        attempt["attempt_manifest"],
+        "adopted Pixel3D attempt manifest",
+        root=adopted_root,
+    )
+    adopted_input_path = _verified_file_record(
+        attempt["pixal_input"],
+        "adopted Pixel3D input RGBA",
+        root=adopted_root,
+    )
+    bundle_sources = direct_context["adoption_context"].get("bundle_sources")
+    if not isinstance(bundle_sources, Mapping):
+        raise contracts.ContractError(
+            "direct adoption source byte authorities are missing"
+        )
+    try:
+        original_raw_path = Path(bundle_sources["pixal_raw_glb"])
+        original_manifest_path = Path(bundle_sources["pixal_attempt_manifest"])
+        original_input_path = Path(bundle_sources["pixal_input_rgba"])
+    except (KeyError, TypeError) as error:
+        raise contracts.ContractError(
+            "direct adoption source byte authorities are incomplete"
+        ) from error
+    _authenticated_byte_copy_pair(
+        original_raw_path,
+        adopted_raw_path,
+        "original/adopted Pixel3D raw GLB",
+    )
+    _authenticated_byte_copy_pair(
+        original_manifest_path,
+        adopted_manifest_path,
+        "original/adopted Pixel3D attempt manifest",
+    )
+    _authenticated_byte_copy_pair(
+        original_input_path,
+        adopted_input_path,
+        "original/adopted Pixel3D input RGBA",
+    )
+
+    review_root = Path(decision_batch["static_review_batch"]["path"]).resolve().parent
+    review_reference_path = _verified_file_record(
+        raw_review["reference_rgba"],
+        "raw static review source reference",
+        root=review_root,
+    )
+    raw_contact_path = _verified_file_record(
+        raw_review["contact_sheet"],
+        "raw static review contact sheet",
+        root=review_root,
+    )
+    _authenticated_byte_copy_pair(
+        original_input_path,
+        review_reference_path,
+        "original/raw-static-review Pixel3D input RGBA",
+    )
+
+    closure_literal = Path(geometry_closure_path).absolute()
+    geometry_closure_path = closure_literal.resolve()
+    if (
+        closure_literal.is_symlink()
+        or not geometry_closure_path.is_file()
+        or geometry_closure_path.stat().st_size <= 0
+        or _sha256_file(geometry_closure_path)
+        != expected_geometry_closure_sha256
+    ):
+        raise contracts.ContractError(
+            "geometry closure changed from its expected file SHA-256"
+        )
+    # Local import avoids the geometry closure module's intentional import of
+    # this registry module for raw decision replay.
+    from tools import publish_generated_animal_geometry_closure as geometry_closures
+
+    try:
+        closure_replay = geometry_closures.load_geometry_closure_v2(
+            geometry_closure_path,
+            expected_manifest_sha256=expected_geometry_closure_sha256,
+            expected_instance_id=instance_id,
+            expected_raw_pixal_glb=original_raw_path,
+            expected_pixal_manifest=original_manifest_path,
+            expected_raw_static_decision_batch=decision_batch_path,
+            expected_raw_static_decision=raw_decision["path"],
+        )
+    except geometry_closures.GeometryClosureError as error:
+        raise contracts.ContractError(
+            f"direct geometry closure strict replay failed: {error}"
+        ) from error
+    closure_manifest = closure_replay.get("manifest")
+    closure_paths = closure_replay.get("paths")
+    if not isinstance(closure_manifest, Mapping) or not isinstance(
+        closure_paths, Mapping
+    ):
+        raise contracts.ContractError(
+            "direct geometry closure replay result is incomplete"
+        )
+    try:
+        closure_raw_path = Path(closure_paths["raw_pixal_glb"])
+        closure_manifest_path = Path(closure_paths["pixal_manifest"])
+        closure_reference_path = Path(closure_paths["source_reference"])
+        closure_batch_path = Path(closure_paths["raw_static_decision_batch"])
+        closure_decision_path = Path(closure_paths["raw_static_decision"])
+        closure_review_path = Path(closure_paths["raw_static_review"])
+        repair_manifest_path = Path(closure_paths["repair_manifest"])
+        repaired_glb_path = Path(closure_paths["repaired_glb"])
+        geometry_audit_path = Path(closure_paths["geometry_audit"])
+        clay_render_manifest_path = Path(
+            closure_paths["clay_render_manifest"]
+        )
+        clay_contact_path = Path(closure_paths["clay_contact_sheet"])
+    except (KeyError, TypeError) as error:
+        raise contracts.ContractError(
+            "direct geometry closure replay paths are incomplete"
+        ) from error
+    for observed, expected, label in (
+        (closure_raw_path, original_raw_path, "closure raw Pixel3D GLB"),
+        (
+            closure_manifest_path,
+            original_manifest_path,
+            "closure Pixel3D attempt manifest",
+        ),
+        (
+            closure_reference_path,
+            review_reference_path,
+            "closure raw static source reference",
+        ),
+        (
+            closure_batch_path,
+            decision_batch_path,
+            "closure raw static decision batch",
+        ),
+        (
+            closure_decision_path,
+            raw_decision["path"],
+            "closure raw static decision",
+        ),
+        (
+            closure_review_path,
+            raw_review_path,
+            "closure raw static review",
+        ),
+    ):
+        _require_same_file(observed, expected, label)
+    _authenticated_byte_copy_pair(
+        closure_raw_path,
+        adopted_raw_path,
+        "closure/adopted Pixel3D raw GLB",
+    )
+    _authenticated_byte_copy_pair(
+        closure_manifest_path,
+        adopted_manifest_path,
+        "closure/adopted Pixel3D attempt manifest",
+    )
+    _authenticated_byte_copy_pair(
+        closure_reference_path,
+        adopted_input_path,
+        "closure/adopted Pixel3D input RGBA",
+    )
+
+    bounded = closure_manifest.get("bounded_repair")
+    inherited = closure_manifest.get("inherited_static_judgment")
+    downstream = closure_manifest.get("downstream")
+    removed = (
+        bounded.get("removed_exact_position_degenerate_triangle_count")
+        if isinstance(bounded, Mapping)
+        else None
+    )
+    byte_identical = (
+        bounded.get("output_byte_identical_to_raw")
+        if isinstance(bounded, Mapping)
+        else None
+    )
+    if (
+        closure_manifest.get("schema") != geometry_closures.SCHEMA
+        or closure_manifest.get("state_classification") != "research_candidate"
+        or closure_manifest.get("formal_dataset_registration_authorized") is not False
+        or not isinstance(bounded, Mapping)
+        or bounded.get("implementation_contract")
+        != geometry_closures.oriented_repair.IMPLEMENTATION_CONTRACT
+        or bounded.get("mutation_class") != geometry_closures.MUTATION_CLASS
+        or isinstance(removed, bool)
+        or not isinstance(removed, int)
+        or removed < 0
+        or byte_identical is not (removed == 0)
+        or not isinstance(inherited, Mapping)
+        or inherited.get("authority") != "canonical_raw_static_approval_v1"
+        or inherited.get("decision_sha256")
+        != raw_payload["decision_sha256"]
+        or inherited.get("checks") != raw_payload["checks"]
+        or inherited.get("inheritance_scope")
+        != geometry_closures.INHERITANCE_SCOPE
+        or inherited.get("new_human_approval_created") is not False
+        or inherited.get("clay_render_human_approval_claimed") is not False
+        or not isinstance(downstream, Mapping)
+        or downstream.get("tokenrig_entry_authorized") is not True
+        or downstream.get("tokenrig_execution_performed") is not False
+        or downstream.get("formal_dataset_registration_authorized") is not False
+    ):
+        raise contracts.ContractError(
+            "direct geometry closure exceeded its research-only inherited "
+            "approval boundary"
+        )
+    raw_hash = _sha256_file(closure_raw_path)
+    repaired_hash = _sha256_file(repaired_glb_path)
+    if (
+        (removed == 0 and raw_hash != repaired_hash)
+        or (removed > 0 and raw_hash == repaired_hash)
+    ):
+        raise contracts.ContractError(
+            "direct geometry closure repair bytes contradict its no-op/filter claim"
+        )
+
+    artifacts = {
+        "source_reference_2d": spear_artifact(closure_reference_path),
+        "pixal_input_rgba": spear_artifact(adopted_input_path),
+        "pixal_raw_glb": spear_artifact(closure_raw_path),
+        "pixal_attempt_manifest": spear_artifact(closure_manifest_path),
+        "raw_static_review_manifest": spear_artifact(raw_review_path),
+        "raw_static_contact_sheet": spear_artifact(raw_contact_path),
+        "raw_static_decision": spear_artifact(raw_decision["path"]),
+        "raw_static_decision_batch": spear_artifact(decision_batch_path),
+        "derived_repaired_glb": spear_artifact(repaired_glb_path),
+        "derived_geometry_closure": spear_artifact(geometry_closure_path),
+        "derived_repair_manifest": spear_artifact(repair_manifest_path),
+        "derived_geometry_audit": spear_artifact(geometry_audit_path),
+        "derived_clay_render_manifest": spear_artifact(
+            clay_render_manifest_path
+        ),
+        "derived_clay_contact_sheet": spear_artifact(clay_contact_path),
+        "direct_source_authority": spear_artifact(direct_authority_path),
+        "adopted_pixal_batch": spear_artifact(pixal_batch_path),
+        "direct_adoption_spec": spear_artifact(
+            direct_context["source_spec_path"]
+        ),
+    }
+    source_asset = _build_direct_source_asset_v2(
+        authority=direct_authority,
+        direct_context=direct_context,
+        artifacts=artifacts,
+        canonical_raw_decision=raw_payload,
+        bounded_geometry_closure=closure_manifest,
+    )
+
+    output_root = Path(output_root).absolute()
+    if output_root.exists() or output_root.is_symlink():
+        raise contracts.ContractError(f"refusing to replace output: {output_root}")
+    output_root.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(
+            prefix=f".{output_root.name}.",
+            suffix=".staging",
+            dir=output_root.parent,
+        )
+    )
+    try:
+        destination = staging / "source_assets" / f"{instance_id}.json"
+        contracts.write_json_no_replace(destination, source_asset)
+        entry = {
+            "asset_id": instance_id,
+            "profile_schema_id": direct_authority["profile_schema_id"],
+            "request_sha256": direct_authority["request_sha256"],
+            "sampled_attributes": copy.deepcopy(attempt["sampled_attributes"]),
+            "attribute_evidence": copy.deepcopy(
+                raw_payload["attribute_evidence"]
+            ),
+            "source_asset": {
+                "path": destination.relative_to(staging).as_posix(),
+                "sha256": _sha256_file(destination),
+                "size_bytes": destination.stat().st_size,
+            },
+            "state_classification": "research_candidate",
+            "next_gate": "lod_then_species_rig_binding",
+        }
+        registry: dict[str, Any] = {
+            "schema": DIRECT_GEOMETRY_REGISTRY_SCHEMA,
+            "state_classification": "research_candidate",
+            "formal_dataset_registration_authorized": False,
+            "direct_source_authority": {
+                "path": str(direct_authority_path),
+                "sha256": expected_direct_source_authority_sha256,
+                "size_bytes": direct_authority_path.stat().st_size,
+                "authority_sha256": direct_authority["authority_sha256"],
+            },
+            "pixal_batch": {
+                "path": str(pixal_batch_path),
+                "sha256": _sha256_file(pixal_batch_path),
+                "batch_sha256": pixal_batch["batch_sha256"],
+            },
+            "static_decision_batch": {
+                "path": str(decision_batch_path),
+                "sha256": _sha256_file(decision_batch_path),
+                "decision_batch_sha256": decision_batch[
+                    "decision_batch_sha256"
+                ],
+            },
+            "geometry_closure": {
+                "path": str(geometry_closure_path),
+                "sha256": expected_geometry_closure_sha256,
+                "manifest_sha256": closure_manifest["manifest_sha256"],
+            },
+            "source_asset_count": 1,
+            "source_assets": [entry],
+            "automatic_checks": copy.deepcopy(
+                DIRECT_GEOMETRY_REGISTRY_AUTOMATIC_CHECKS
+            ),
+        }
+        registry["registry_sha256"] = _hash_without(
+            registry,
+            "registry_sha256",
+        )
+        contracts.write_json_no_replace(
+            staging / "registry_manifest.json",
+            registry,
+        )
+        immutable._seal_readonly_tree(staging)
+        if output_root.exists() or output_root.is_symlink():
+            raise contracts.ContractError(
+                "animal registry output appeared concurrently"
+            )
+        os.rename(staging, output_root)
+        return output_root / "registry_manifest.json"
+    except Exception:
+        immutable._remove_staging_tree(staging)
+        raise
 
 
 def register_derived(
@@ -2050,6 +2629,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--static-decision-batch", required=True, type=Path)
     parser.add_argument("--derived-static-decision", type=Path)
     parser.add_argument("--expected-derived-static-decision-sha256")
+    parser.add_argument("--geometry-closure", type=Path)
+    parser.add_argument("--expected-geometry-closure-sha256")
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument(
         "--frozen-historical-preflight",
@@ -2077,10 +2658,43 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise contracts.ContractError(
                 "derived static decision path and expected SHA-256 must be supplied together"
             )
-        if args.derived_static_decision is None:
+        if (args.geometry_closure is None) != (
+            args.expected_geometry_closure_sha256 is None
+        ):
+            raise contracts.ContractError(
+                "geometry closure path and expected SHA-256 must be supplied together"
+            )
+        if (
+            args.derived_static_decision is not None
+            and args.geometry_closure is not None
+        ):
+            raise contracts.ContractError(
+                "derived static decision and direct geometry closure modes are "
+                "mutually exclusive"
+            )
+        if args.geometry_closure is not None:
+            if args.direct_source_authority is None:
+                raise contracts.ContractError(
+                    "direct geometry registration requires a direct source authority"
+                )
+            if args.frozen_historical_preflight:
+                raise contracts.ContractError(
+                    "direct geometry registration cannot claim a frozen preflight"
+                )
+            manifest = register_direct_geometry(
+                args.direct_source_authority,
+                args.expected_direct_source_authority_sha256,
+                args.pixal_batch,
+                args.static_decision_batch,
+                args.geometry_closure,
+                args.expected_geometry_closure_sha256,
+                args.output_root,
+            )
+        elif args.derived_static_decision is None:
             if args.preflight is None:
                 raise contracts.ContractError(
-                    "direct source authority is supported only for derived registration"
+                    "direct source authority requires derived or direct geometry "
+                    "registration"
                 )
             manifest = register(
                 args.preflight,

@@ -324,6 +324,9 @@ DERIVED_REGISTRY_FIELDS = REGISTRY_FIELDS | frozenset(
 DIRECT_DERIVED_REGISTRY_FIELDS = (
     DERIVED_REGISTRY_FIELDS - frozenset({"preflight"})
 ) | frozenset({"direct_source_authority"})
+DIRECT_GEOMETRY_REGISTRY_FIELDS = (
+    REGISTRY_FIELDS - frozenset({"preflight"})
+) | frozenset({"direct_source_authority", "geometry_closure"})
 DIRECT_SOURCE_AUTHORITY_DESCRIPTOR_FIELDS = frozenset(
     {
         "path",
@@ -333,6 +336,30 @@ DIRECT_SOURCE_AUTHORITY_DESCRIPTOR_FIELDS = frozenset(
     }
 )
 DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE = "direct_source_authority_v1"
+DIRECT_GEOMETRY_SOURCE_AUTHORITY_VALIDATION_MODE = (
+    "direct_geometry_source_authority_v1"
+)
+DIRECT_GEOMETRY_SOURCE_ARTIFACT_ROLES = frozenset(
+    {
+        "source_reference_2d",
+        "pixal_input_rgba",
+        "pixal_raw_glb",
+        "pixal_attempt_manifest",
+        "raw_static_review_manifest",
+        "raw_static_contact_sheet",
+        "raw_static_decision",
+        "raw_static_decision_batch",
+        "derived_repaired_glb",
+        "derived_geometry_closure",
+        "derived_repair_manifest",
+        "derived_geometry_audit",
+        "derived_clay_render_manifest",
+        "derived_clay_contact_sheet",
+        "direct_source_authority",
+        "adopted_pixal_batch",
+        "direct_adoption_spec",
+    }
+)
 REGISTRY_SOURCE_INDEX_FIELDS = frozenset(
     {
         "asset_id",
@@ -420,6 +447,76 @@ def _require_sha256(value: Any, label: str) -> str:
     if not isinstance(value, str) or SHA256_PATTERN.fullmatch(value) is None:
         raise contracts.ContractError(f"{label} must be a lowercase SHA-256")
     return value
+
+
+def _validate_watertight_proxy_correspondence(value: Any) -> None:
+    expected_thresholds = {
+        "proxy_to_repaired_p99_ratio_max": 0.003,
+        "proxy_to_repaired_max_ratio_max": 0.006,
+        "repaired_to_proxy_p99_ratio_max": 0.030,
+        "repaired_to_proxy_max_ratio_max": 0.060,
+    }
+    if (
+        not isinstance(value, Mapping)
+        or set(value)
+        != {
+            "schema",
+            "normalization",
+            "repaired_imported_vertices",
+            "proxy_unique_vertices",
+            "proxy_to_repaired",
+            "repaired_to_proxy",
+            "thresholds",
+        }
+        or value.get("schema")
+        != "avengine_bounded_watertight_vertex_correspondence_v1"
+        or value.get("normalization")
+        != "repaired_axis_aligned_bbox_diagonal"
+        or value.get("thresholds") != expected_thresholds
+    ):
+        raise contracts.ContractError(
+            "bounded watertight proxy correspondence contract changed"
+        )
+    for field in ("repaired_imported_vertices", "proxy_unique_vertices"):
+        count = value.get(field)
+        if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+            raise contracts.ContractError(
+                "bounded watertight proxy correspondence vertex counts are invalid"
+            )
+    metric_limits = {
+        "proxy_to_repaired": (
+            expected_thresholds["proxy_to_repaired_p99_ratio_max"],
+            expected_thresholds["proxy_to_repaired_max_ratio_max"],
+        ),
+        "repaired_to_proxy": (
+            expected_thresholds["repaired_to_proxy_p99_ratio_max"],
+            expected_thresholds["repaired_to_proxy_max_ratio_max"],
+        ),
+    }
+    for field, (p99_limit, max_limit) in metric_limits.items():
+        metrics = value.get(field)
+        if not isinstance(metrics, Mapping) or set(metrics) != {
+            "p99_ratio",
+            "max_ratio",
+        }:
+            raise contracts.ContractError(
+                "bounded watertight proxy correspondence metric fields changed"
+            )
+        p99_ratio = metrics.get("p99_ratio")
+        max_ratio = metrics.get("max_ratio")
+        if (
+            not isinstance(p99_ratio, float)
+            or not isinstance(max_ratio, float)
+            or not math.isfinite(p99_ratio)
+            or not math.isfinite(max_ratio)
+            or p99_ratio < 0.0
+            or max_ratio < p99_ratio
+            or p99_ratio > p99_limit
+            or max_ratio > max_limit
+        ):
+            raise contracts.ContractError(
+                "bounded watertight proxy correspondence metrics are invalid"
+            )
 
 
 def _require_exact_automatic_checks(
@@ -806,16 +903,325 @@ def _validate_direct_source_asset_identity(
         != contracts.canonical_json(expected)
     ]
     provenance = payload.get("provenance")
+    expected_models = copy.deepcopy(adopted_batch.get("models"))
+    expected_attempt_id: str | None = None
+    direct_geometry = context.get("direct_geometry_authority")
+    if direct_geometry is not None:
+        replay = (
+            direct_geometry.get("geometry_closure_replay")
+            if isinstance(direct_geometry, Mapping)
+            else None
+        )
+        manifest = (
+            replay.get("manifest") if isinstance(replay, Mapping) else None
+        )
+        inherited = (
+            manifest.get("inherited_static_judgment")
+            if isinstance(manifest, Mapping)
+            else None
+        )
+        raw_decision_sha256 = (
+            inherited.get("decision_sha256")
+            if isinstance(inherited, Mapping)
+            else None
+        )
+        closure_manifest_sha256 = (
+            manifest.get("manifest_sha256")
+            if isinstance(manifest, Mapping)
+            else None
+        )
+        if (
+            not isinstance(expected_models, Mapping)
+            or _require_sha256(
+                raw_decision_sha256,
+                "direct geometry provenance raw decision sha256",
+            )
+            != raw_decision_sha256
+            or _require_sha256(
+                closure_manifest_sha256,
+                "direct geometry provenance closure sha256",
+            )
+            != closure_manifest_sha256
+            or {
+                source_registry.DIRECT_GEOMETRY_RAW_DECISION_PROVENANCE_MODEL,
+                source_registry.DIRECT_GEOMETRY_CLOSURE_PROVENANCE_MODEL,
+            }.intersection(expected_models)
+        ):
+            raise contracts.ContractError(
+                "direct geometry source provenance authority is invalid"
+            )
+        expected_models = {
+            **copy.deepcopy(dict(expected_models)),
+            source_registry.DIRECT_GEOMETRY_RAW_DECISION_PROVENANCE_MODEL: (
+                raw_decision_sha256
+            ),
+            source_registry.DIRECT_GEOMETRY_CLOSURE_PROVENANCE_MODEL: (
+                closure_manifest_sha256
+            ),
+        }
+        expected_attempt_id = (
+            f"direct_geometry_{attempt.get('execution_job_id')}"
+        )
     if (
         changed
         or not isinstance(provenance, Mapping)
         or contracts.canonical_json(provenance.get("models"))
-        != contracts.canonical_json(adopted_batch.get("models"))
+        != contracts.canonical_json(expected_models)
+        or (
+            expected_attempt_id is not None
+            and provenance.get("attempt_id") != expected_attempt_id
+        )
     ):
         suffix = f": {', '.join(changed)}" if changed else ""
         raise contracts.ContractError(
             f"source asset does not match its direct source authority{suffix}"
         )
+
+
+def _load_direct_geometry_registry_authority(
+    registry: Mapping[str, Any],
+    *,
+    direct_source_authority: Mapping[str, Any],
+    direct_source_context: Mapping[str, Any],
+    pixal_batch_path: Path,
+    decision_batch_path: Path,
+    decision_batch: Mapping[str, Any],
+    decisions: Mapping[str, Any],
+) -> dict[str, Any]:
+    descriptor = registry.get("geometry_closure")
+    if (
+        not isinstance(descriptor, Mapping)
+        or set(descriptor) != {"path", "sha256", "manifest_sha256"}
+        or not isinstance(descriptor.get("path"), str)
+        or not Path(descriptor["path"]).is_absolute()
+    ):
+        raise contracts.ContractError(
+            "direct geometry registry closure descriptor is invalid"
+        )
+    expected_file_sha256 = _require_sha256(
+        descriptor.get("sha256"),
+        "direct geometry registry closure file sha256",
+    )
+    expected_manifest_sha256 = _require_sha256(
+        descriptor.get("manifest_sha256"),
+        "direct geometry registry closure internal sha256",
+    )
+    closure_path = _direct_file(
+        Path(descriptor["path"]),
+        "direct geometry registry closure",
+    )
+    if _sha256_file(closure_path) != expected_file_sha256:
+        raise contracts.ContractError("direct geometry registry closure changed")
+
+    attempt = direct_source_context.get("attempt")
+    adoption_context = direct_source_context.get("adoption_context")
+    bundle_sources = (
+        adoption_context.get("bundle_sources")
+        if isinstance(adoption_context, Mapping)
+        else None
+    )
+    instance_id = direct_source_authority.get("instance_id")
+    if (
+        not isinstance(attempt, Mapping)
+        or not isinstance(bundle_sources, Mapping)
+        or not isinstance(instance_id, str)
+        or set(decisions) != {instance_id}
+    ):
+        raise contracts.ContractError(
+            "direct geometry registry source/decision coverage is invalid"
+        )
+    decision = decisions[instance_id]
+    decision_path = (
+        decision.get("path") if isinstance(decision, Mapping) else None
+    )
+    review_record = (
+        decision.get("static_review") if isinstance(decision, Mapping) else None
+    )
+    review_path = (
+        review_record.get("path") if isinstance(review_record, Mapping) else None
+    )
+    review_payload = (
+        review_record.get("payload")
+        if isinstance(review_record, Mapping)
+        else None
+    )
+    if (
+        not isinstance(decision_path, Path)
+        or not isinstance(review_path, Path)
+        or not isinstance(review_payload, Mapping)
+    ):
+        raise contracts.ContractError(
+            "direct geometry registry raw approval is invalid"
+        )
+    decision_path = _direct_file(
+        decision_path,
+        "direct geometry registry raw static decision",
+    )
+    review_path = _direct_file(
+        review_path,
+        "direct geometry registry raw static review",
+    )
+
+    try:
+        original_raw = _direct_file(
+            Path(bundle_sources["pixal_raw_glb"]),
+            "direct geometry original Pixel3D raw GLB",
+        )
+        original_manifest = _direct_file(
+            Path(bundle_sources["pixal_attempt_manifest"]),
+            "direct geometry original Pixel3D attempt manifest",
+        )
+        original_input = _direct_file(
+            Path(bundle_sources["pixal_input_rgba"]),
+            "direct geometry original Pixel3D input",
+        )
+        adopted_input = _verify_relative_descriptor(
+            attempt["pixal_input"],
+            pixal_batch_path.parent,
+            "direct geometry adopted Pixel3D input",
+        )
+    except (KeyError, TypeError) as error:
+        raise contracts.ContractError(
+            "direct geometry registry adoption byte authorities are incomplete"
+        ) from error
+
+    from tools import (
+        publish_generated_animal_geometry_closure as geometry_closures,
+    )
+
+    replay = _runner_call(
+        "direct geometry registry closure strict replay",
+        geometry_closures.load_geometry_closure_v2,
+        closure_path,
+        expected_manifest_sha256=expected_file_sha256,
+        expected_instance_id=instance_id,
+        expected_raw_pixal_glb=original_raw,
+        expected_pixal_manifest=original_manifest,
+        expected_raw_static_decision_batch=decision_batch_path,
+        expected_raw_static_decision=decision_path,
+    )
+    if (
+        not isinstance(replay, Mapping)
+        or set(replay) != {"manifest", "paths", "repair", "audit"}
+        or not isinstance(replay.get("manifest"), Mapping)
+        or replay["manifest"].get("manifest_sha256")
+        != expected_manifest_sha256
+        or not isinstance(replay.get("paths"), Mapping)
+        or set(replay["paths"])
+        != {
+            "raw_pixal_glb",
+            "pixal_manifest",
+            "source_reference",
+            "raw_static_decision_batch",
+            "raw_static_decision",
+            "raw_static_review",
+            "repair_manifest",
+            "repaired_glb",
+            "geometry_audit",
+            "clay_render_manifest",
+            "clay_contact_sheet",
+        }
+    ):
+        raise contracts.ContractError(
+            "direct geometry registry closure replay result is invalid"
+        )
+    replay_paths = {
+        name: _direct_file(
+            Path(path),
+            f"direct geometry registry replay {name}",
+        )
+        for name, path in replay["paths"].items()
+    }
+    for observed, expected, label in (
+        (replay_paths["raw_pixal_glb"], original_raw, "raw Pixel3D GLB"),
+        (
+            replay_paths["pixal_manifest"],
+            original_manifest,
+            "Pixel3D attempt manifest",
+        ),
+        (
+            replay_paths["raw_static_decision_batch"],
+            decision_batch_path,
+            "raw static decision batch",
+        ),
+        (
+            replay_paths["raw_static_decision"],
+            decision_path,
+            "raw static decision",
+        ),
+        (
+            replay_paths["raw_static_review"],
+            review_path,
+            "raw static review",
+        ),
+    ):
+        if observed != expected.resolve():
+            raise contracts.ContractError(
+                f"direct geometry registry closure {label} was rebound"
+            )
+    source_reference = replay_paths["source_reference"]
+    if (
+        source_reference.stat().st_size != original_input.stat().st_size
+        or _sha256_file(source_reference) != _sha256_file(original_input)
+    ):
+        raise contracts.ContractError(
+            "direct geometry closure source reference is not the adopted "
+            "Pixel3D input"
+        )
+
+    static_review_batch = decision_batch.get("static_review_batch")
+    static_review_batch_path = (
+        static_review_batch.get("path")
+        if isinstance(static_review_batch, Mapping)
+        else None
+    )
+    if not isinstance(static_review_batch_path, str):
+        raise contracts.ContractError(
+            "direct geometry registry raw static review batch is missing"
+        )
+    raw_contact = _verify_relative_descriptor(
+        review_payload.get("contact_sheet"),
+        _direct_file(
+            Path(static_review_batch_path),
+            "direct geometry registry raw static review batch",
+        ).parent,
+        "direct geometry registry raw static contact sheet",
+    )
+    expected_artifacts = {
+        "source_reference_2d": source_reference,
+        "pixal_input_rgba": adopted_input,
+        "pixal_raw_glb": replay_paths["raw_pixal_glb"],
+        "pixal_attempt_manifest": replay_paths["pixal_manifest"],
+        "raw_static_review_manifest": replay_paths["raw_static_review"],
+        "raw_static_contact_sheet": raw_contact,
+        "raw_static_decision": replay_paths["raw_static_decision"],
+        "raw_static_decision_batch": replay_paths[
+            "raw_static_decision_batch"
+        ],
+        "derived_repaired_glb": replay_paths["repaired_glb"],
+        "derived_geometry_closure": closure_path,
+        "derived_repair_manifest": replay_paths["repair_manifest"],
+        "derived_geometry_audit": replay_paths["geometry_audit"],
+        "derived_clay_render_manifest": replay_paths[
+            "clay_render_manifest"
+        ],
+        "derived_clay_contact_sheet": replay_paths["clay_contact_sheet"],
+        "direct_source_authority": _direct_file(
+            Path(direct_source_context["direct_source_authority_path"]),
+            "direct geometry registry source authority",
+        ),
+        "adopted_pixal_batch": pixal_batch_path,
+        "direct_adoption_spec": _direct_file(
+            Path(direct_source_context["source_spec_path"]),
+            "direct geometry registry adoption spec",
+        ),
+    }
+    return {
+        "registry_schema": source_registry.DIRECT_GEOMETRY_REGISTRY_SCHEMA,
+        "geometry_closure": dict(descriptor),
+        "geometry_closure_replay": copy.deepcopy(dict(replay)),
+        "source_artifacts": expected_artifacts,
+    }
 
 
 def load_source_registry_anchor(
@@ -844,6 +1250,9 @@ def load_source_registry_anchor(
         source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
         source_registry.DERIVED_REGISTRY_SCHEMA,
     }
+    direct_geometry_registry = (
+        registry_schema == source_registry.DIRECT_GEOMETRY_REGISTRY_SCHEMA
+    )
     legacy_derived_registry = (
         registry_schema == source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA
     )
@@ -852,15 +1261,22 @@ def load_source_registry_anchor(
         and isinstance(registry, dict)
         and "direct_source_authority" in registry
     )
+    direct_source_registry = (
+        direct_derived_registry or direct_geometry_registry
+    )
     expected_registry_fields = (
-        DIRECT_DERIVED_REGISTRY_FIELDS
+        DIRECT_GEOMETRY_REGISTRY_FIELDS
+        if direct_geometry_registry
+        else DIRECT_DERIVED_REGISTRY_FIELDS
         if direct_derived_registry
         else DERIVED_REGISTRY_FIELDS
         if derived_registry
         else REGISTRY_FIELDS
     )
     expected_registry_checks = (
-        source_registry.DIRECT_DERIVED_REGISTRY_AUTOMATIC_CHECKS
+        source_registry.DIRECT_GEOMETRY_REGISTRY_AUTOMATIC_CHECKS
+        if direct_geometry_registry
+        else source_registry.DIRECT_DERIVED_REGISTRY_AUTOMATIC_CHECKS
         if direct_derived_registry
         else (
             LEGACY_DERIVED_REGISTRY_AUTOMATIC_CHECKS
@@ -878,6 +1294,7 @@ def load_source_registry_anchor(
             source_registry.REGISTRY_SCHEMA,
             source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
             source_registry.DERIVED_REGISTRY_SCHEMA,
+            source_registry.DIRECT_GEOMETRY_REGISTRY_SCHEMA,
         }
         or registry.get("state_classification") != "research_candidate"
         or registry.get("formal_dataset_registration_authorized") is not False
@@ -893,7 +1310,7 @@ def load_source_registry_anchor(
 
     direct_source_authority: dict[str, Any] | None = None
     direct_source_context: dict[str, Any] | None = None
-    if direct_derived_registry:
+    if direct_source_registry:
         (
             _direct_authority_descriptor,
             direct_source_authority,
@@ -902,7 +1319,9 @@ def load_source_registry_anchor(
         requests: dict[str, Any] = {}
         profiles: dict[str, Any] = {}
         source_registry_validation_mode = (
-            DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE
+            DIRECT_GEOMETRY_SOURCE_AUTHORITY_VALIDATION_MODE
+            if direct_geometry_registry
+            else DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE
         )
     else:
         preflight_descriptor = registry.get("preflight")
@@ -978,7 +1397,7 @@ def load_source_registry_anchor(
     )
     if _sha256_file(pixal_path) != pixal_descriptor["sha256"]:
         raise contracts.ContractError("source registry Pixal batch changed")
-    if direct_derived_registry:
+    if direct_source_registry:
         if (
             not isinstance(direct_source_authority, Mapping)
             or not isinstance(direct_source_context, Mapping)
@@ -1174,6 +1593,26 @@ def load_source_registry_anchor(
         raise contracts.ContractError(
             "source registry static decision batch identity changed"
         )
+    if direct_geometry_registry:
+        if (
+            not isinstance(direct_source_authority, Mapping)
+            or not isinstance(direct_source_context, Mapping)
+        ):
+            raise contracts.ContractError(
+                "direct geometry registry source authority is missing"
+            )
+        direct_geometry_authority = _load_direct_geometry_registry_authority(
+            registry,
+            direct_source_authority=direct_source_authority,
+            direct_source_context=direct_source_context,
+            pixal_batch_path=pixal_path,
+            decision_batch_path=decision_batch_path,
+            decision_batch=authenticated_decision_batch,
+            decisions=decisions,
+        )
+        direct_source_context["direct_geometry_authority"] = (
+            direct_geometry_authority
+        )
     authority_decisions = decisions
     if derived_registry:
         if set(decisions) != set(attempts):
@@ -1278,7 +1717,7 @@ def load_source_registry_anchor(
             indexed_path,
             f"source asset registry entry {asset_id}",
         )
-        if direct_derived_registry:
+        if direct_source_registry:
             if (
                 not isinstance(direct_source_authority, Mapping)
                 or not isinstance(direct_source_context, Mapping)
@@ -1371,6 +1810,7 @@ def load_source_asset(
     request: Mapping[str, Any],
     profile: Mapping[str, Any],
     require_derived_authority: bool = False,
+    require_direct_geometry_authority: bool = False,
     expected_raw_static_decision_batch: Mapping[str, Any] | None = None,
 ) -> tuple[Path, dict[str, Any], dict[str, Path]]:
     path = _direct_file(path, "source_asset_v2")
@@ -1439,6 +1879,81 @@ def load_source_asset(
             raise contracts.ContractError(
                 "direct source asset lineage artifacts changed from registry authority"
             )
+    if require_derived_authority and require_direct_geometry_authority:
+        raise contracts.ContractError(
+            "source asset cannot claim both legacy derived and direct geometry "
+            "registry authority"
+        )
+    if require_direct_geometry_authority:
+        direct_geometry = profile.get("direct_geometry_authority")
+        expected_artifacts = (
+            direct_geometry.get("source_artifacts")
+            if isinstance(direct_geometry, Mapping)
+            else None
+        )
+        closure_descriptor = (
+            direct_geometry.get("geometry_closure")
+            if isinstance(direct_geometry, Mapping)
+            else None
+        )
+        closure_replay = (
+            direct_geometry.get("geometry_closure_replay")
+            if isinstance(direct_geometry, Mapping)
+            else None
+        )
+        if (
+            not direct_source_identity
+            or not isinstance(direct_geometry, Mapping)
+            or set(direct_geometry)
+            != {
+                "registry_schema",
+                "geometry_closure",
+                "geometry_closure_replay",
+                "source_artifacts",
+            }
+            or direct_geometry.get("registry_schema")
+            != source_registry.DIRECT_GEOMETRY_REGISTRY_SCHEMA
+            or not isinstance(closure_descriptor, Mapping)
+            or set(closure_descriptor)
+            != {"path", "sha256", "manifest_sha256"}
+            or not isinstance(closure_replay, Mapping)
+            or set(closure_replay) != {"manifest", "paths", "repair", "audit"}
+            or not isinstance(expected_artifacts, Mapping)
+            or set(expected_artifacts)
+            != DIRECT_GEOMETRY_SOURCE_ARTIFACT_ROLES
+            or set(payload["artifacts"])
+            != DIRECT_GEOMETRY_SOURCE_ARTIFACT_ROLES
+        ):
+            raise contracts.ContractError(
+                "direct geometry source asset lacks its exact v4 registry authority"
+            )
+        for role in sorted(DIRECT_GEOMETRY_SOURCE_ARTIFACT_ROLES):
+            expected_path = expected_artifacts.get(role)
+            if (
+                not isinstance(expected_path, Path)
+                or authenticated.get(f"artifact:{role}")
+                != expected_path.resolve()
+            ):
+                raise contracts.ContractError(
+                    f"direct geometry source artifact {role} changed from "
+                    "registry closure replay"
+                )
+        if (
+            authenticated["artifact:derived_geometry_closure"]
+            != _direct_file(
+                Path(str(closure_descriptor["path"])),
+                "direct geometry source closure",
+            )
+            or _sha256_file(
+                authenticated["artifact:derived_geometry_closure"]
+            )
+            != closure_descriptor["sha256"]
+            or closure_replay.get("manifest", {}).get("manifest_sha256")
+            != closure_descriptor["manifest_sha256"]
+        ):
+            raise contracts.ContractError(
+                "direct geometry source closure authority changed"
+            )
     derived_required = {
         "artifact:pixal_raw_glb",
         "artifact:raw_static_decision",
@@ -1457,7 +1972,10 @@ def load_source_asset(
         raise contracts.ContractError(
             "derived source registry selected an asset without complete repair authority"
         )
-    if derived_specific_roles.intersection(authenticated):
+    if (
+        not require_direct_geometry_authority
+        and derived_specific_roles.intersection(authenticated)
+    ):
         if not derived_required.issubset(authenticated):
             raise contracts.ContractError(
                 "derived source asset authority artifacts are incomplete"
@@ -2472,18 +2990,192 @@ def _validate_target_rig_lineage(
     derived_tokenrig_input = source_artifacts.get(
         "artifact:derived_repaired_glb"
     )
-    tokenrig_input = (
-        derived_tokenrig_input
-        if derived_tokenrig_input is not None
-        else raw_pixal
-    )
-    if (
-        derived_tokenrig_input is not None
-        and observed["lineage"].get("upstream_kind")
-        != "bounded_geometry_closure"
-    ):
+    upstream_kind = observed["lineage"].get("upstream_kind")
+    if upstream_kind == "watertight_runtime_proxy":
+        if derived_tokenrig_input is not None:
+            raise contracts.ContractError(
+                "plain watertight TokenRig input cannot bypass its "
+                "source-registry repair authority"
+            )
+        # Legacy raw-only registries may retain an authenticated watertight
+        # proxy.  Registries with repair authority must use an explicitly
+        # bounded upstream kind instead.
+        tokenrig_input = _verify_descriptor(
+            observed["lineage"].get("tokenrig_input"),
+            "TokenRig closure authenticated watertight input",
+        )
+    elif upstream_kind == "bounded_watertight_runtime_proxy":
+        closure_lineage = closure_payload.get("lineage")
+        composite_authority = (
+            closure_lineage.get("composite_upstream_authority")
+            if isinstance(closure_lineage, Mapping)
+            else None
+        )
+        provenance = source_asset.get("provenance")
+        models = (
+            provenance.get("models")
+            if isinstance(provenance, Mapping)
+            else None
+        )
+        geometry_closure = source_artifacts.get(
+            "artifact:derived_geometry_closure"
+        )
+        raw_decision_batch = source_artifacts.get(
+            "artifact:raw_static_decision_batch"
+        )
+        legacy_derived_roles = {
+            "artifact:derived_static_review_manifest",
+            "artifact:derived_static_decision",
+        }
+        if (
+            derived_tokenrig_input is None
+            or geometry_closure is None
+            or raw_decision_batch is None
+            or not isinstance(composite_authority, Mapping)
+            or set(composite_authority)
+            != {
+                "schema",
+                "bounded_geometry_closure_file_sha256",
+                "bounded_geometry_closure_manifest_sha256",
+                "watertight_proxy_manifest_file_sha256",
+                "watertight_proxy_geometry_audit_file_sha256",
+                "watertight_proxy_correspondence",
+                "raw_static_decision_batch_sha256",
+            }
+            or composite_authority.get("schema")
+            != "bounded_watertight_runtime_proxy_authority_v1"
+            or not isinstance(models, Mapping)
+            or legacy_derived_roles.intersection(source_artifacts)
+        ):
+            raise contracts.ContractError(
+                "bounded watertight TokenRig input lacks its exact v4 "
+                "direct-geometry registry authority"
+            )
+        bounded_geometry_file_sha256 = _require_sha256(
+            composite_authority.get(
+                "bounded_geometry_closure_file_sha256"
+            ),
+            "bounded watertight geometry closure file sha256",
+        )
+        bounded_geometry_manifest_sha256 = _require_sha256(
+            composite_authority.get(
+                "bounded_geometry_closure_manifest_sha256"
+            ),
+            "bounded watertight geometry closure internal manifest sha256",
+        )
+        proxy_manifest_file_sha256 = _require_sha256(
+            composite_authority.get(
+                "watertight_proxy_manifest_file_sha256"
+            ),
+            "bounded watertight proxy manifest file sha256",
+        )
+        proxy_geometry_audit_file_sha256 = _require_sha256(
+            composite_authority.get(
+                "watertight_proxy_geometry_audit_file_sha256"
+            ),
+            "bounded watertight proxy geometry audit file sha256",
+        )
+        _validate_watertight_proxy_correspondence(
+            composite_authority.get("watertight_proxy_correspondence")
+        )
+        raw_batch_sha256 = _require_sha256(
+            composite_authority.get("raw_static_decision_batch_sha256"),
+            "bounded watertight raw decision batch sha256",
+        )
+        _require_sha256(
+            models.get(
+                source_registry.DIRECT_GEOMETRY_RAW_DECISION_PROVENANCE_MODEL
+            ),
+            "v4 source provenance raw decision sha256",
+        )
+        closure_evidence = closure_payload.get("evidence")
+        upstream_evidence = (
+            closure_evidence.get("upstream_manifest")
+            if isinstance(closure_evidence, Mapping)
+            else None
+        )
+        extra_upstream_evidence = (
+            closure_evidence.get("extra_upstream_manifests")
+            if isinstance(closure_evidence, Mapping)
+            else None
+        )
+        proxy_manifest_original = (
+            upstream_evidence.get("original")
+            if isinstance(upstream_evidence, Mapping)
+            else None
+        )
+        proxy_geometry_audit_original = (
+            extra_upstream_evidence[1].get("original")
+            if (
+                isinstance(extra_upstream_evidence, list)
+                and len(extra_upstream_evidence) == 5
+                and isinstance(extra_upstream_evidence[1], Mapping)
+            )
+            else None
+        )
+        if (
+            not isinstance(proxy_manifest_original, Mapping)
+            or not isinstance(proxy_geometry_audit_original, Mapping)
+        ):
+            raise contracts.ContractError(
+                "bounded watertight TokenRig closure lacks its exact "
+                "authenticated proxy manifest/audit evidence"
+            )
+        proxy_manifest_original_path = _verify_descriptor(
+            proxy_manifest_original,
+            "TokenRig closure original watertight proxy manifest",
+        )
+        proxy_geometry_audit_original_path = _verify_descriptor(
+            proxy_geometry_audit_original,
+            "TokenRig closure original watertight proxy geometry audit",
+        )
+        if (
+            _sha256_file(proxy_manifest_original_path)
+            != proxy_manifest_file_sha256
+            or _sha256_file(proxy_geometry_audit_original_path)
+            != proxy_geometry_audit_file_sha256
+        ):
+            raise contracts.ContractError(
+                "bounded watertight TokenRig composite authority changed "
+                "from its authenticated closure evidence"
+            )
+        if (
+            models.get(
+                source_registry.DIRECT_GEOMETRY_CLOSURE_PROVENANCE_MODEL
+            )
+            != bounded_geometry_manifest_sha256
+            or _sha256_file(
+                _direct_file(
+                    geometry_closure,
+                    "v4 source bounded geometry closure",
+                )
+            )
+            != bounded_geometry_file_sha256
+            or _sha256_file(
+                _direct_file(
+                    raw_decision_batch,
+                    "v4 source raw static decision batch",
+                )
+            )
+            != raw_batch_sha256
+        ):
+            raise contracts.ContractError(
+                "bounded watertight TokenRig composite authority changed "
+                "from its v4 source registry"
+            )
+        tokenrig_input = _verify_descriptor(
+            observed["lineage"].get("tokenrig_input"),
+            "TokenRig closure authenticated bounded watertight input",
+        )
+    elif upstream_kind == "bounded_geometry_closure":
+        if derived_tokenrig_input is None:
+            raise contracts.ContractError(
+                "bounded TokenRig input lacks its source-registry repair authority"
+            )
+        tokenrig_input = derived_tokenrig_input
+    else:
         raise contracts.ContractError(
-            "derived TokenRig input must come from a bounded geometry closure"
+            "TokenRig closure upstream geometry kind is unsupported"
         )
     _runner_call(
         "TokenRig closure target geometry",
@@ -4227,6 +4919,10 @@ def _authenticate_import_authority(
                 source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
                 source_registry.DERIVED_REGISTRY_SCHEMA,
             }
+        ),
+        require_direct_geometry_authority=(
+            source_registry_payload.get("schema")
+            == source_registry.DIRECT_GEOMETRY_REGISTRY_SCHEMA
         ),
         expected_raw_static_decision_batch=source_registry_payload.get(
             "static_decision_batch"

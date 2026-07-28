@@ -1074,9 +1074,17 @@ def test_preparation_and_manifest_anchor_mutations_fail_closed(tmp_path, monkeyp
             )
 
 
-def test_import_executor_accepts_direct_source_mode_and_rejects_unknown_mode(
+@pytest.mark.parametrize(
+    "validation_mode",
+    (
+        "direct_source_authority_v1",
+        "direct_geometry_source_authority_v1",
+    ),
+)
+def test_import_executor_roundtrips_direct_modes_and_rejects_unknown_mode(
     tmp_path,
     monkeypatch,
+    validation_mode,
 ):
     batch = _load_module(
         BATCH_IMPORT,
@@ -1088,7 +1096,7 @@ def test_import_executor_accepts_direct_source_mode_and_rejects_unknown_mode(
     direct = _build_v3_contract(
         direct_root,
         batch,
-        source_registry_validation_mode="direct_source_authority_v1",
+        source_registry_validation_mode=validation_mode,
     )
     preparation, _preparation_descriptor, _manifest_descriptor = (
         batch._validate_preparation_anchor(
@@ -1100,8 +1108,18 @@ def test_import_executor_accepts_direct_source_mode_and_rejects_unknown_mode(
     )
     assert (
         preparation["source_asset_registry_validation_mode"]
-        == "direct_source_authority_v1"
+        == validation_mode
     )
+    assert (
+        direct["freeze_receipt"]["source_asset_registry_validation_mode"]
+        == validation_mode
+    )
+    jobs, batch_identity = batch._validate_batch_payload(
+        copy.deepcopy(direct["manifest"]),
+        preparation,
+    )
+    assert jobs == direct["manifest"]["jobs"]
+    assert batch_identity["batch_sha256"] == direct["manifest"]["batch_sha256"]
 
     invalid_root = tmp_path / "invalid"
     invalid_root.mkdir()
@@ -1116,6 +1134,14 @@ def test_import_executor_accepts_direct_source_mode_and_rejects_unknown_mode(
             _sha256(invalid["preparation_path"]),
             invalid["manifest_path"],
             _sha256(invalid["manifest_path"]),
+        )
+    with pytest.raises(
+        RuntimeError,
+        match="batch source registry validation mode is invalid",
+    ):
+        batch._validate_batch_payload(
+            copy.deepcopy(invalid["manifest"]),
+            invalid["preparation"],
         )
 
 

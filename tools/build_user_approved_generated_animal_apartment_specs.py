@@ -88,10 +88,14 @@ SOURCE_REGISTRY_VALIDATION_MODES = frozenset(
         "frozen_historical_preflight_v1",
         "current_exact_rebuild",
         "direct_source_authority_v1",
+        "direct_geometry_source_authority_v1",
     }
 )
 DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE = (
     preparation_bridge.DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE
+)
+DIRECT_GEOMETRY_SOURCE_AUTHORITY_VALIDATION_MODE = (
+    preparation_bridge.DIRECT_GEOMETRY_SOURCE_AUTHORITY_VALIDATION_MODE
 )
 DIRECT_SOURCE_AUTHORITY_DESCRIPTOR_FIELDS = (
     preparation_bridge.DIRECT_SOURCE_AUTHORITY_DESCRIPTOR_FIELDS
@@ -1873,6 +1877,90 @@ def _validate_formal_decision(
     return review
 
 
+def _validate_direct_geometry_registry_identity(
+    preparation: Mapping[str, Any],
+    *,
+    source_asset: Mapping[str, Any],
+    registry: Mapping[str, Any],
+    source_asset_path: Path,
+    source_registry_path: Path,
+    source_registry_descriptor: Mapping[str, Any],
+) -> None:
+    if (
+        preparation.get("source_asset_registry_validation_mode")
+        != DIRECT_GEOMETRY_SOURCE_AUTHORITY_VALIDATION_MODE
+    ):
+        raise contracts.ContractError(
+            "UE import preparation direct geometry validation mode changed"
+        )
+    roots_value = preparation.get("source_artifact_roots")
+    if (
+        not isinstance(roots_value, Mapping)
+        or not roots_value
+        or any(
+            not isinstance(name, str)
+            or not name
+            or not isinstance(path, str)
+            or not Path(path).is_absolute()
+            for name, path in roots_value.items()
+        )
+    ):
+        raise contracts.ContractError(
+            "UE import preparation direct geometry artifact roots changed"
+        )
+    artifact_roots = {
+        name: Path(path).resolve() for name, path in roots_value.items()
+    }
+    expected_registry_file_sha256 = _require_sha256(
+        source_registry_descriptor.get("sha256"),
+        "direct geometry source registry file hash",
+    )
+    (
+        anchored_registry_path,
+        anchored_registry,
+        request,
+        profile,
+        validation_mode,
+    ) = preparation_bridge.load_source_registry_anchor(
+        source_registry_path,
+        source_asset_path,
+        expected_file_sha256=expected_registry_file_sha256,
+    )
+    (
+        anchored_source_asset_path,
+        anchored_source_asset,
+        authenticated_source_artifacts,
+    ) = preparation_bridge.load_source_asset(
+        source_asset_path,
+        artifact_roots,
+        request=request,
+        profile=profile,
+        require_direct_geometry_authority=True,
+        expected_raw_static_decision_batch=anchored_registry[
+            "static_decision_batch"
+        ],
+    )
+    if (
+        anchored_registry_path != source_registry_path.resolve()
+        or contracts.canonical_json(anchored_registry)
+        != contracts.canonical_json(registry)
+        or validation_mode
+        != DIRECT_GEOMETRY_SOURCE_AUTHORITY_VALIDATION_MODE
+        or anchored_source_asset_path != source_asset_path.resolve()
+        or contracts.canonical_json(anchored_source_asset)
+        != contracts.canonical_json(source_asset)
+        or isinstance(
+            preparation.get("authenticated_source_artifact_count"),
+            bool,
+        )
+        or preparation.get("authenticated_source_artifact_count")
+        != len(authenticated_source_artifacts)
+    ):
+        raise contracts.ContractError(
+            "UE import preparation direct geometry registry replay changed"
+        )
+
+
 def _validate_source_registry_identity(
     preparation: Mapping[str, Any],
     *,
@@ -1903,7 +1991,13 @@ def _validate_source_registry_identity(
         )
     validation_mode = preparation.get("source_asset_registry_validation_mode")
     registry_schema = registry.get("schema")
-    direct_registry = "direct_source_authority" in registry
+    direct_geometry_registry = (
+        registry_schema == source_registry.DIRECT_GEOMETRY_REGISTRY_SCHEMA
+    )
+    direct_derived_registry = (
+        registry_schema == source_registry.DERIVED_REGISTRY_SCHEMA
+        and "direct_source_authority" in registry
+    )
     derived_registry = registry_schema in {
         source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
         source_registry.DERIVED_REGISTRY_SCHEMA,
@@ -1911,7 +2005,17 @@ def _validate_source_registry_identity(
     legacy_derived_registry = (
         registry_schema == source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA
     )
-    if direct_registry:
+    if direct_geometry_registry:
+        expected_registry_fields = (
+            preparation_bridge.DIRECT_GEOMETRY_REGISTRY_FIELDS
+        )
+        expected_registry_checks = (
+            source_registry.DIRECT_GEOMETRY_REGISTRY_AUTOMATIC_CHECKS
+        )
+        expected_registry_schemas = {
+            source_registry.DIRECT_GEOMETRY_REGISTRY_SCHEMA
+        }
+    elif direct_derived_registry:
         expected_registry_fields = preparation_bridge.DIRECT_DERIVED_REGISTRY_FIELDS
         expected_registry_checks = (
             source_registry.DIRECT_DERIVED_REGISTRY_AUTOMATIC_CHECKS
@@ -1947,7 +2051,16 @@ def _validate_source_registry_identity(
         raise contracts.ContractError(
             "UE import preparation source registry identity changed"
         )
-    if direct_registry:
+    if direct_geometry_registry:
+        _validate_direct_geometry_registry_identity(
+            preparation,
+            source_asset=source_asset,
+            registry=registry,
+            source_asset_path=source_asset_path,
+            source_registry_path=source_registry_path,
+            source_registry_descriptor=source_registry_descriptor,
+        )
+    elif direct_derived_registry:
         direct_authority = registry.get("direct_source_authority")
         if (
             validation_mode != DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE
@@ -2003,7 +2116,11 @@ def _validate_source_registry_identity(
         preflight = registry.get("preflight")
         if (
             validation_mode not in SOURCE_REGISTRY_VALIDATION_MODES
-            or validation_mode == DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE
+            or validation_mode
+            in {
+                DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE,
+                DIRECT_GEOMETRY_SOURCE_AUTHORITY_VALIDATION_MODE,
+            }
             or not isinstance(preflight, Mapping)
             or preflight.get("validation_mode") != validation_mode
         ):

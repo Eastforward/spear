@@ -1202,6 +1202,188 @@ def test_builds_authenticated_walk_idle_pair_from_direct_v3_registry(
     )
 
 
+def _direct_geometry_apartment_identity_fixture(
+    tmp_path: Path,
+    monkeypatch,
+) -> dict[str, Any]:
+    bridge_fixture = presentation_support._direct_geometry_v4_reader_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    source_asset = copy.deepcopy(bridge_fixture["source_asset"])
+    registry = contracts.load_json(bridge_fixture["registry_path"])
+    taxonomy = source_asset["taxonomy"]
+    preparation = {
+        "canonical_identity": {
+            "fixed_attributes": copy.deepcopy(
+                source_asset["fixed_attributes"]
+            ),
+        },
+        "source_asset_registry_sha256": registry["registry_sha256"],
+        "source_asset_registry_validation_mode": (
+            subject.DIRECT_GEOMETRY_SOURCE_AUTHORITY_VALIDATION_MODE
+        ),
+        "source_artifact_roots": {
+            "direct_fixture_root": str(
+                bridge_fixture["artifact_root"].resolve()
+            ),
+        },
+        "authenticated_source_artifact_count": (
+            len(source_asset["artifacts"])
+            + len(source_asset["rights"]["licenses"])
+        ),
+    }
+    config = {
+        "species": taxonomy["species"],
+        "breed": taxonomy["breed"],
+        "target_physical_profile": copy.deepcopy(
+            source_asset["target_physical_profile"]
+        ),
+    }
+    job = {
+        "asset_id": source_asset["asset_id"],
+        "profile_schema_id": source_asset["profile_schema_id"],
+        "request_sha256": source_asset["request_sha256"],
+        "sampled_attributes": copy.deepcopy(
+            source_asset["sampled_attributes"]
+        ),
+        "source_asset_sha256": _sha(bridge_fixture["source_path"]),
+        "source_registry_sha256": _sha(bridge_fixture["registry_path"]),
+    }
+    return {
+        **bridge_fixture,
+        "registry": registry,
+        "preparation": preparation,
+        "config": config,
+        "job": job,
+        "source_asset_descriptor": _descriptor(
+            bridge_fixture["source_path"]
+        ),
+        "source_registry_descriptor": _descriptor(
+            bridge_fixture["registry_path"]
+        ),
+    }
+
+
+def _reseal_direct_geometry_apartment_registry(
+    fixture: dict[str, Any],
+) -> None:
+    registry = fixture["registry"]
+    registry["registry_sha256"] = subject.source_registry._hash_without(
+        registry,
+        "registry_sha256",
+    )
+    _write(fixture["registry_path"], registry)
+    fixture["preparation"]["source_asset_registry_sha256"] = registry[
+        "registry_sha256"
+    ]
+    fixture["job"]["source_registry_sha256"] = _sha(
+        fixture["registry_path"]
+    )
+    fixture["source_registry_descriptor"] = _descriptor(
+        fixture["registry_path"]
+    )
+
+
+def _validate_direct_geometry_apartment_fixture(
+    fixture: dict[str, Any],
+) -> None:
+    subject._validate_source_registry_identity(
+        fixture["preparation"],
+        source_asset_path=fixture["source_path"],
+        source_registry_path=fixture["registry_path"],
+        source_asset_descriptor=fixture["source_asset_descriptor"],
+        source_registry_descriptor=fixture["source_registry_descriptor"],
+        config=fixture["config"],
+        job=fixture["job"],
+    )
+
+
+def test_apartment_consumer_replays_exact_direct_geometry_v4_registry(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fixture = _direct_geometry_apartment_identity_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+
+    _validate_direct_geometry_apartment_fixture(fixture)
+
+    assert fixture["registry"]["schema"] == (
+        subject.source_registry.DIRECT_GEOMETRY_REGISTRY_SCHEMA
+    )
+    assert fixture["registry"]["automatic_checks"] == (
+        subject.source_registry.DIRECT_GEOMETRY_REGISTRY_AUTOMATIC_CHECKS
+    )
+    assert len(fixture["closure_calls"]) == 1
+    closure_path, closure_kwargs = fixture["closure_calls"][0]
+    assert closure_path == fixture["geometry_closure"].resolve()
+    assert closure_kwargs["expected_raw_static_decision"] == (
+        fixture["decisions"][
+            fixture["source_asset"]["asset_id"]
+        ]["path"].resolve()
+    )
+    assert closure_kwargs["expected_raw_static_decision_batch"] == (
+        fixture["decision_batch"].resolve()
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    (
+        ("mode_swap", "direct geometry validation mode changed"),
+        ("schema_swap", "source registry identity changed"),
+        ("hash_swap", "direct geometry registry closure changed"),
+        (
+            "closure_swap",
+            "artifact derived_geometry_closure changed from registry closure replay",
+        ),
+    ),
+)
+def test_apartment_consumer_rejects_direct_geometry_v4_authority_swaps(
+    tmp_path: Path,
+    monkeypatch,
+    mutation: str,
+    error: str,
+) -> None:
+    fixture = _direct_geometry_apartment_identity_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    if mutation == "mode_swap":
+        fixture["preparation"]["source_asset_registry_validation_mode"] = (
+            subject.DIRECT_SOURCE_AUTHORITY_VALIDATION_MODE
+        )
+    elif mutation == "schema_swap":
+        fixture["registry"]["schema"] = (
+            subject.source_registry.DERIVED_REGISTRY_SCHEMA
+        )
+        _reseal_direct_geometry_apartment_registry(fixture)
+    elif mutation == "hash_swap":
+        closure = fixture["registry"]["geometry_closure"]
+        closure["sha256"], closure["manifest_sha256"] = (
+            closure["manifest_sha256"],
+            closure["sha256"],
+        )
+        _reseal_direct_geometry_apartment_registry(fixture)
+    else:
+        alternate_closure = tmp_path / "alternate_geometry_closure.json"
+        alternate_closure.write_bytes(
+            fixture["geometry_closure"].read_bytes()
+        )
+        fixture["registry"]["geometry_closure"].update(
+            {
+                "path": str(alternate_closure.resolve()),
+                "sha256": _sha(alternate_closure),
+            }
+        )
+        _reseal_direct_geometry_apartment_registry(fixture)
+
+    with pytest.raises(contracts.ContractError, match=error):
+        _validate_direct_geometry_apartment_fixture(fixture)
+
+
 def test_builds_authenticated_pair_from_texture_transcode_dual_lineage(
     tmp_path: Path,
 ) -> None:

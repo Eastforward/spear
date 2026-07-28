@@ -342,11 +342,611 @@ def parse_raw_pixal_output(payload: dict[str, Any]) -> dict[str, Any]:
     return output
 
 
+def _exact_object(
+    value: Any,
+    fields: set[str],
+    label: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ClosureError(f"{label} fields changed")
+    return value
+
+
+def _nonnegative_integer(value: Any, label: str, *, positive: bool = False) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < (1 if positive else 0)
+    ):
+        raise ClosureError(f"{label} is invalid")
+    return value
+
+
+def measure_bounded_watertight_correspondence(
+    repaired_glb: Path,
+    proxy_glb: Path,
+) -> dict[str, Any]:
+    """Measure deterministic vertex correspondence between exact GLB bytes."""
+
+    try:
+        import numpy as np
+        from scipy.spatial import cKDTree
+        from tools import audit_quadruped_i23d_geometry as geometry_audit
+
+        source_vertices, _source_faces = geometry_audit.load_mesh(repaired_glb)
+        proxy_vertices, _proxy_faces = geometry_audit.load_mesh(proxy_glb)
+        source_vertices = np.where(
+            source_vertices == 0.0,
+            0.0,
+            source_vertices,
+        )
+        proxy_vertices = np.unique(
+            np.where(proxy_vertices == 0.0, 0.0, proxy_vertices),
+            axis=0,
+        )
+        source_extent = source_vertices.max(axis=0) - source_vertices.min(axis=0)
+        source_diagonal = float(np.linalg.norm(source_extent))
+        if (
+            source_diagonal <= 0.0
+            or np.any(source_extent <= 0.0)
+            or not len(proxy_vertices)
+        ):
+            raise ClosureError(
+                "bounded watertight correspondence geometry is invalid"
+            )
+        proxy_to_source = (
+            cKDTree(source_vertices).query(proxy_vertices, workers=-1)[0]
+            / source_diagonal
+        )
+        source_to_proxy = (
+            cKDTree(proxy_vertices).query(source_vertices, workers=-1)[0]
+            / source_diagonal
+        )
+        thresholds = {
+            "proxy_to_repaired_p99_ratio_max": 0.003,
+            "proxy_to_repaired_max_ratio_max": 0.006,
+            "repaired_to_proxy_p99_ratio_max": 0.030,
+            "repaired_to_proxy_max_ratio_max": 0.060,
+        }
+        result = {
+            "schema": (
+                "avengine_bounded_watertight_vertex_correspondence_v1"
+            ),
+            "normalization": "repaired_axis_aligned_bbox_diagonal",
+            "repaired_imported_vertices": int(len(source_vertices)),
+            "proxy_unique_vertices": int(len(proxy_vertices)),
+            "proxy_to_repaired": {
+                "p99_ratio": round(
+                    float(np.percentile(proxy_to_source, 99.0)),
+                    15,
+                ),
+                "max_ratio": round(float(proxy_to_source.max()), 15),
+            },
+            "repaired_to_proxy": {
+                "p99_ratio": round(
+                    float(np.percentile(source_to_proxy, 99.0)),
+                    15,
+                ),
+                "max_ratio": round(float(source_to_proxy.max()), 15),
+            },
+            "thresholds": thresholds,
+        }
+    except ClosureError:
+        raise
+    except Exception as error:
+        raise ClosureError(
+            f"bounded watertight correspondence replay failed: {error}"
+        ) from error
+    if (
+        result["proxy_to_repaired"]["p99_ratio"]
+        > thresholds["proxy_to_repaired_p99_ratio_max"]
+        or result["proxy_to_repaired"]["max_ratio"]
+        > thresholds["proxy_to_repaired_max_ratio_max"]
+        or result["repaired_to_proxy"]["p99_ratio"]
+        > thresholds["repaired_to_proxy_p99_ratio_max"]
+        or result["repaired_to_proxy"]["max_ratio"]
+        > thresholds["repaired_to_proxy_max_ratio_max"]
+    ):
+        raise ClosureError(
+            "bounded watertight proxy is not independently correspondent to "
+            "the repaired Pixel3D geometry"
+        )
+    recursive_finite(result, "bounded watertight correspondence")
+    return result
+
+
+def validate_bounded_watertight_proxy(
+    *,
+    proxy_manifest_path: Path,
+    expected_proxy_manifest_sha256: str,
+    proxy_manifest: dict[str, Any],
+    repaired_glb: Path,
+    tokenrig_input: Path,
+    geometry_audit_path: Path,
+    expected_geometry_audit_sha256: str,
+    expected_correspondence: dict[str, Any] | None = None,
+) -> tuple[Path, dict[str, Any]]:
+    """Strictly replay one externally pinned production watertight proxy."""
+
+    proxy_manifest_path = require_regular_file(
+        proxy_manifest_path,
+        "bounded watertight proxy manifest",
+    )
+    expected_proxy_sha256 = require_sha256(
+        expected_proxy_manifest_sha256,
+        "expected bounded watertight proxy manifest file SHA-256",
+    )
+    if sha256_file(proxy_manifest_path) != expected_proxy_sha256:
+        raise ClosureError(
+            "bounded watertight proxy manifest changed from external authority"
+        )
+    audit_path = require_regular_file(
+        geometry_audit_path,
+        "bounded watertight proxy geometry audit",
+    )
+    expected_audit_sha256 = require_sha256(
+        expected_geometry_audit_sha256,
+        "expected bounded watertight proxy geometry audit file SHA-256",
+    )
+    if sha256_file(audit_path) != expected_audit_sha256:
+        raise ClosureError(
+            "bounded watertight proxy geometry audit changed from external "
+            "authority"
+        )
+    _exact_object(
+        proxy_manifest,
+        {
+            "schema",
+            "created_at",
+            "input",
+            "attribute_input",
+            "output",
+            "parameters",
+            "topology",
+            "surface_attributes",
+            "torso_fold_repair",
+            "authority_contract",
+            "actual_faces",
+            "status",
+            "formal_dataset_registration_authorized",
+        },
+        "bounded watertight proxy manifest",
+    )
+    require_descriptor_matches(
+        proxy_manifest.get("input"),
+        repaired_glb,
+        "bounded watertight repaired geometry input",
+    )
+    require_descriptor_matches(
+        proxy_manifest.get("attribute_input"),
+        repaired_glb,
+        "bounded watertight attribute input",
+    )
+    require_descriptor_matches(
+        proxy_manifest.get("output"),
+        tokenrig_input,
+        "bounded watertight TokenRig input",
+    )
+    attribute_input = proxy_manifest["attribute_input"]
+    if attribute_input.get("same_as_geometry_input") is not True:
+        raise ClosureError(
+            "bounded watertight attribute input is not the repaired GLB"
+        )
+    authority = _exact_object(
+        proxy_manifest["authority_contract"],
+        {
+            "attribute_source_pbr_material_reused",
+            "attribute_source_uvs_transferred_by_nearest_surface",
+            "attribute_source_pbr_baked_to_new_uv_atlas",
+            "full_resolution_source_remains_geometry_authority",
+            "source_geometry_replaced",
+            "approved_skeleton_or_animation_touched",
+        },
+        "bounded watertight authority contract",
+    )
+    if authority != {
+        "attribute_source_pbr_material_reused": False,
+        "attribute_source_uvs_transferred_by_nearest_surface": False,
+        "attribute_source_pbr_baked_to_new_uv_atlas": True,
+        "full_resolution_source_remains_geometry_authority": True,
+        "source_geometry_replaced": True,
+        "approved_skeleton_or_animation_touched": False,
+    }:
+        raise ClosureError("bounded watertight proxy authority changed")
+    if (
+        proxy_manifest.get("schema")
+        != "avengine_watertight_textured_runtime_proxy_v1"
+        or proxy_manifest.get("status")
+        != "research_candidate_pending_static_and_animation_qa"
+        or proxy_manifest.get("formal_dataset_registration_authorized")
+        is not False
+    ):
+        raise ClosureError("bounded watertight proxy exceeded its claim boundary")
+
+    parameters = _exact_object(
+        proxy_manifest["parameters"],
+        {
+            "voxel_resolution",
+            "voxel_size",
+            "target_faces",
+            "smooth_iterations",
+            "shrinkwrap_strength",
+            "post_shrinkwrap_smooth_iterations",
+            "torso_fold_repair_iterations",
+            "double_sided",
+            "attribute_transfer_backend",
+            "bake_resolution",
+            "base_color_encoding_policy",
+            "base_color_gain",
+        },
+        "bounded watertight proxy parameters",
+    )
+    voxel_size = parameters["voxel_size"]
+    if (
+        isinstance(voxel_size, bool)
+        or not isinstance(voxel_size, (int, float))
+        or not math.isfinite(voxel_size)
+        or voxel_size <= 0.0
+        or {
+            name: parameters[name]
+            for name in parameters
+            if name != "voxel_size"
+        }
+        != {
+            "voxel_resolution": 200,
+            "target_faces": 100000,
+            "smooth_iterations": 1,
+            "shrinkwrap_strength": 0.0,
+            "post_shrinkwrap_smooth_iterations": 2,
+            "torso_fold_repair_iterations": 6,
+            "double_sided": False,
+            "attribute_transfer_backend": "bake",
+            "bake_resolution": 2048,
+            "base_color_encoding_policy": "preserve-bake",
+            "base_color_gain": [1.0, 1.0, 1.0],
+        }
+    ):
+        raise ClosureError("bounded watertight production parameters changed")
+
+    topology = _exact_object(
+        proxy_manifest["topology"],
+        {"source", "after_voxel_remesh", "final"},
+        "bounded watertight proxy topology",
+    )
+    topology_fields = {
+        "vertices",
+        "edges",
+        "faces",
+        "boundary_edges",
+        "wire_edges",
+        "nonmanifold_edges_over_two_faces",
+        "noncontiguous_two_face_edges",
+    }
+    snapshots: dict[str, dict[str, Any]] = {}
+    for name in ("source", "after_voxel_remesh", "final"):
+        snapshot = _exact_object(
+            topology[name],
+            topology_fields,
+            f"bounded watertight topology {name}",
+        )
+        for field in topology_fields:
+            _nonnegative_integer(
+                snapshot[field],
+                f"bounded watertight topology {name}.{field}",
+                positive=field in {"vertices", "edges", "faces"},
+            )
+        snapshots[name] = snapshot
+    if (
+        snapshots["after_voxel_remesh"] != snapshots["final"]
+        or any(
+            snapshots["final"][field] != 0
+            for field in (
+                "boundary_edges",
+                "wire_edges",
+                "nonmanifold_edges_over_two_faces",
+                "noncontiguous_two_face_edges",
+            )
+        )
+    ):
+        raise ClosureError(
+            "bounded watertight final topology is not the accepted production "
+            "topology"
+        )
+    actual_faces = _nonnegative_integer(
+        proxy_manifest["actual_faces"],
+        "bounded watertight actual_faces",
+        positive=True,
+    )
+    if (
+        actual_faces != snapshots["final"]["faces"]
+        or actual_faces > parameters["target_faces"]
+    ):
+        raise ClosureError("bounded watertight face summary changed")
+    torso_repair = _exact_object(
+        proxy_manifest["torso_fold_repair"],
+        {
+            "iterations",
+            "selected_vertices",
+            "longitudinal_axis",
+            "normalized_longitudinal_range",
+            "normalized_vertical_range",
+            "fade",
+            "lambda_factor",
+            "policy",
+        },
+        "bounded watertight torso fold repair",
+    )
+    selected_vertices = _nonnegative_integer(
+        torso_repair["selected_vertices"],
+        "bounded watertight torso fold selected vertices",
+        positive=True,
+    )
+    if (
+        torso_repair
+        != {
+            "iterations": 6,
+            "selected_vertices": selected_vertices,
+            "longitudinal_axis": 0,
+            "normalized_longitudinal_range": [0.25, 0.7],
+            "normalized_vertical_range": [0.34, 0.72],
+            "fade": 0.08,
+            "lambda_factor": 0.18,
+            "policy": "weighted_mid_torso_only_preserve_volume",
+        }
+        or selected_vertices > snapshots["final"]["vertices"]
+    ):
+        raise ClosureError("bounded watertight torso fold replay changed")
+
+    surface = _exact_object(
+        proxy_manifest["surface_attributes"],
+        {
+            "backend",
+            "bake_resolution",
+            "bake_device",
+            "ray_distance",
+            "cage_extrusion",
+            "uv_layers",
+            "baked_images",
+            "base_color_bake_type",
+            "color_attributes",
+            "material_slots",
+            "metallic_policy",
+            "base_color_encoding_policy",
+            "base_color_gain",
+        },
+        "bounded watertight proxy surface attributes",
+    )
+    for field in ("ray_distance", "cage_extrusion"):
+        value = surface[field]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0.0
+        ):
+            raise ClosureError(
+                f"bounded watertight surface attribute {field} is invalid"
+            )
+    if {
+        name: surface[name]
+        for name in surface
+        if name not in {"ray_distance", "cage_extrusion"}
+    } != {
+        "backend": "bake",
+        "bake_resolution": 2048,
+        "bake_device": "CPU",
+        "uv_layers": ["UVMap"],
+        "baked_images": ["Watertight_BaseColor", "Watertight_Roughness"],
+        "base_color_bake_type": "EMIT_FROM_PRINCIPLED_BASE_COLOR",
+        "color_attributes": [],
+        "material_slots": ["Watertight_Baked_PBR"],
+        "metallic_policy": "constant_zero_for_nonmetallic_animal_surface",
+        "base_color_encoding_policy": "preserve-bake",
+        "base_color_gain": [1.0, 1.0, 1.0],
+    }:
+        raise ClosureError("bounded watertight production surface changed")
+
+    from tools import (
+        publish_generated_animal_geometry_closure as geometry_closures,
+        repair_pixal_oriented_sheet_indices as oriented_repair,
+    )
+
+    try:
+        document, _binary = oriented_repair._parse_glb(  # noqa: SLF001
+            tokenrig_input.read_bytes(),
+            "bounded watertight runtime proxy",
+        )
+    except oriented_repair.OrientedSheetRepairError as error:
+        raise ClosureError(
+            f"bounded watertight proxy GLB replay failed: {error}"
+        ) from error
+    meshes = document.get("meshes")
+    accessors = document.get("accessors")
+    materials = document.get("materials")
+    images = document.get("images")
+    textures = document.get("textures")
+    if (
+        not isinstance(meshes, list)
+        or len(meshes) != 1
+        or not isinstance(meshes[0], dict)
+        or not isinstance(meshes[0].get("primitives"), list)
+        or len(meshes[0]["primitives"]) != 1
+        or not isinstance(accessors, list)
+        or not isinstance(materials, list)
+        or len(materials) != 1
+        or not isinstance(images, list)
+        or len(images) != 2
+        or not isinstance(textures, list)
+        or len(textures) != 2
+        or document.get("skins") not in (None, [])
+        or document.get("animations") not in (None, [])
+    ):
+        raise ClosureError("bounded watertight proxy GLB structure changed")
+    primitive_value = meshes[0]["primitives"][0]
+    if (
+        not isinstance(primitive_value, dict)
+        or set(primitive_value)
+        not in (
+            {"attributes", "indices", "material"},
+            {"attributes", "indices", "material", "mode"},
+        )
+    ):
+        raise ClosureError("bounded watertight proxy primitive fields changed")
+    primitive = primitive_value
+    attributes = _exact_object(
+        primitive["attributes"],
+        {"POSITION", "NORMAL", "TEXCOORD_0"},
+        "bounded watertight proxy primitive attributes",
+    )
+
+    def accessor(index: Any, label: str) -> dict[str, Any]:
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or not 0 <= index < len(accessors)
+            or not isinstance(accessors[index], dict)
+        ):
+            raise ClosureError(f"{label} accessor is invalid")
+        return accessors[index]
+
+    position_accessor = accessor(
+        attributes["POSITION"],
+        "bounded watertight POSITION",
+    )
+    normal_accessor = accessor(
+        attributes["NORMAL"],
+        "bounded watertight NORMAL",
+    )
+    uv_accessor = accessor(
+        attributes["TEXCOORD_0"],
+        "bounded watertight TEXCOORD_0",
+    )
+    index_accessor = accessor(
+        primitive["indices"],
+        "bounded watertight indices",
+    )
+    position_count = _nonnegative_integer(
+        position_accessor.get("count"),
+        "bounded watertight POSITION count",
+        positive=True,
+    )
+    index_count = _nonnegative_integer(
+        index_accessor.get("count"),
+        "bounded watertight index count",
+        positive=True,
+    )
+    if (
+        primitive.get("mode", 4) != 4
+        or primitive["material"] != 0
+        or position_accessor.get("type") != "VEC3"
+        or position_accessor.get("componentType") != 5126
+        or normal_accessor.get("type") != "VEC3"
+        or normal_accessor.get("componentType") != 5126
+        or normal_accessor.get("count") != position_count
+        or uv_accessor.get("type") != "VEC2"
+        or uv_accessor.get("componentType") != 5126
+        or uv_accessor.get("count") != position_count
+        or index_accessor.get("type") != "SCALAR"
+        or index_accessor.get("componentType") not in {5123, 5125}
+        or index_count % 3
+    ):
+        raise ClosureError("bounded watertight proxy GLB accessors changed")
+    material = _exact_object(
+        materials[0],
+        {"doubleSided", "name", "pbrMetallicRoughness"},
+        "bounded watertight proxy material",
+    )
+    pbr = _exact_object(
+        material["pbrMetallicRoughness"],
+        {"baseColorTexture", "metallicFactor", "metallicRoughnessTexture"},
+        "bounded watertight proxy PBR",
+    )
+    if (
+        material["name"] != "Watertight_Baked_PBR"
+        or material["doubleSided"] is not True
+        or pbr["baseColorTexture"] != {"index": 0}
+        or pbr["metallicRoughnessTexture"] != {"index": 1}
+        or pbr["metallicFactor"] != 0
+        or [
+            (image.get("name"), image.get("mimeType"))
+            if isinstance(image, dict)
+            else None
+            for image in images
+        ]
+        != [
+            ("Watertight_BaseColor", "image/png"),
+            ("Watertight_Roughness", "image/png"),
+        ]
+        or [
+            texture.get("source") if isinstance(texture, dict) else None
+            for texture in textures
+        ]
+        != [0, 1]
+    ):
+        raise ClosureError("bounded watertight proxy GLB PBR surface changed")
+
+    audit_payload = load_json(
+        audit_path,
+        "bounded watertight proxy geometry audit",
+    )
+    try:
+        audited = geometry_closures._validate_audit(  # noqa: SLF001
+            audit_payload,
+            tokenrig_input,
+        )
+    except geometry_closures.GeometryClosureError as error:
+        raise ClosureError(
+            f"bounded watertight proxy geometry audit replay failed: {error}"
+        ) from error
+    audited_topology = audited["topology"]
+    triangulated_faces = index_count // 3
+    if (
+        audited_topology["imported_vertices"] != position_count
+        or audited_topology["position_unique_vertices"]
+        != snapshots["final"]["vertices"]
+        or audited_topology["imported_triangles"] != triangulated_faces
+        or audited_topology["position_indexed_triangles"]
+        != triangulated_faces
+        or triangulated_faces != snapshots["final"]["edges"]
+        or triangulated_faces != 2 * actual_faces
+    ):
+        raise ClosureError(
+            "bounded watertight proxy topology/audit/GLB replay disagrees"
+        )
+    correspondence = measure_bounded_watertight_correspondence(
+        repaired_glb,
+        tokenrig_input,
+    )
+    if (
+        correspondence["proxy_unique_vertices"]
+        != audited_topology["position_unique_vertices"]
+    ):
+        raise ClosureError(
+            "bounded watertight correspondence/audit vertex count disagrees"
+        )
+    if (
+        expected_correspondence is not None
+        and correspondence != expected_correspondence
+    ):
+        raise ClosureError(
+            "bounded watertight correspondence changed from closure authority"
+        )
+    return audit_path, correspondence
+
+
 def validate_upstream_lineage(
     raw_manifest_path: Path,
     upstream_manifest_path: Path,
     tokenrig_input: Path,
     *,
+    bounded_geometry_closure_path: Path | None = None,
+    expected_bounded_geometry_closure_sha256: str | None = None,
+    expected_bounded_geometry_closure_manifest_sha256: str | None = None,
+    expected_watertight_proxy_manifest_sha256: str | None = None,
+    watertight_proxy_geometry_audit_path: Path | None = None,
+    expected_watertight_proxy_geometry_audit_sha256: str | None = None,
+    expected_watertight_proxy_correspondence: dict[str, Any] | None = None,
+    observed_watertight_proxy_correspondence: dict[str, Any] | None = None,
     raw_static_decision_batch_path: Path | None = None,
     expected_raw_static_decision_batch_sha256: str | None = None,
     require_oriented_batch_external_authority: bool = False,
@@ -355,9 +955,50 @@ def validate_upstream_lineage(
     raw_output = parse_raw_pixal_output(raw_manifest)
     upstream = load_json(upstream_manifest_path, "upstream geometry manifest")
     schema = upstream.get("schema")
+    if (bounded_geometry_closure_path is None) != (
+        expected_bounded_geometry_closure_sha256 is None
+    ):
+        raise ClosureError(
+            "bounded geometry closure path/hash must be supplied together"
+        )
+    if (
+        bounded_geometry_closure_path is None
+    ) != (
+        expected_bounded_geometry_closure_manifest_sha256 is None
+    ):
+        raise ClosureError(
+            "bounded geometry closure path/internal manifest hash must be "
+            "supplied together"
+        )
+    composite_proxy = bounded_geometry_closure_path is not None
+    proxy_evidence = (
+        expected_watertight_proxy_manifest_sha256,
+        watertight_proxy_geometry_audit_path,
+        expected_watertight_proxy_geometry_audit_sha256,
+    )
+    if composite_proxy and any(value is None for value in proxy_evidence):
+        raise ClosureError(
+            "bounded watertight proxy manifest/audit external authority is "
+            "required"
+        )
+    if not composite_proxy and any(value is not None for value in proxy_evidence):
+        raise ClosureError(
+            "watertight proxy manifest/audit authority requires the bounded "
+            "composite lineage"
+        )
+    if (
+        composite_proxy
+        and schema != "avengine_watertight_textured_runtime_proxy_v1"
+    ):
+        raise ClosureError(
+            "bounded geometry closure can only extend a watertight runtime proxy"
+        )
     raw_glb = (
         None
-        if schema == "avengine_generated_animal_geometry_closure_v2"
+        if (
+            schema == "avengine_generated_animal_geometry_closure_v2"
+            or composite_proxy
+        )
         else descriptor_path(
             raw_output,
             "raw Pixal GLB",
@@ -366,28 +1007,176 @@ def validate_upstream_lineage(
     )
     extra_evidence: list[Path] = []
     if schema == "avengine_watertight_textured_runtime_proxy_v1":
-        assert raw_glb is not None
-        if (
-            raw_static_decision_batch_path is not None
-            or expected_raw_static_decision_batch_sha256 is not None
-        ):
-            raise ClosureError(
-                "raw/watertight fallback cannot consume derived repair authority"
-            )
-        require_descriptor_matches(
-            upstream.get("input"), raw_glb, "watertight raw Pixal input"
-        )
         require_descriptor_matches(
             upstream.get("output"), tokenrig_input, "watertight TokenRig input"
         )
+        authority = upstream.get("authority_contract")
         if (
-            upstream.get("authority_contract", {}).get(
-                "approved_skeleton_or_animation_touched"
-            )
-            is not False
+            not isinstance(authority, dict)
+            or authority.get("approved_skeleton_or_animation_touched") is not False
         ):
             raise ClosureError("watertight upstream touched skeleton or animation")
-        upstream_kind = "watertight_runtime_proxy"
+        if not composite_proxy:
+            assert raw_glb is not None
+            if (
+                raw_static_decision_batch_path is not None
+                or expected_raw_static_decision_batch_sha256 is not None
+            ):
+                raise ClosureError(
+                    "raw/watertight fallback cannot consume derived repair authority"
+                )
+            require_descriptor_matches(
+                upstream.get("input"), raw_glb, "watertight raw Pixal input"
+            )
+            upstream_kind = "watertight_runtime_proxy"
+        else:
+            assert bounded_geometry_closure_path is not None
+            assert expected_bounded_geometry_closure_sha256 is not None
+            assert (
+                expected_bounded_geometry_closure_manifest_sha256 is not None
+            )
+            if (
+                raw_static_decision_batch_path is None
+                or expected_raw_static_decision_batch_sha256 is None
+            ):
+                raise ClosureError(
+                    "bounded watertight proxy requires an externally pinned "
+                    "raw static decision batch"
+                )
+            bounded_geometry_closure = require_regular_file(
+                bounded_geometry_closure_path,
+                "bounded geometry closure v2",
+            )
+            expected_geometry_sha256 = require_sha256(
+                expected_bounded_geometry_closure_sha256,
+                "expected bounded geometry closure SHA-256",
+            )
+            if (
+                sha256_file(bounded_geometry_closure)
+                != expected_geometry_sha256
+            ):
+                raise ClosureError(
+                    "bounded geometry closure changed from external authority"
+                )
+            expected_geometry_manifest_sha256 = require_sha256(
+                expected_bounded_geometry_closure_manifest_sha256,
+                "expected bounded geometry closure internal manifest SHA-256",
+            )
+            bounded_geometry_payload = load_json(
+                bounded_geometry_closure,
+                "bounded geometry closure v2",
+            )
+            observed_geometry_manifest_sha256 = require_sha256(
+                bounded_geometry_payload.get("manifest_sha256"),
+                "bounded geometry closure internal manifest SHA-256",
+            )
+            if (
+                observed_geometry_manifest_sha256
+                != expected_geometry_manifest_sha256
+            ):
+                raise ClosureError(
+                    "bounded geometry closure internal manifest hash changed"
+                )
+            supplied_batch = require_regular_file(
+                raw_static_decision_batch_path,
+                "externally supplied raw static decision batch",
+            )
+            expected_batch_sha256 = require_sha256(
+                expected_raw_static_decision_batch_sha256,
+                "expected raw static decision batch SHA-256",
+            )
+            if sha256_file(supplied_batch) != expected_batch_sha256:
+                raise ClosureError(
+                    "raw static decision batch changed from external authority"
+                )
+            repaired_glb = descriptor_path(
+                upstream.get("input"),
+                "bounded watertight repaired geometry input",
+            )
+            from tools import (
+                publish_generated_animal_geometry_closure as geometry_closures,
+            )
+
+            try:
+                replay = geometry_closures.load_geometry_closure_v2(
+                    bounded_geometry_closure,
+                    expected_manifest_sha256=expected_geometry_sha256,
+                    expected_pixal_manifest=raw_manifest_path,
+                    expected_raw_static_decision_batch=supplied_batch,
+                    expected_repaired_glb=repaired_glb,
+                )
+            except geometry_closures.GeometryClosureError as error:
+                raise ClosureError(
+                    "bounded watertight geometry closure strict replay failed: "
+                    f"{error}"
+                ) from error
+            replay_manifest = replay.get("manifest")
+            if (
+                not isinstance(replay_manifest, dict)
+                or replay_manifest.get("manifest_sha256")
+                != expected_geometry_manifest_sha256
+            ):
+                raise ClosureError(
+                    "bounded watertight geometry replay changed the internal "
+                    "manifest hash"
+                )
+            replay_paths = replay["paths"]
+            raw_glb = require_regular_file(
+                replay_paths["raw_pixal_glb"],
+                "bounded watertight raw Pixel3D GLB",
+            )
+            require_descriptor_content_matches(
+                raw_output,
+                raw_glb,
+                "raw Pixal GLB",
+                size_fields=("bytes", "size_bytes"),
+            )
+            same_file(
+                require_regular_file(
+                    replay_paths["raw_static_decision_batch"],
+                    "bounded watertight replayed raw decision batch",
+                ),
+                supplied_batch,
+                "bounded watertight raw decision batch",
+            )
+            assert expected_watertight_proxy_manifest_sha256 is not None
+            assert watertight_proxy_geometry_audit_path is not None
+            assert (
+                expected_watertight_proxy_geometry_audit_sha256 is not None
+            )
+            proxy_geometry_audit, _correspondence = (
+                validate_bounded_watertight_proxy(
+                    proxy_manifest_path=upstream_manifest_path,
+                    expected_proxy_manifest_sha256=(
+                        expected_watertight_proxy_manifest_sha256
+                    ),
+                    proxy_manifest=upstream,
+                    repaired_glb=repaired_glb,
+                    tokenrig_input=tokenrig_input,
+                    geometry_audit_path=watertight_proxy_geometry_audit_path,
+                    expected_geometry_audit_sha256=(
+                        expected_watertight_proxy_geometry_audit_sha256
+                    ),
+                    expected_correspondence=(
+                        expected_watertight_proxy_correspondence
+                    ),
+                )
+            )
+            if observed_watertight_proxy_correspondence is not None:
+                observed_watertight_proxy_correspondence.clear()
+                observed_watertight_proxy_correspondence.update(
+                    _correspondence
+                )
+            extra_evidence.extend(
+                (
+                    bounded_geometry_closure,
+                    proxy_geometry_audit,
+                    replay_paths["repair_manifest"],
+                    replay_paths["geometry_audit"],
+                    replay_paths["raw_static_decision_batch"],
+                )
+            )
+            upstream_kind = "bounded_watertight_runtime_proxy"
     elif schema == "avengine_generated_animal_geometry_closure_v2":
         from tools import (
             publish_generated_animal_geometry_closure as geometry_closures,
@@ -1030,7 +1819,8 @@ def validate_load_audit(
         if (
             not isinstance(objects, list)
             or len(mesh_objects) != 1
-            or empty_objects != [{"name": "world", "type": "EMPTY"}]
+            or empty_objects
+            not in ([], [{"name": "world", "type": "EMPTY"}])
             or mesh_objects[0].get("name") in {"Cube", "Camera", "Light"}
             or any(
                 not isinstance(item, dict)
@@ -1318,6 +2108,51 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     upstream_manifest = require_regular_file(
         args.upstream_manifest, "upstream geometry manifest"
     )
+    expected_watertight_proxy_manifest_sha256 = getattr(
+        args,
+        "expected_watertight_proxy_manifest_sha256",
+        None,
+    )
+    watertight_proxy_geometry_audit = getattr(
+        args,
+        "watertight_proxy_geometry_audit",
+        None,
+    )
+    expected_watertight_proxy_geometry_audit_sha256 = getattr(
+        args,
+        "expected_watertight_proxy_geometry_audit_sha256",
+        None,
+    )
+    bounded_geometry_closure = getattr(
+        args, "bounded_geometry_closure", None
+    )
+    expected_bounded_geometry_closure_sha256 = getattr(
+        args,
+        "expected_bounded_geometry_closure_sha256",
+        None,
+    )
+    if (bounded_geometry_closure is None) != (
+        expected_bounded_geometry_closure_sha256 is None
+    ):
+        raise ClosureError(
+            "bounded geometry closure path/hash must be supplied together"
+        )
+    bounded_geometry_closure_manifest_sha256 = None
+    watertight_proxy_correspondence = (
+        {} if bounded_geometry_closure is not None else None
+    )
+    if bounded_geometry_closure is not None:
+        bounded_geometry_payload = load_json(
+            require_regular_file(
+                bounded_geometry_closure,
+                "bounded geometry closure v2",
+            ),
+            "bounded geometry closure v2",
+        )
+        bounded_geometry_closure_manifest_sha256 = require_sha256(
+            bounded_geometry_payload.get("manifest_sha256"),
+            "bounded geometry closure internal manifest SHA-256",
+        )
     raw_static_decision_batch = getattr(
         args, "raw_static_decision_batch", None
     )
@@ -1336,6 +2171,25 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         raw_manifest,
         upstream_manifest,
         tokenrig_input,
+        bounded_geometry_closure_path=bounded_geometry_closure,
+        expected_bounded_geometry_closure_sha256=(
+            expected_bounded_geometry_closure_sha256
+        ),
+        expected_bounded_geometry_closure_manifest_sha256=(
+            bounded_geometry_closure_manifest_sha256
+        ),
+        expected_watertight_proxy_manifest_sha256=(
+            expected_watertight_proxy_manifest_sha256
+        ),
+        watertight_proxy_geometry_audit_path=(
+            watertight_proxy_geometry_audit
+        ),
+        expected_watertight_proxy_geometry_audit_sha256=(
+            expected_watertight_proxy_geometry_audit_sha256
+        ),
+        observed_watertight_proxy_correspondence=(
+            watertight_proxy_correspondence
+        ),
         raw_static_decision_batch_path=raw_static_decision_batch,
         expected_raw_static_decision_batch_sha256=(
             expected_raw_static_decision_batch_sha256
@@ -1506,6 +2360,37 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             raise ClosureError(
                 "runtime patch bytes do not match marker/run.log patch SHA-256"
             )
+        lineage = {
+            "upstream_kind": upstream_kind,
+            "raw_pixal_glb": file_record(raw_glb),
+            "tokenrig_input": file_record(tokenrig_input),
+            "tokenrig_output": file_record(tokenrig_output),
+            "geometry_readback_manifest_sha256": readback_payload[
+                "manifest_sha256"
+            ],
+        }
+        if upstream_kind == "bounded_watertight_runtime_proxy":
+            lineage["composite_upstream_authority"] = {
+                "schema": "bounded_watertight_runtime_proxy_authority_v1",
+                "bounded_geometry_closure_file_sha256": (
+                    expected_bounded_geometry_closure_sha256
+                ),
+                "bounded_geometry_closure_manifest_sha256": (
+                    bounded_geometry_closure_manifest_sha256
+                ),
+                "watertight_proxy_manifest_file_sha256": (
+                    expected_watertight_proxy_manifest_sha256
+                ),
+                "watertight_proxy_geometry_audit_file_sha256": (
+                    expected_watertight_proxy_geometry_audit_sha256
+                ),
+                "watertight_proxy_correspondence": (
+                    watertight_proxy_correspondence
+                ),
+                "raw_static_decision_batch_sha256": (
+                    expected_raw_static_decision_batch_sha256
+                ),
+            }
         payload = {
             "schema": SCHEMA,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -1522,15 +2407,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                 ),
                 "no_missing_evidence_was_fabricated": True,
             },
-            "lineage": {
-                "upstream_kind": upstream_kind,
-                "raw_pixal_glb": file_record(raw_glb),
-                "tokenrig_input": file_record(tokenrig_input),
-                "tokenrig_output": file_record(tokenrig_output),
-                "geometry_readback_manifest_sha256": readback_payload[
-                    "manifest_sha256"
-                ],
-            },
+            "lineage": lineage,
             "execution": {
                 "seed": EXPECTED_SEED,
                 "exact_argv": execution["exact_argv"],
@@ -1676,23 +2553,120 @@ def validate_closure(
     tokenrig_output = descriptor_path(
         lineage.get("tokenrig_output"), "closure TokenRig output"
     )
-    raw_glb, upstream_kind, extra_upstream = validate_upstream_lineage(
-        raw_manifest, upstream_manifest, tokenrig_input
-    )
-    require_descriptor_matches(
-        lineage.get("raw_pixal_glb"), raw_glb, "closure raw Pixal GLB"
-    )
-    if upstream_kind != lineage.get("upstream_kind"):
-        raise ClosureError("closure upstream kind disagrees with manifest lineage")
     extra_records = evidence.get("extra_upstream_manifests")
-    if not isinstance(extra_records, list) or len(extra_records) != len(extra_upstream):
-        raise ClosureError("closure extra upstream evidence count mismatch")
-    for index, (record, expected_path) in enumerate(
-        zip(extra_records, extra_upstream)
-    ):
+    if not isinstance(extra_records, list):
+        raise ClosureError("closure extra upstream evidence is not a list")
+    extra_originals = []
+    for index, record in enumerate(extra_records):
         original, _copy = validate_original_and_copy(
             closure_root, record, f"extra upstream manifest {index}"
         )
+        extra_originals.append(original)
+    claimed_upstream_kind = lineage.get("upstream_kind")
+    composite_authority = lineage.get("composite_upstream_authority")
+    if claimed_upstream_kind == "bounded_watertight_runtime_proxy":
+        if (
+            not isinstance(composite_authority, dict)
+            or set(composite_authority)
+            != {
+                "schema",
+                "bounded_geometry_closure_file_sha256",
+                "bounded_geometry_closure_manifest_sha256",
+                "watertight_proxy_manifest_file_sha256",
+                "watertight_proxy_geometry_audit_file_sha256",
+                "watertight_proxy_correspondence",
+                "raw_static_decision_batch_sha256",
+            }
+            or composite_authority.get("schema")
+            != "bounded_watertight_runtime_proxy_authority_v1"
+        ):
+            raise ClosureError(
+                "closure bounded watertight composite authority is invalid"
+            )
+        if len(extra_originals) != 5:
+            raise ClosureError(
+                "closure bounded watertight evidence count is not exactly five"
+            )
+        geometry_closure_file_sha256 = require_sha256(
+            composite_authority.get(
+                "bounded_geometry_closure_file_sha256"
+            ),
+            "closure bounded geometry file sha256",
+        )
+        geometry_closure_manifest_sha256 = require_sha256(
+            composite_authority.get(
+                "bounded_geometry_closure_manifest_sha256"
+            ),
+            "closure bounded geometry manifest sha256",
+        )
+        raw_batch_sha256 = require_sha256(
+            composite_authority.get("raw_static_decision_batch_sha256"),
+            "closure raw static decision batch sha256",
+        )
+        proxy_manifest_file_sha256 = require_sha256(
+            composite_authority.get(
+                "watertight_proxy_manifest_file_sha256"
+            ),
+            "closure watertight proxy manifest file sha256",
+        )
+        proxy_geometry_audit_file_sha256 = require_sha256(
+            composite_authority.get(
+                "watertight_proxy_geometry_audit_file_sha256"
+            ),
+            "closure watertight proxy geometry audit file sha256",
+        )
+        proxy_correspondence = composite_authority.get(
+            "watertight_proxy_correspondence"
+        )
+        if not isinstance(proxy_correspondence, dict):
+            raise ClosureError(
+                "closure watertight proxy correspondence is invalid"
+            )
+        recursive_finite(
+            proxy_correspondence,
+            "closure watertight proxy correspondence",
+        )
+        raw_glb, upstream_kind, extra_upstream = validate_upstream_lineage(
+            raw_manifest,
+            upstream_manifest,
+            tokenrig_input,
+            bounded_geometry_closure_path=extra_originals[0],
+            expected_bounded_geometry_closure_sha256=(
+                geometry_closure_file_sha256
+            ),
+            expected_bounded_geometry_closure_manifest_sha256=(
+                geometry_closure_manifest_sha256
+            ),
+            expected_watertight_proxy_manifest_sha256=(
+                proxy_manifest_file_sha256
+            ),
+            watertight_proxy_geometry_audit_path=extra_originals[1],
+            expected_watertight_proxy_geometry_audit_sha256=(
+                proxy_geometry_audit_file_sha256
+            ),
+            expected_watertight_proxy_correspondence=proxy_correspondence,
+            raw_static_decision_batch_path=extra_originals[-1],
+            expected_raw_static_decision_batch_sha256=raw_batch_sha256,
+            require_oriented_batch_external_authority=True,
+        )
+    else:
+        if composite_authority is not None:
+            raise ClosureError(
+                "non-composite closure claims bounded watertight authority"
+            )
+        raw_glb, upstream_kind, extra_upstream = validate_upstream_lineage(
+            raw_manifest, upstream_manifest, tokenrig_input
+        )
+    require_descriptor_matches(
+        lineage.get("raw_pixal_glb"), raw_glb, "closure raw Pixal GLB"
+    )
+    if upstream_kind != claimed_upstream_kind:
+        raise ClosureError("closure upstream kind disagrees with manifest lineage")
+    if len(extra_originals) != len(extra_upstream):
+        raise ClosureError("closure extra upstream evidence count mismatch")
+    for index, (original, expected_path) in enumerate(
+        zip(extra_originals, extra_upstream)
+    ):
         same_file(original, expected_path, f"extra upstream manifest {index}")
     readback_payload = validate_readback(readback, tokenrig_input, tokenrig_output)
     if (
@@ -1974,6 +2948,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     build_parser.add_argument("--output-root", type=Path, required=True)
     build_parser.add_argument("--raw-pixal-manifest", type=Path, required=True)
     build_parser.add_argument("--upstream-manifest", type=Path, required=True)
+    build_parser.add_argument(
+        "--expected-watertight-proxy-manifest-sha256"
+    )
+    build_parser.add_argument(
+        "--watertight-proxy-geometry-audit",
+        type=Path,
+    )
+    build_parser.add_argument(
+        "--expected-watertight-proxy-geometry-audit-sha256"
+    )
+    build_parser.add_argument("--bounded-geometry-closure", type=Path)
+    build_parser.add_argument(
+        "--expected-bounded-geometry-closure-sha256"
+    )
     build_parser.add_argument("--raw-static-decision-batch", type=Path)
     build_parser.add_argument(
         "--expected-raw-static-decision-batch-sha256"

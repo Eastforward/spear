@@ -840,11 +840,96 @@ def _refresh_presentation_evidence(fixture, review):
     fixture["presentation_evidence"] = evidence
 
 
-def _fake_tokenrig_lineage(root, *, raw_pixal_glb, target_rig_glb):
+def _fake_tokenrig_lineage(
+    root,
+    *,
+    raw_pixal_glb,
+    target_rig_glb,
+    tokenrig_input_glb=None,
+    upstream_kind="watertight_runtime_proxy",
+    bounded_geometry_closure=None,
+    bounded_geometry_closure_manifest_sha256=None,
+    watertight_proxy_manifest=None,
+    watertight_proxy_geometry_audit=None,
+    raw_static_decision_batch=None,
+):
+    tokenrig_input_glb = tokenrig_input_glb or raw_pixal_glb
     closure_root = root / "tokenrig_closure"
     closure_root.mkdir(exist_ok=True)
     closure_manifest = closure_root / "manifest.json"
-    closure_manifest.write_text('{"fixture":"closure"}\n', encoding="utf-8")
+    if upstream_kind == "bounded_watertight_runtime_proxy":
+        if (
+            bounded_geometry_closure is None
+            or bounded_geometry_closure_manifest_sha256 is None
+            or watertight_proxy_manifest is None
+            or watertight_proxy_geometry_audit is None
+            or raw_static_decision_batch is None
+        ):
+            raise ValueError("composite TokenRig fixture authority is missing")
+        closure_payload = {
+            "lineage": {
+                "composite_upstream_authority": {
+                    "schema": (
+                        "bounded_watertight_runtime_proxy_authority_v1"
+                    ),
+                    "bounded_geometry_closure_file_sha256": _sha256(
+                        bounded_geometry_closure
+                    ),
+                    "bounded_geometry_closure_manifest_sha256": (
+                        bounded_geometry_closure_manifest_sha256
+                    ),
+                    "watertight_proxy_manifest_file_sha256": _sha256(
+                        watertight_proxy_manifest
+                    ),
+                    "watertight_proxy_geometry_audit_file_sha256": _sha256(
+                        watertight_proxy_geometry_audit
+                    ),
+                    "watertight_proxy_correspondence": {
+                        "schema": (
+                            "avengine_bounded_watertight_vertex_"
+                            "correspondence_v1"
+                        ),
+                        "normalization": (
+                            "repaired_axis_aligned_bbox_diagonal"
+                        ),
+                        "repaired_imported_vertices": 100,
+                        "proxy_unique_vertices": 100,
+                        "proxy_to_repaired": {
+                            "p99_ratio": 0.001,
+                            "max_ratio": 0.002,
+                        },
+                        "repaired_to_proxy": {
+                            "p99_ratio": 0.010,
+                            "max_ratio": 0.020,
+                        },
+                        "thresholds": {
+                            "proxy_to_repaired_p99_ratio_max": 0.003,
+                            "proxy_to_repaired_max_ratio_max": 0.006,
+                            "repaired_to_proxy_p99_ratio_max": 0.030,
+                            "repaired_to_proxy_max_ratio_max": 0.060,
+                        },
+                    },
+                    "raw_static_decision_batch_sha256": _sha256(
+                        raw_static_decision_batch
+                    ),
+                }
+            },
+            "evidence": {
+                "upstream_manifest": {
+                    "original": _record(watertight_proxy_manifest),
+                },
+                "extra_upstream_manifests": [
+                    {"original": _record(bounded_geometry_closure)},
+                    {"original": _record(watertight_proxy_geometry_audit)},
+                    {"original": _record(watertight_proxy_geometry_audit)},
+                    {"original": _record(watertight_proxy_geometry_audit)},
+                    {"original": _record(raw_static_decision_batch)},
+                ],
+            },
+        }
+    else:
+        closure_payload = {"fixture": "closure"}
+    _write_json(closure_manifest, closure_payload)
     readback = closure_root / "geometry_readback.json"
     readback.write_text('{"fixture":"readback"}\n', encoding="utf-8")
     descriptor = {
@@ -858,9 +943,9 @@ def _fake_tokenrig_lineage(root, *, raw_pixal_glb, target_rig_glb):
         },
         "lineage": {
             "raw_pixal_glb": _record(raw_pixal_glb),
-            "tokenrig_input": _record(raw_pixal_glb),
+            "tokenrig_input": _record(tokenrig_input_glb),
             "tokenrig_output": _record(target_rig_glb),
-            "upstream_kind": "watertight_runtime_proxy",
+            "upstream_kind": upstream_kind,
         },
         "geometry_readback": {
             **_record(readback),
@@ -1466,11 +1551,13 @@ def test_legacy_derived_registry_requires_complete_derived_source_authority(
         request,
         profile,
         require_derived_authority,
+        require_direct_geometry_authority,
         expected_raw_static_decision_batch,
     ):
         assert request == {}
         assert profile == {}
         assert require_derived_authority is True
+        assert require_direct_geometry_authority is False
         assert expected_raw_static_decision_batch == decision_batch
         raise DerivedAuthorityObserved
 
@@ -1761,6 +1848,522 @@ def _direct_registry_reader_fixture(tmp_path, monkeypatch):
         "source_asset": source_asset,
         "source_path": source_path,
     }
+
+
+def _direct_geometry_v4_reader_fixture(tmp_path, monkeypatch):
+    from tools import (
+        publish_generated_animal_geometry_closure as geometry_closures,
+    )
+
+    fixture = _direct_registry_reader_fixture(tmp_path, monkeypatch)
+    artifact_root = fixture["artifact_root"]
+    source_path = fixture["source_path"]
+    context = fixture["context"]
+    instance_id = fixture["authority"]["instance_id"]
+
+    def artifact(name, payload):
+        path = artifact_root / name
+        if isinstance(payload, bytes):
+            path.write_bytes(payload)
+        else:
+            _write_json(path, payload)
+        return path
+
+    original_raw = artifact_root / "pixal_raw.glb"
+    adopted_raw = artifact("adopted_raw.glb", original_raw.read_bytes())
+    original_manifest = artifact(
+        "original_attempt.json",
+        {"fixture": "original Pixel3D attempt"},
+    )
+    adopted_manifest = artifact(
+        "adopted_attempt.json",
+        original_manifest.read_bytes(),
+    )
+    original_input = artifact("original_input.png", b"Pixel3D RGBA bytes")
+    adopted_input = artifact("adopted_input.png", original_input.read_bytes())
+    review_reference = artifact(
+        "raw_review_reference.png",
+        original_input.read_bytes(),
+    )
+    review_batch = artifact("raw_static_review_batch.json", {"fixture": "batch"})
+    raw_review = artifact("raw_static_review.json", {"fixture": "review"})
+    raw_contact = artifact("raw_static_contact.png", b"raw contact sheet")
+    raw_decision = artifact("raw_static_decision.json", {"fixture": "decision"})
+    decision_batch = artifact(
+        "raw_static_decision_batch.json",
+        {"fixture": "decision batch"},
+    )
+    repaired = artifact("repaired.glb", b"bounded repaired Pixel3D geometry")
+    repair_manifest = artifact("repair_manifest.json", {"fixture": "repair"})
+    geometry_audit = artifact("geometry_audit.json", {"fixture": "audit"})
+    clay_manifest = artifact("clay_manifest.json", {"fixture": "clay"})
+    clay_contact = artifact("clay_contact.png", b"clay contact sheet")
+    geometry_closure = artifact(
+        "geometry_closure.json",
+        {"fixture": "geometry closure"},
+    )
+
+    context["attempt"].update(
+        {
+            "output": _relative_record(adopted_raw, artifact_root),
+            "attempt_manifest": _relative_record(
+                adopted_manifest,
+                artifact_root,
+            ),
+            "pixal_input": _relative_record(adopted_input, artifact_root),
+        }
+    )
+    context["source_spec"]["instance_id"] = instance_id
+    context["adoption_context"]["controlled"].update(
+        {
+            "request_sha256": fixture["authority"]["request_sha256"],
+            "profile_schema_id": fixture["authority"]["profile_schema_id"],
+        }
+    )
+    context["adoption_context"]["bundle_sources"] = {
+        "pixal_raw_glb": original_raw,
+        "pixal_attempt_manifest": original_manifest,
+        "pixal_input_rgba": original_input,
+    }
+    checks = {
+        name: True for name in source_registry.static_decisions.CHECK_FIELDS
+    }
+    attribute_evidence = {
+        name: "passed_static_visual"
+        for name in fixture["source_asset"]["sampled_attributes"]
+    }
+    decision_payload = {
+        "decision": "approved_for_lod_and_binding",
+        "state_classification": "research_candidate",
+        "formal_dataset_registration_authorized": False,
+        "next_gate": "lod_then_species_rig_binding",
+        "decision_sha256": "8" * 64,
+        "checks": checks,
+        "attribute_evidence": copy.deepcopy(attribute_evidence),
+    }
+    review_payload = {
+        "instance_id": instance_id,
+        "request_sha256": fixture["authority"]["request_sha256"],
+        "profile_schema_id": fixture["authority"]["profile_schema_id"],
+        "sampled_attributes": copy.deepcopy(
+            context["attempt"]["sampled_attributes"]
+        ),
+        "target_physical_profile": copy.deepcopy(
+            context["attempt"]["target_physical_profile"]
+        ),
+        "pixal_output": copy.deepcopy(context["attempt"]["output"]),
+        "reference_rgba": _relative_record(
+            review_reference,
+            artifact_root,
+        ),
+        "contact_sheet": _relative_record(raw_contact, artifact_root),
+    }
+    decisions = {
+        instance_id: {
+            "path": raw_decision.resolve(),
+            "payload": decision_payload,
+            "static_review": {
+                "path": raw_review.resolve(),
+                "payload": review_payload,
+            },
+        }
+    }
+    decision_batch_payload = {
+        "schema": source_registry.static_decisions.DECISION_BATCH_SCHEMA,
+        "status": "completed",
+        "static_review_batch": {"path": str(review_batch.resolve())},
+        "automatic_checks": copy.deepcopy(
+            preparation.STATIC_DECISION_BATCH_AUTOMATIC_CHECKS
+        ),
+    }
+    decision_batch_payload["decision_batch_sha256"] = (
+        source_registry._hash_without(
+            decision_batch_payload,
+            "decision_batch_sha256",
+        )
+    )
+    _write_json(decision_batch, decision_batch_payload)
+
+    def load_decision_batch(path):
+        assert Path(path) == decision_batch.resolve()
+        return (
+            decision_batch.resolve(),
+            copy.deepcopy(decision_batch_payload),
+            copy.deepcopy(decisions),
+        )
+
+    monkeypatch.setattr(
+        source_registry,
+        "load_decision_batch",
+        load_decision_batch,
+    )
+    internal_manifest_sha256 = "9" * 64
+    replay = {
+        "manifest": {
+            "schema": geometry_closures.SCHEMA,
+            "state_classification": "research_candidate",
+            "formal_dataset_registration_authorized": False,
+            "manifest_sha256": internal_manifest_sha256,
+            "bounded_repair": {
+                "implementation_contract": (
+                    geometry_closures.oriented_repair.IMPLEMENTATION_CONTRACT
+                ),
+                "mutation_class": geometry_closures.MUTATION_CLASS,
+                "removed_exact_position_degenerate_triangle_count": 1,
+                "output_byte_identical_to_raw": False,
+            },
+            "inherited_static_judgment": {
+                "authority": "canonical_raw_static_approval_v1",
+                "decision_sha256": decision_payload["decision_sha256"],
+                "checks": copy.deepcopy(checks),
+                "inheritance_scope": geometry_closures.INHERITANCE_SCOPE,
+                "new_human_approval_created": False,
+                "clay_render_human_approval_claimed": False,
+            },
+            "downstream": {
+                "tokenrig_entry_authorized": True,
+                "tokenrig_execution_performed": False,
+                "formal_dataset_registration_authorized": False,
+            },
+        },
+        "paths": {
+            "raw_pixal_glb": original_raw.resolve(),
+            "pixal_manifest": original_manifest.resolve(),
+            "source_reference": review_reference.resolve(),
+            "raw_static_decision_batch": decision_batch.resolve(),
+            "raw_static_decision": raw_decision.resolve(),
+            "raw_static_review": raw_review.resolve(),
+            "repair_manifest": repair_manifest.resolve(),
+            "repaired_glb": repaired.resolve(),
+            "geometry_audit": geometry_audit.resolve(),
+            "clay_render_manifest": clay_manifest.resolve(),
+            "clay_contact_sheet": clay_contact.resolve(),
+        },
+        "repair": {"fixture": "strictly replayed repair"},
+        "audit": {"fixture": "strictly replayed audit"},
+    }
+    closure_calls = []
+
+    def load_geometry_closure(path, **kwargs):
+        closure_calls.append((Path(path), copy.deepcopy(kwargs)))
+        return copy.deepcopy(replay)
+
+    monkeypatch.setattr(
+        geometry_closures,
+        "load_geometry_closure_v2",
+        load_geometry_closure,
+    )
+
+    source_asset = copy.deepcopy(fixture["source_asset"])
+    source_asset["provenance"]["attempt_id"] = (
+        f"direct_geometry_{context['attempt']['execution_job_id']}"
+    )
+    source_asset["provenance"]["models"].update(
+        {
+            source_registry.DIRECT_GEOMETRY_RAW_DECISION_PROVENANCE_MODEL: (
+                decision_payload["decision_sha256"]
+            ),
+            source_registry.DIRECT_GEOMETRY_CLOSURE_PROVENANCE_MODEL: (
+                internal_manifest_sha256
+            ),
+        }
+    )
+    artifact_paths = {
+        "source_reference_2d": review_reference,
+        "pixal_input_rgba": adopted_input,
+        "pixal_raw_glb": original_raw,
+        "pixal_attempt_manifest": original_manifest,
+        "raw_static_review_manifest": raw_review,
+        "raw_static_contact_sheet": raw_contact,
+        "raw_static_decision": raw_decision,
+        "raw_static_decision_batch": decision_batch,
+        "derived_repaired_glb": repaired,
+        "derived_geometry_closure": geometry_closure,
+        "derived_repair_manifest": repair_manifest,
+        "derived_geometry_audit": geometry_audit,
+        "derived_clay_render_manifest": clay_manifest,
+        "derived_clay_contact_sheet": clay_contact,
+        "direct_source_authority": (
+            artifact_root / "direct_source_authority.json"
+        ),
+        "adopted_pixal_batch": fixture["pixal_path"],
+        "direct_adoption_spec": artifact_root / "adoption_spec.json",
+    }
+    source_asset["artifacts"] = {
+        role: _root_record(
+            "direct_fixture_root",
+            path,
+            artifact_root,
+        )
+        for role, path in artifact_paths.items()
+    }
+    _write_json(source_path, source_asset)
+
+    registry_root = fixture["registry_path"].parent
+    source_index = {
+        "asset_id": instance_id,
+        "profile_schema_id": source_asset["profile_schema_id"],
+        "request_sha256": source_asset["request_sha256"],
+        "sampled_attributes": copy.deepcopy(source_asset["sampled_attributes"]),
+        "attribute_evidence": copy.deepcopy(attribute_evidence),
+        "source_asset": _relative_record(source_path, registry_root),
+        "state_classification": "research_candidate",
+        "next_gate": "lod_then_species_rig_binding",
+    }
+    registry = {
+        "schema": source_registry.DIRECT_GEOMETRY_REGISTRY_SCHEMA,
+        "state_classification": "research_candidate",
+        "formal_dataset_registration_authorized": False,
+        "direct_source_authority": {
+            **_record(artifact_root / "direct_source_authority.json"),
+            "authority_sha256": fixture["authority"]["authority_sha256"],
+        },
+        "pixal_batch": {
+            "path": str(fixture["pixal_path"].resolve()),
+            "sha256": _sha256(fixture["pixal_path"]),
+            "batch_sha256": context["adopted_batch"]["batch_sha256"],
+        },
+        "static_decision_batch": {
+            "path": str(decision_batch.resolve()),
+            "sha256": _sha256(decision_batch),
+            "decision_batch_sha256": decision_batch_payload[
+                "decision_batch_sha256"
+            ],
+        },
+        "geometry_closure": {
+            "path": str(geometry_closure.resolve()),
+            "sha256": _sha256(geometry_closure),
+            "manifest_sha256": internal_manifest_sha256,
+        },
+        "source_asset_count": 1,
+        "source_assets": [source_index],
+        "automatic_checks": copy.deepcopy(
+            source_registry.DIRECT_GEOMETRY_REGISTRY_AUTOMATIC_CHECKS
+        ),
+    }
+    registry["registry_sha256"] = source_registry._hash_without(
+        registry,
+        "registry_sha256",
+    )
+    _write_json(fixture["registry_path"], registry)
+    fixture.update(
+        {
+            "source_asset": source_asset,
+            "artifact_paths": artifact_paths,
+            "decision_batch": decision_batch,
+            "geometry_closure": geometry_closure,
+            "closure_calls": closure_calls,
+            "decision_payload": decision_payload,
+            "decision_batch_payload": decision_batch_payload,
+            "decisions": decisions,
+            "replay": replay,
+        }
+    )
+    return fixture
+
+
+def _load_direct_geometry_v4_fixture(fixture):
+    anchor = preparation.load_source_registry_anchor(
+        fixture["registry_path"],
+        fixture["source_path"],
+        expected_file_sha256=_sha256(fixture["registry_path"]),
+    )
+    source = preparation.load_source_asset(
+        fixture["source_path"],
+        {"direct_fixture_root": fixture["artifact_root"]},
+        request=anchor[2],
+        profile=anchor[3],
+        require_direct_geometry_authority=True,
+        expected_raw_static_decision_batch=anchor[1][
+            "static_decision_batch"
+        ],
+    )
+    return anchor, source
+
+
+def test_direct_geometry_v4_registry_round_trip_replays_closure_and_source_asset(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = _direct_geometry_v4_reader_fixture(tmp_path, monkeypatch)
+
+    anchor, (_source_path, _source_asset, authenticated) = (
+        _load_direct_geometry_v4_fixture(fixture)
+    )
+
+    assert anchor[1]["schema"] == (
+        source_registry.DIRECT_GEOMETRY_REGISTRY_SCHEMA
+    )
+    assert anchor[4] == "direct_geometry_source_authority_v1"
+    assert len(fixture["closure_calls"]) == 1
+    closure_path, closure_kwargs = fixture["closure_calls"][0]
+    assert closure_path == fixture["geometry_closure"].resolve()
+    assert closure_kwargs["expected_raw_pixal_glb"] == (
+        fixture["artifact_paths"]["pixal_raw_glb"].resolve()
+    )
+    assert closure_kwargs["expected_raw_static_decision_batch"] == (
+        fixture["decision_batch"].resolve()
+    )
+    assert authenticated["artifact:derived_repaired_glb"] == (
+        fixture["artifact_paths"]["derived_repaired_glb"].resolve()
+    )
+    assert set(anchor[3]["direct_geometry_authority"]["source_artifacts"]) == (
+        preparation.DIRECT_GEOMETRY_SOURCE_ARTIFACT_ROLES
+    )
+
+
+def test_direct_geometry_v4_actual_producer_round_trip_into_ue_bridge(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = _direct_geometry_v4_reader_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(source_registry, "SPEAR_ROOT", tmp_path)
+    monkeypatch.setattr(
+        source_registry.direct_adopter,
+        "load_adopted_batch",
+        lambda _path: (
+            fixture["pixal_path"].resolve(),
+            copy.deepcopy(fixture["context"]["adopted_batch"]),
+        ),
+    )
+    produced_root = tmp_path / "actual_v4_registry"
+    produced_registry = source_registry.register_direct_geometry(
+        fixture["artifact_root"] / "direct_source_authority.json",
+        _sha256(
+            fixture["artifact_root"] / "direct_source_authority.json"
+        ),
+        fixture["pixal_path"],
+        fixture["decision_batch"],
+        fixture["geometry_closure"],
+        _sha256(fixture["geometry_closure"]),
+        produced_root,
+    )
+    produced_source = (
+        produced_root
+        / "source_assets"
+        / f"{fixture['authority']['instance_id']}.json"
+    )
+
+    anchor = preparation.load_source_registry_anchor(
+        produced_registry,
+        produced_source,
+        expected_file_sha256=_sha256(produced_registry),
+    )
+    _source_path, source_asset, authenticated = preparation.load_source_asset(
+        produced_source,
+        {
+            "spear_repo": tmp_path,
+            "models_root": Path("/data/models"),
+        },
+        request=anchor[2],
+        profile=anchor[3],
+        require_direct_geometry_authority=True,
+        expected_raw_static_decision_batch=anchor[1][
+            "static_decision_batch"
+        ],
+    )
+
+    assert source_asset["provenance"]["attempt_id"].startswith(
+        "direct_geometry_"
+    )
+    assert source_asset["provenance"]["models"][
+        source_registry.DIRECT_GEOMETRY_RAW_DECISION_PROVENANCE_MODEL
+    ] == fixture["decision_payload"]["decision_sha256"]
+    assert authenticated["artifact:pixal_raw_glb"] == (
+        fixture["artifact_paths"]["pixal_raw_glb"].resolve()
+    )
+    assert anchor[4] == "direct_geometry_source_authority_v1"
+
+
+def test_direct_geometry_v4_registry_rejects_resealed_internal_closure_hash(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = _direct_geometry_v4_reader_fixture(tmp_path, monkeypatch)
+    registry = contracts.load_json(fixture["registry_path"])
+    registry["geometry_closure"]["manifest_sha256"] = "a" * 64
+    registry["registry_sha256"] = source_registry._hash_without(
+        registry,
+        "registry_sha256",
+    )
+    _write_json(fixture["registry_path"], registry)
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="closure replay result is invalid",
+    ):
+        preparation.load_source_registry_anchor(
+            fixture["registry_path"],
+            fixture["source_path"],
+            expected_file_sha256=_sha256(fixture["registry_path"]),
+        )
+
+
+@pytest.mark.parametrize("mutation", ("automatic_checks", "schema_downgrade"))
+def test_direct_geometry_v4_registry_rejects_check_or_schema_masquerade(
+    tmp_path,
+    monkeypatch,
+    mutation,
+):
+    fixture = _direct_geometry_v4_reader_fixture(tmp_path, monkeypatch)
+    registry = contracts.load_json(fixture["registry_path"])
+    if mutation == "automatic_checks":
+        registry["automatic_checks"][
+            "exact_geometry_closure_replayed"
+        ] = False
+    else:
+        registry["schema"] = source_registry.DERIVED_REGISTRY_SCHEMA
+    registry["registry_sha256"] = source_registry._hash_without(
+        registry,
+        "registry_sha256",
+    )
+    _write_json(fixture["registry_path"], registry)
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="automatic checks are invalid|contract/hash is invalid",
+    ):
+        preparation.load_source_registry_anchor(
+            fixture["registry_path"],
+            fixture["source_path"],
+            expected_file_sha256=_sha256(fixture["registry_path"]),
+        )
+
+
+def test_direct_geometry_v4_source_asset_rejects_arbitrary_repaired_body(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = _direct_geometry_v4_reader_fixture(tmp_path, monkeypatch)
+    anchor = preparation.load_source_registry_anchor(
+        fixture["registry_path"],
+        fixture["source_path"],
+        expected_file_sha256=_sha256(fixture["registry_path"]),
+    )
+    arbitrary = fixture["artifact_root"] / "arbitrary_template_body.glb"
+    arbitrary.write_bytes(b"Rocketbox or Quaternius substitute body")
+    source_asset = contracts.load_json(fixture["source_path"])
+    source_asset["artifacts"]["derived_repaired_glb"] = _root_record(
+        "direct_fixture_root",
+        arbitrary,
+        fixture["artifact_root"],
+    )
+    _write_json(fixture["source_path"], source_asset)
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="derived_repaired_glb changed from registry closure replay",
+    ):
+        preparation.load_source_asset(
+            fixture["source_path"],
+            {"direct_fixture_root": fixture["artifact_root"]},
+            request=anchor[2],
+            profile=anchor[3],
+            require_direct_geometry_authority=True,
+            expected_raw_static_decision_batch=anchor[1][
+                "static_decision_batch"
+            ],
+        )
 
 
 def test_direct_registry_reader_accepts_noncanonical_adopted_identity(
@@ -2706,7 +3309,7 @@ def test_target_rig_lineage_rejects_rebound_raw_pixal(tmp_path, monkeypatch):
         )
 
 
-def test_target_rig_lineage_rejects_derived_geometry_watertight_fallback(
+def test_target_rig_lineage_rejects_plain_watertight_proxy_with_derived_artifact(
     tmp_path,
     monkeypatch,
 ):
@@ -2717,16 +3320,15 @@ def test_target_rig_lineage_rejects_derived_geometry_watertight_fallback(
     raw_pixal.write_bytes(b"raw Pixal geometry")
     repaired = workspace / "bounded_repaired.glb"
     repaired.write_bytes(b"bounded repaired Pixel3D geometry")
+    watertight_proxy = workspace / "watertight_proxy.glb"
+    watertight_proxy.write_bytes(b"authenticated watertight Pixel3D proxy")
     target_rig = workspace / "tokenrig_output.glb"
     target_rig.write_bytes(b"TokenRig output")
     descriptor = _fake_tokenrig_lineage(
         tmp_path,
         raw_pixal_glb=raw_pixal,
         target_rig_glb=target_rig,
-    )
-    descriptor["lineage"]["tokenrig_input"] = _record(repaired)
-    descriptor["descriptor_sha256"] = preparation._hash_without(
-        descriptor, "descriptor_sha256"
+        tokenrig_input_glb=watertight_proxy,
     )
     monkeypatch.setattr(preparation, "SPEAR_ROOT", spear_root)
     monkeypatch.setattr(
@@ -2737,7 +3339,7 @@ def test_target_rig_lineage_rejects_derived_geometry_watertight_fallback(
 
     with pytest.raises(
         contracts.ContractError,
-        match="derived TokenRig input must come from a bounded geometry closure",
+        match="cannot bypass its source-registry repair authority",
     ):
         preparation._validate_target_rig_lineage(
             descriptor,
@@ -2747,6 +3349,449 @@ def test_target_rig_lineage_rejects_derived_geometry_watertight_fallback(
                 "artifact:pixal_raw_glb": raw_pixal,
                 "artifact:derived_repaired_glb": repaired,
             },
+            authenticated={},
+        )
+
+
+def _bounded_watertight_target_lineage_fixture(tmp_path, monkeypatch):
+    spear_root = tmp_path / "SPEAR"
+    workspace = spear_root / "tmp/new_animal_assets/fixture_workspace"
+    workspace.mkdir(parents=True)
+    raw_pixal = workspace / "pixal_raw.glb"
+    raw_pixal.write_bytes(b"raw Pixel3D geometry")
+    repaired = workspace / "bounded_repaired.glb"
+    repaired.write_bytes(b"bounded repaired Pixel3D geometry")
+    geometry_closure = workspace / "geometry_closure.json"
+    _write_json(geometry_closure, {"fixture": "bounded geometry closure"})
+    raw_decision_batch = workspace / "raw_static_decision_batch.json"
+    _write_json(raw_decision_batch, {"fixture": "raw decision batch"})
+    watertight_proxy_manifest = workspace / "watertight_proxy_manifest.json"
+    _write_json(
+        watertight_proxy_manifest,
+        {"fixture": "authenticated watertight proxy manifest"},
+    )
+    watertight_proxy_geometry_audit = (
+        workspace / "watertight_proxy_geometry_audit.json"
+    )
+    _write_json(
+        watertight_proxy_geometry_audit,
+        {"fixture": "authenticated watertight proxy geometry audit"},
+    )
+    watertight_proxy = workspace / "watertight_proxy.glb"
+    watertight_proxy.write_bytes(
+        b"authenticated watertight proxy of bounded Pixel3D geometry"
+    )
+    target_rig = workspace / "tokenrig_output.glb"
+    target_rig.write_bytes(b"TokenRig output")
+    geometry_closure_manifest_sha256 = "b" * 64
+    descriptor = _fake_tokenrig_lineage(
+        tmp_path,
+        raw_pixal_glb=raw_pixal,
+        target_rig_glb=target_rig,
+        tokenrig_input_glb=watertight_proxy,
+        upstream_kind="bounded_watertight_runtime_proxy",
+        bounded_geometry_closure=geometry_closure,
+        bounded_geometry_closure_manifest_sha256=(
+            geometry_closure_manifest_sha256
+        ),
+        watertight_proxy_manifest=watertight_proxy_manifest,
+        watertight_proxy_geometry_audit=watertight_proxy_geometry_audit,
+        raw_static_decision_batch=raw_decision_batch,
+    )
+    source_asset = {
+        "asset_class": "animal",
+        "provenance": {
+            "models": {
+                (
+                    source_registry
+                    .DIRECT_GEOMETRY_RAW_DECISION_PROVENANCE_MODEL
+                ): "a" * 64,
+                (
+                    source_registry
+                    .DIRECT_GEOMETRY_CLOSURE_PROVENANCE_MODEL
+                ): geometry_closure_manifest_sha256,
+            }
+        },
+    }
+    source_artifacts = {
+        "artifact:pixal_raw_glb": raw_pixal,
+        "artifact:derived_repaired_glb": repaired,
+        "artifact:derived_geometry_closure": geometry_closure,
+        "artifact:raw_static_decision_batch": raw_decision_batch,
+    }
+    monkeypatch.setattr(preparation, "SPEAR_ROOT", spear_root)
+    monkeypatch.setattr(
+        preparation,
+        "validate_tokenrig_closure_manifest",
+        lambda *args, **kwargs: copy.deepcopy(descriptor),
+    )
+    return {
+        "descriptor": descriptor,
+        "target_rig": target_rig,
+        "raw_pixal": raw_pixal,
+        "watertight_proxy": watertight_proxy,
+        "geometry_closure": geometry_closure,
+        "geometry_closure_manifest_sha256": (
+            geometry_closure_manifest_sha256
+        ),
+        "watertight_proxy_manifest": watertight_proxy_manifest,
+        "watertight_proxy_geometry_audit": (
+            watertight_proxy_geometry_audit
+        ),
+        "source_asset": source_asset,
+        "source_artifacts": source_artifacts,
+    }
+
+
+def test_target_rig_lineage_accepts_exact_bounded_watertight_composite_kind(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = _bounded_watertight_target_lineage_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+
+    observed = preparation._validate_target_rig_lineage(
+        fixture["descriptor"],
+        target_rig_glb=fixture["target_rig"],
+        source_asset=fixture["source_asset"],
+        source_artifacts=fixture["source_artifacts"],
+        authenticated={},
+    )
+
+    assert observed["lineage"]["upstream_kind"] == (
+        "bounded_watertight_runtime_proxy"
+    )
+    assert observed["lineage"]["tokenrig_input"] == _record(
+        fixture["watertight_proxy"]
+    )
+    assert _sha256(fixture["geometry_closure"]) != (
+        fixture["geometry_closure_manifest_sha256"]
+    )
+    assert _sha256(fixture["watertight_proxy_manifest"]) != _sha256(
+        fixture["watertight_proxy_geometry_audit"]
+    )
+
+
+@pytest.mark.parametrize(
+    "confusion",
+    (
+        "authority_file_uses_internal_manifest_sha",
+        "provenance_internal_manifest_uses_file_sha",
+        "proxy_manifest_authority_uses_audit_sha",
+        "proxy_audit_authority_uses_manifest_sha",
+    ),
+)
+def test_target_rig_lineage_rejects_bounded_watertight_hash_semantic_confusion(
+    tmp_path,
+    monkeypatch,
+    confusion,
+):
+    fixture = _bounded_watertight_target_lineage_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    geometry_file_sha256 = _sha256(fixture["geometry_closure"])
+    geometry_manifest_sha256 = fixture[
+        "geometry_closure_manifest_sha256"
+    ]
+    if confusion in {
+        "authority_file_uses_internal_manifest_sha",
+        "proxy_manifest_authority_uses_audit_sha",
+        "proxy_audit_authority_uses_manifest_sha",
+    }:
+        descriptor = fixture["descriptor"]
+        closure_path = Path(descriptor["closure_manifest"]["path"])
+        closure_payload = contracts.load_json(closure_path)
+        composite_authority = closure_payload["lineage"][
+            "composite_upstream_authority"
+        ]
+        if confusion == "authority_file_uses_internal_manifest_sha":
+            composite_authority[
+                "bounded_geometry_closure_file_sha256"
+            ] = geometry_manifest_sha256
+        elif confusion == "proxy_manifest_authority_uses_audit_sha":
+            composite_authority[
+                "watertight_proxy_manifest_file_sha256"
+            ] = _sha256(fixture["watertight_proxy_geometry_audit"])
+        else:
+            composite_authority[
+                "watertight_proxy_geometry_audit_file_sha256"
+            ] = _sha256(fixture["watertight_proxy_manifest"])
+        _write_json(closure_path, closure_payload)
+        internal_closure_sha256 = descriptor["closure_manifest"][
+            "manifest_sha256"
+        ]
+        descriptor["closure_manifest"] = {
+            **_record(closure_path),
+            "manifest_sha256": internal_closure_sha256,
+        }
+        descriptor["descriptor_sha256"] = preparation._hash_without(
+            descriptor,
+            "descriptor_sha256",
+        )
+    else:
+        fixture["source_asset"]["provenance"]["models"][
+            source_registry.DIRECT_GEOMETRY_CLOSURE_PROVENANCE_MODEL
+        ] = geometry_file_sha256
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="composite authority changed",
+    ):
+        preparation._validate_target_rig_lineage(
+            fixture["descriptor"],
+            target_rig_glb=fixture["target_rig"],
+            source_asset=fixture["source_asset"],
+            source_artifacts=fixture["source_artifacts"],
+            authenticated={},
+        )
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "schema",
+        "normalization",
+        "counts",
+        "metrics",
+        "thresholds",
+    ),
+)
+def test_target_rig_lineage_rejects_watertight_correspondence_tamper(
+    tmp_path,
+    monkeypatch,
+    tamper,
+):
+    fixture = _bounded_watertight_target_lineage_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    descriptor = fixture["descriptor"]
+    closure_path = Path(descriptor["closure_manifest"]["path"])
+    closure_payload = contracts.load_json(closure_path)
+    correspondence = closure_payload["lineage"][
+        "composite_upstream_authority"
+    ]["watertight_proxy_correspondence"]
+    if tamper == "schema":
+        correspondence["schema"] = "wrong_correspondence_v1"
+    elif tamper == "normalization":
+        correspondence["normalization"] = "unit_cube"
+    elif tamper == "counts":
+        correspondence["proxy_unique_vertices"] = True
+    elif tamper == "metrics":
+        correspondence["proxy_to_repaired"]["unexpected"] = 0.0
+    else:
+        correspondence["thresholds"][
+            "proxy_to_repaired_p99_ratio_max"
+        ] = 0.004
+    _write_json(closure_path, closure_payload)
+    internal_closure_sha256 = descriptor["closure_manifest"][
+        "manifest_sha256"
+    ]
+    descriptor["closure_manifest"] = {
+        **_record(closure_path),
+        "manifest_sha256": internal_closure_sha256,
+    }
+    descriptor["descriptor_sha256"] = preparation._hash_without(
+        descriptor,
+        "descriptor_sha256",
+    )
+
+    with pytest.raises(contracts.ContractError, match="correspondence"):
+        preparation._validate_target_rig_lineage(
+            descriptor,
+            target_rig_glb=fixture["target_rig"],
+            source_asset=fixture["source_asset"],
+            source_artifacts=fixture["source_artifacts"],
+            authenticated={},
+        )
+
+
+def test_target_rig_lineage_rejects_bounded_watertight_on_old_direct_source(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = _bounded_watertight_target_lineage_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="lacks its exact v4 direct-geometry registry authority",
+    ):
+        preparation._validate_target_rig_lineage(
+            fixture["descriptor"],
+            target_rig_glb=fixture["target_rig"],
+            source_asset={"asset_class": "animal"},
+            source_artifacts={
+                "artifact:pixal_raw_glb": fixture["raw_pixal"],
+            },
+            authenticated={},
+        )
+
+
+def test_target_rig_lineage_rejects_old_kind_relabelled_as_bounded_watertight(
+    tmp_path,
+    monkeypatch,
+):
+    fixture = _bounded_watertight_target_lineage_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    old_closure_descriptor = copy.deepcopy(fixture["descriptor"])
+    old_closure_descriptor["lineage"][
+        "upstream_kind"
+    ] = "watertight_runtime_proxy"
+    old_closure_descriptor["descriptor_sha256"] = preparation._hash_without(
+        old_closure_descriptor,
+        "descriptor_sha256",
+    )
+    monkeypatch.setattr(
+        preparation,
+        "validate_tokenrig_closure_manifest",
+        lambda *args, **kwargs: copy.deepcopy(old_closure_descriptor),
+    )
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="contradicts its authenticated closure",
+    ):
+        preparation._validate_target_rig_lineage(
+            fixture["descriptor"],
+            target_rig_glb=fixture["target_rig"],
+            source_asset=fixture["source_asset"],
+            source_artifacts=fixture["source_artifacts"],
+            authenticated={},
+        )
+
+
+def test_target_rig_lineage_rejects_arbitrary_proxy_not_returned_by_closure(
+    tmp_path,
+    monkeypatch,
+):
+    spear_root = tmp_path / "SPEAR"
+    workspace = spear_root / "tmp/new_animal_assets/fixture_workspace"
+    workspace.mkdir(parents=True)
+    raw_pixal = workspace / "pixal_raw.glb"
+    raw_pixal.write_bytes(b"raw Pixel3D geometry")
+    authenticated_proxy = workspace / "authenticated_proxy.glb"
+    authenticated_proxy.write_bytes(b"closure authenticated watertight proxy")
+    arbitrary_proxy = workspace / "arbitrary_proxy.glb"
+    arbitrary_proxy.write_bytes(b"arbitrary substitute geometry")
+    target_rig = workspace / "tokenrig_output.glb"
+    target_rig.write_bytes(b"TokenRig output")
+    closure_descriptor = _fake_tokenrig_lineage(
+        tmp_path,
+        raw_pixal_glb=raw_pixal,
+        target_rig_glb=target_rig,
+        tokenrig_input_glb=authenticated_proxy,
+    )
+    review_descriptor = copy.deepcopy(closure_descriptor)
+    review_descriptor["lineage"]["tokenrig_input"] = _record(arbitrary_proxy)
+    review_descriptor["descriptor_sha256"] = preparation._hash_without(
+        review_descriptor,
+        "descriptor_sha256",
+    )
+    monkeypatch.setattr(preparation, "SPEAR_ROOT", spear_root)
+    monkeypatch.setattr(
+        preparation,
+        "validate_tokenrig_closure_manifest",
+        lambda *args, **kwargs: copy.deepcopy(closure_descriptor),
+    )
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="contradicts its authenticated closure",
+    ):
+        preparation._validate_target_rig_lineage(
+            review_descriptor,
+            target_rig_glb=target_rig,
+            source_asset={"asset_class": "animal"},
+            source_artifacts={"artifact:pixal_raw_glb": raw_pixal},
+            authenticated={},
+        )
+
+
+def test_target_rig_lineage_accepts_exact_bounded_source_registry_repair(
+    tmp_path,
+    monkeypatch,
+):
+    spear_root = tmp_path / "SPEAR"
+    workspace = spear_root / "tmp/new_animal_assets/fixture_workspace"
+    workspace.mkdir(parents=True)
+    raw_pixal = workspace / "pixal_raw.glb"
+    raw_pixal.write_bytes(b"raw Pixel3D geometry")
+    repaired = workspace / "bounded_repaired.glb"
+    repaired.write_bytes(b"bounded repaired Pixel3D geometry")
+    target_rig = workspace / "tokenrig_output.glb"
+    target_rig.write_bytes(b"TokenRig output")
+    descriptor = _fake_tokenrig_lineage(
+        tmp_path,
+        raw_pixal_glb=raw_pixal,
+        target_rig_glb=target_rig,
+        tokenrig_input_glb=repaired,
+        upstream_kind="bounded_geometry_closure",
+    )
+    monkeypatch.setattr(preparation, "SPEAR_ROOT", spear_root)
+    monkeypatch.setattr(
+        preparation,
+        "validate_tokenrig_closure_manifest",
+        lambda *args, **kwargs: copy.deepcopy(descriptor),
+    )
+
+    observed = preparation._validate_target_rig_lineage(
+        descriptor,
+        target_rig_glb=target_rig,
+        source_asset={"asset_class": "animal"},
+        source_artifacts={
+            "artifact:pixal_raw_glb": raw_pixal,
+            "artifact:derived_repaired_glb": repaired,
+        },
+        authenticated={},
+    )
+
+    assert observed["lineage"]["upstream_kind"] == "bounded_geometry_closure"
+
+
+def test_target_rig_lineage_rejects_bounded_closure_without_registry_repair(
+    tmp_path,
+    monkeypatch,
+):
+    spear_root = tmp_path / "SPEAR"
+    workspace = spear_root / "tmp/new_animal_assets/fixture_workspace"
+    workspace.mkdir(parents=True)
+    raw_pixal = workspace / "pixal_raw.glb"
+    raw_pixal.write_bytes(b"raw Pixel3D geometry")
+    repaired = workspace / "bounded_repaired.glb"
+    repaired.write_bytes(b"bounded repaired Pixel3D geometry")
+    target_rig = workspace / "tokenrig_output.glb"
+    target_rig.write_bytes(b"TokenRig output")
+    descriptor = _fake_tokenrig_lineage(
+        tmp_path,
+        raw_pixal_glb=raw_pixal,
+        target_rig_glb=target_rig,
+        tokenrig_input_glb=repaired,
+        upstream_kind="bounded_geometry_closure",
+    )
+    monkeypatch.setattr(preparation, "SPEAR_ROOT", spear_root)
+    monkeypatch.setattr(
+        preparation,
+        "validate_tokenrig_closure_manifest",
+        lambda *args, **kwargs: copy.deepcopy(descriptor),
+    )
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="lacks its source-registry repair authority",
+    ):
+        preparation._validate_target_rig_lineage(
+            descriptor,
+            target_rig_glb=target_rig,
+            source_asset={"asset_class": "animal"},
+            source_artifacts={"artifact:pixal_raw_glb": raw_pixal},
             authenticated={},
         )
 

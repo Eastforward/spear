@@ -67,6 +67,7 @@ SOURCE_REGISTRY_VALIDATION_MODES = {
     "frozen_historical_preflight_v1",
     "current_exact_rebuild",
     "direct_source_authority_v1",
+    "direct_geometry_source_authority_v1",
 }
 RESULT_SCHEMA = "pixal_animal_ue_import_result_v2"
 JOB_TYPE = "user_approved_generated_animal"
@@ -1419,6 +1420,13 @@ def _validate_batch_payload(
     manifest: dict[str, Any],
     preparation: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if (
+        preparation.get("source_asset_registry_validation_mode")
+        not in SOURCE_REGISTRY_VALIDATION_MODES
+    ):
+        raise RuntimeError(
+            "Pixal animal UE batch source registry validation mode is invalid"
+        )
     if manifest.get("schema") == LEGACY_BATCH_SCHEMA:
         raise RuntimeError(
             "legacy Pixal UE import batch v1 cannot authorize writes; "

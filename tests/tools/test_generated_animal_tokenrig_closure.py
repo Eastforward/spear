@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 import os
 from pathlib import Path
+import struct
 import tempfile
 
 import pytest
 
+from tools import audit_quadruped_i23d_geometry as geometry_audit
 from tools import generated_animal_tokenrig_closure as closure
 from tools import publish_generated_animal_geometry_closure as geometry_closures
 from tools import register_controlled_animal_source_assets as source_registry
@@ -28,6 +31,240 @@ def descriptor(path: Path) -> dict:
 
 def write_json(path: Path, payload: dict) -> None:
     path.write_bytes(closure.canonical_bytes(payload) + b"\n")
+
+
+def write_production_proxy_glb(path: Path, *, shift: float = 0.0) -> None:
+    vertices = [
+        (0.0 + shift, 0.0, 0.0),
+        (1.0 + shift, 0.0, 0.0),
+        (0.0 + shift, 1.0, 0.0),
+        (0.0 + shift, 0.0, 1.0),
+    ]
+    normals = [(0.0, 1.0, 0.0)] * 4
+    uvs = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)]
+    indices = (0, 2, 1, 0, 1, 3, 1, 2, 3, 2, 0, 3)
+    chunks = [
+        struct.pack("<12f", *(item for vertex in vertices for item in vertex)),
+        struct.pack("<12f", *(item for normal in normals for item in normal)),
+        struct.pack("<8f", *(item for uv in uvs for item in uv)),
+        struct.pack("<12H", *indices),
+        b"\x89PNG\r\n\x1a\n",
+        b"\x89PNG\r\n\x1a\n",
+    ]
+    offsets = []
+    binary = b""
+    for chunk in chunks:
+        offsets.append(len(binary))
+        binary += chunk
+    document = {
+        "asset": {"version": "2.0"},
+        "buffers": [{"byteLength": len(binary)}],
+        "bufferViews": [
+            {
+                "buffer": 0,
+                "byteOffset": offsets[0],
+                "byteLength": len(chunks[0]),
+                "target": 34962,
+            },
+            {
+                "buffer": 0,
+                "byteOffset": offsets[1],
+                "byteLength": len(chunks[1]),
+                "target": 34962,
+            },
+            {
+                "buffer": 0,
+                "byteOffset": offsets[2],
+                "byteLength": len(chunks[2]),
+                "target": 34962,
+            },
+            {
+                "buffer": 0,
+                "byteOffset": offsets[3],
+                "byteLength": len(chunks[3]),
+                "target": 34963,
+            },
+            {
+                "buffer": 0,
+                "byteOffset": offsets[4],
+                "byteLength": len(chunks[4]),
+            },
+            {
+                "buffer": 0,
+                "byteOffset": offsets[5],
+                "byteLength": len(chunks[5]),
+            },
+        ],
+        "accessors": [
+            {
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": 4,
+                "type": "VEC3",
+                "min": [shift, 0.0, 0.0],
+                "max": [1.0 + shift, 1.0, 1.0],
+            },
+            {
+                "bufferView": 1,
+                "componentType": 5126,
+                "count": 4,
+                "type": "VEC3",
+            },
+            {
+                "bufferView": 2,
+                "componentType": 5126,
+                "count": 4,
+                "type": "VEC2",
+            },
+            {
+                "bufferView": 3,
+                "componentType": 5123,
+                "count": 12,
+                "type": "SCALAR",
+            },
+        ],
+        "images": [
+            {
+                "bufferView": 4,
+                "mimeType": "image/png",
+                "name": "Watertight_BaseColor",
+            },
+            {
+                "bufferView": 5,
+                "mimeType": "image/png",
+                "name": "Watertight_Roughness",
+            },
+        ],
+        "samplers": [{"magFilter": 9729, "minFilter": 9987}],
+        "textures": [
+            {"sampler": 0, "source": 0},
+            {"sampler": 0, "source": 1},
+        ],
+        "materials": [
+            {
+                "doubleSided": True,
+                "name": "Watertight_Baked_PBR",
+                "pbrMetallicRoughness": {
+                    "baseColorTexture": {"index": 0},
+                    "metallicFactor": 0,
+                    "metallicRoughnessTexture": {"index": 1},
+                },
+            }
+        ],
+        "meshes": [
+            {
+                "primitives": [
+                    {
+                        "attributes": {
+                            "POSITION": 0,
+                            "NORMAL": 1,
+                            "TEXCOORD_0": 2,
+                        },
+                        "indices": 3,
+                        "material": 0,
+                    }
+                ]
+            }
+        ],
+        "nodes": [{"mesh": 0, "name": "Watertight_Runtime_Proxy"}],
+        "scenes": [{"nodes": [0]}],
+        "scene": 0,
+    }
+    encoded = json.dumps(
+        document,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    encoded += b" " * ((-len(encoded)) % 4)
+    total = 12 + 8 + len(encoded) + 8 + len(binary)
+    path.write_bytes(
+        b"".join(
+            (
+                struct.pack("<4sII", b"glTF", 2, total),
+                struct.pack("<II", len(encoded), 0x4E4F534A),
+                encoded,
+                struct.pack("<II", len(binary), 0x004E4942),
+                binary,
+            )
+        )
+    )
+
+
+def proxy_geometry_audit(path: Path) -> dict:
+    topology = {
+        "imported_vertices": 4,
+        "position_unique_vertices": 4,
+        "imported_triangles": 4,
+        "position_indexed_triangles": 4,
+        "degenerate_triangles_after_position_indexing": 0,
+        "boundary_edges": 0,
+        "manifold_two_face_edges": 6,
+        "two_face_orientation_mismatch_edges": 0,
+        "nonmanifold_edges_over_two_faces": 0,
+        "balanced_oriented_multicover_edges_over_two_faces": 0,
+        "unbalanced_edges_over_two_faces": 0,
+        "unpaired_oriented_edges": 0,
+        "unpaired_oriented_edge_occurrences": 0,
+        "paired_oriented_sheet_edge_occurrences": 12,
+        "maximum_edge_face_multiplicity": 2,
+        "nonmanifold_edge_ratio_per_triangle": 0.0,
+        "unpaired_oriented_edge_ratio_per_triangle": 0.0,
+        "topology_acceptance_semantics": (
+            "every_exact_position_directed_edge_occurrence_has_one_"
+            "oppositely_oriented_partner"
+        ),
+    }
+    primary = {
+        "coordinate_frame": "gltf_positive_x_forward_positive_y_up_positive_z_side",
+        "central_longitudinal_percentiles": [25.0, 75.0],
+        "torso_floor_fraction_of_robust_height": 0.35,
+        "surface_side_percentiles": [5.0, 95.0],
+        "section_count": 8,
+        "selected_vertex_count": 4,
+        "side_slope_per_forward_unit": 0.0,
+        "yaw_degrees": 0.0,
+        "global_axis_yaw_degrees": 0.0,
+        "global_axis_semantics": (
+            "rigid_unsigned_orientation_evidence_only_not_a_shape_defect"
+        ),
+        "centerline_bend_p95_degrees": 0.0,
+        "centerline_bend_max_degrees": 0.0,
+        "centerline_lateral_rms_ratio": 0.0,
+        "centerline_lateral_peak_ratio": 0.0,
+        "centerline_curve_degree": 1,
+        "centerline_shape_semantics": (
+            "local_tangent_deviation_after_removing_rigid_pca_axis"
+        ),
+        "fit_r_squared": 1.0,
+    }
+    return {
+        "schema": geometry_audit.SCHEMA,
+        "created_at": "2026-07-28T00:00:00+00:00",
+        "purpose": "prebind_geometry_measurement_without_direction_inference",
+        "records": [
+            {
+                "label": "fixture_production_proxy",
+                "mesh": {
+                    "absolute_path": str(path.resolve()),
+                    "sha256": closure.sha256_file(path),
+                    "size_bytes": path.stat().st_size,
+                },
+                "topology": topology,
+                "torso_midline": {
+                    "primary": primary,
+                    "sensitivity_yaw_degrees": [0.0, 0.0, 0.0],
+                    "sensitivity_global_axis_yaw_degrees": [0.0, 0.0, 0.0],
+                    "sensitivity_centerline_bend_p95_degrees": [0.0, 0.0, 0.0],
+                    "sensitivity_central_percentiles": [
+                        [25.0, 75.0],
+                        [30.0, 70.0],
+                        [35.0, 65.0],
+                    ],
+                },
+                "decision": geometry_audit.decision(topology, primary),
+            }
+        ],
+    }
 
 
 def valid_readback(path: Path, source: Path, rig: Path) -> dict:
@@ -236,7 +473,7 @@ def _direct_copy_v2_fixture(tmp_path, monkeypatch):
     adopted_raw.parent.mkdir()
     adopted_raw.write_bytes(historical_raw.read_bytes())
     tokenrig_input = tmp_path / "bounded.glb"
-    tokenrig_input.write_bytes(b"bounded Pixel3D")
+    write_production_proxy_glb(tokenrig_input)
     raw_manifest = tmp_path / "adopted" / "pixal_raw.manifest.json"
     write_json(
         raw_manifest,
@@ -249,10 +486,14 @@ def _direct_copy_v2_fixture(tmp_path, monkeypatch):
         },
     )
     upstream = tmp_path / "geometry_closure_v2.json"
-    write_json(
-        upstream,
-        {"schema": "avengine_generated_animal_geometry_closure_v2"},
+    geometry_payload = {
+        "schema": "avengine_generated_animal_geometry_closure_v2"
+    }
+    geometry_payload["manifest_sha256"] = closure.hash_without(
+        geometry_payload,
+        "manifest_sha256",
     )
+    write_json(upstream, geometry_payload)
     repair = tmp_path / "repair.json"
     repair.write_bytes(b"repair")
     audit = tmp_path / "audit.json"
@@ -284,11 +525,613 @@ def _direct_copy_v2_fixture(tmp_path, monkeypatch):
         "raw_manifest": raw_manifest,
         "tokenrig_input": tokenrig_input,
         "upstream": upstream,
+        "geometry_manifest_sha256": geometry_payload["manifest_sha256"],
         "repair": repair,
         "audit": audit,
         "decision_batch": decision_batch,
         "observed": observed,
     }
+
+
+def _bounded_watertight_v2_fixture(tmp_path, monkeypatch):
+    case = _direct_copy_v2_fixture(tmp_path, monkeypatch)
+    repaired = case["tokenrig_input"]
+    proxy = tmp_path / "watertight_proxy.glb"
+    write_production_proxy_glb(proxy, shift=0.0001)
+    proxy_manifest = tmp_path / "watertight_proxy.manifest.json"
+    write_json(
+        proxy_manifest,
+        {
+            "schema": "avengine_watertight_textured_runtime_proxy_v1",
+            "created_at": "2026-07-28T00:00:00+00:00",
+            "input": descriptor(repaired),
+            "attribute_input": {
+                **descriptor(repaired),
+                "same_as_geometry_input": True,
+            },
+            "output": descriptor(proxy),
+            "parameters": {
+                "voxel_resolution": 200,
+                "voxel_size": 0.01,
+                "target_faces": 100000,
+                "smooth_iterations": 1,
+                "shrinkwrap_strength": 0.0,
+                "post_shrinkwrap_smooth_iterations": 2,
+                "torso_fold_repair_iterations": 6,
+                "double_sided": False,
+                "attribute_transfer_backend": "bake",
+                "bake_resolution": 2048,
+                "base_color_encoding_policy": "preserve-bake",
+                "base_color_gain": [1.0, 1.0, 1.0],
+            },
+            "topology": {
+                "source": {
+                    "vertices": 4,
+                    "edges": 6,
+                    "faces": 4,
+                    "boundary_edges": 0,
+                    "wire_edges": 0,
+                    "nonmanifold_edges_over_two_faces": 0,
+                    "noncontiguous_two_face_edges": 0,
+                },
+                "after_voxel_remesh": {
+                    "vertices": 4,
+                    "edges": 4,
+                    "faces": 2,
+                    "boundary_edges": 0,
+                    "wire_edges": 0,
+                    "nonmanifold_edges_over_two_faces": 0,
+                    "noncontiguous_two_face_edges": 0,
+                },
+                "final": {
+                    "vertices": 4,
+                    "edges": 4,
+                    "faces": 2,
+                    "boundary_edges": 0,
+                    "wire_edges": 0,
+                    "nonmanifold_edges_over_two_faces": 0,
+                    "noncontiguous_two_face_edges": 0,
+                },
+            },
+            "surface_attributes": {
+                "backend": "bake",
+                "bake_resolution": 2048,
+                "bake_device": "CPU",
+                "ray_distance": 0.03,
+                "cage_extrusion": 0.005,
+                "uv_layers": ["UVMap"],
+                "baked_images": [
+                    "Watertight_BaseColor",
+                    "Watertight_Roughness",
+                ],
+                "base_color_bake_type": (
+                    "EMIT_FROM_PRINCIPLED_BASE_COLOR"
+                ),
+                "color_attributes": [],
+                "material_slots": ["Watertight_Baked_PBR"],
+                "metallic_policy": (
+                    "constant_zero_for_nonmetallic_animal_surface"
+                ),
+                "base_color_encoding_policy": "preserve-bake",
+                "base_color_gain": [1.0, 1.0, 1.0],
+            },
+            "torso_fold_repair": {
+                "iterations": 6,
+                "selected_vertices": 2,
+                "longitudinal_axis": 0,
+                "normalized_longitudinal_range": [0.25, 0.7],
+                "normalized_vertical_range": [0.34, 0.72],
+                "fade": 0.08,
+                "lambda_factor": 0.18,
+                "policy": "weighted_mid_torso_only_preserve_volume",
+            },
+            "authority_contract": {
+                "attribute_source_pbr_material_reused": False,
+                "attribute_source_uvs_transferred_by_nearest_surface": False,
+                "attribute_source_pbr_baked_to_new_uv_atlas": True,
+                "full_resolution_source_remains_geometry_authority": True,
+                "source_geometry_replaced": True,
+                "approved_skeleton_or_animation_touched": False,
+            },
+            "actual_faces": 2,
+            "status": "research_candidate_pending_static_and_animation_qa",
+            "formal_dataset_registration_authorized": False,
+        },
+    )
+    proxy_audit = tmp_path / "proxy_geometry_audit.json"
+    write_json(proxy_audit, proxy_geometry_audit(proxy))
+
+    def load_geometry_closure(path, **expected):
+        case["observed"]["path"] = path
+        case["observed"]["expected"] = expected
+        try:
+            repaired_matches = os.path.samefile(
+                expected["expected_repaired_glb"], repaired
+            )
+            batch_matches = os.path.samefile(
+                expected["expected_raw_static_decision_batch"],
+                case["decision_batch"],
+            )
+        except OSError:
+            repaired_matches = False
+            batch_matches = False
+        if not repaired_matches:
+            raise geometry_closures.GeometryClosureError(
+                "expected repaired GLB identity changed"
+            )
+        if not batch_matches:
+            raise geometry_closures.GeometryClosureError(
+                "expected raw decision batch identity changed"
+            )
+        return {
+            "manifest": closure.load_json(
+                case["upstream"], "fixture geometry closure"
+            ),
+            "paths": {
+                "raw_pixal_glb": case["adopted_raw"],
+                "repair_manifest": case["repair"],
+                "geometry_audit": case["audit"],
+                "raw_static_decision_batch": case["decision_batch"],
+            }
+        }
+
+    monkeypatch.setattr(
+        geometry_closures,
+        "load_geometry_closure_v2",
+        load_geometry_closure,
+    )
+    case.update(
+        {
+            "repaired": repaired,
+            "proxy": proxy,
+            "proxy_manifest": proxy_manifest,
+            "proxy_audit": proxy_audit,
+        }
+    )
+    return case
+
+
+def _validate_bounded_watertight(case, **overrides):
+    arguments = {
+        "bounded_geometry_closure_path": case["upstream"],
+        "expected_bounded_geometry_closure_sha256": closure.sha256_file(
+            case["upstream"]
+        ),
+        "expected_bounded_geometry_closure_manifest_sha256": case[
+            "geometry_manifest_sha256"
+        ],
+        "expected_watertight_proxy_manifest_sha256": closure.sha256_file(
+            case["proxy_manifest"]
+        ),
+        "watertight_proxy_geometry_audit_path": case["proxy_audit"],
+        "expected_watertight_proxy_geometry_audit_sha256": closure.sha256_file(
+            case["proxy_audit"]
+        ),
+        "raw_static_decision_batch_path": case["decision_batch"],
+        "expected_raw_static_decision_batch_sha256": closure.sha256_file(
+            case["decision_batch"]
+        ),
+        "require_oriented_batch_external_authority": True,
+    }
+    arguments.update(overrides)
+    return closure.validate_upstream_lineage(
+        case["raw_manifest"],
+        case["proxy_manifest"],
+        case["proxy"],
+        **arguments,
+    )
+
+
+def test_bounded_geometry_v2_can_strictly_feed_watertight_proxy_then_tokenrig(
+    tmp_path,
+    monkeypatch,
+):
+    case = _bounded_watertight_v2_fixture(tmp_path, monkeypatch)
+    case["historical_raw"].unlink()
+
+    observed_raw, kind, extra = _validate_bounded_watertight(case)
+
+    assert os.path.samefile(observed_raw, case["adopted_raw"])
+    assert kind == "bounded_watertight_runtime_proxy"
+    assert extra == [
+        case["upstream"].resolve(),
+        case["proxy_audit"].resolve(),
+        case["repair"],
+        case["audit"],
+        case["decision_batch"],
+    ]
+    assert case["observed"]["path"] == case["upstream"].resolve()
+    expected = case["observed"]["expected"]
+    assert expected["expected_manifest_sha256"] == closure.sha256_file(
+        case["upstream"]
+    )
+    assert (
+        case["geometry_manifest_sha256"]
+        != closure.sha256_file(case["upstream"])
+    )
+    assert expected["expected_pixal_manifest"] == case["raw_manifest"]
+    assert os.path.samefile(expected["expected_repaired_glb"], case["repaired"])
+    assert os.path.samefile(
+        expected["expected_raw_static_decision_batch"],
+        case["decision_batch"],
+    )
+
+
+def test_bounded_watertight_rejects_proxy_from_wrong_repaired_glb(
+    tmp_path,
+    monkeypatch,
+):
+    case = _bounded_watertight_v2_fixture(tmp_path, monkeypatch)
+    wrong_repaired = tmp_path / "wrong_repaired.glb"
+    wrong_repaired.write_bytes(case["repaired"].read_bytes())
+    proxy_manifest = closure.load_json(
+        case["proxy_manifest"], "watertight proxy manifest"
+    )
+    proxy_manifest["input"] = descriptor(wrong_repaired)
+    proxy_manifest["attribute_input"] = {
+        **descriptor(wrong_repaired),
+        "same_as_geometry_input": True,
+    }
+    write_json(case["proxy_manifest"], proxy_manifest)
+
+    with pytest.raises(
+        closure.ClosureError,
+        match="strict replay failed.*repaired GLB identity changed",
+    ):
+        _validate_bounded_watertight(case)
+
+
+def test_bounded_watertight_rejects_wrong_raw_decision_batch(
+    tmp_path,
+    monkeypatch,
+):
+    case = _bounded_watertight_v2_fixture(tmp_path, monkeypatch)
+    wrong_batch = tmp_path / "wrong_raw_decision_batch.json"
+    wrong_batch.write_bytes(case["decision_batch"].read_bytes())
+
+    with pytest.raises(
+        closure.ClosureError,
+        match="strict replay failed.*decision batch identity changed",
+    ):
+        _validate_bounded_watertight(
+            case,
+            raw_static_decision_batch_path=wrong_batch,
+            expected_raw_static_decision_batch_sha256=closure.sha256_file(
+                wrong_batch
+            ),
+        )
+
+
+def test_bounded_watertight_rejects_arbitrary_tokenrig_proxy_same_bytes(
+    tmp_path,
+    monkeypatch,
+):
+    case = _bounded_watertight_v2_fixture(tmp_path, monkeypatch)
+    arbitrary_proxy = tmp_path / "arbitrary_proxy.glb"
+    arbitrary_proxy.write_bytes(case["proxy"].read_bytes())
+
+    with pytest.raises(closure.ClosureError, match="different file"):
+        closure.validate_upstream_lineage(
+            case["raw_manifest"],
+            case["proxy_manifest"],
+            arbitrary_proxy,
+            bounded_geometry_closure_path=case["upstream"],
+            expected_bounded_geometry_closure_sha256=closure.sha256_file(
+                case["upstream"]
+            ),
+            expected_bounded_geometry_closure_manifest_sha256=case[
+                "geometry_manifest_sha256"
+            ],
+            expected_watertight_proxy_manifest_sha256=closure.sha256_file(
+                case["proxy_manifest"]
+            ),
+            watertight_proxy_geometry_audit_path=case["proxy_audit"],
+            expected_watertight_proxy_geometry_audit_sha256=closure.sha256_file(
+                case["proxy_audit"]
+            ),
+            raw_static_decision_batch_path=case["decision_batch"],
+            expected_raw_static_decision_batch_sha256=closure.sha256_file(
+                case["decision_batch"]
+            ),
+            require_oriented_batch_external_authority=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (
+            lambda payload: payload["input"].__setitem__("sha256", "0" * 64),
+            "SHA-256 mismatch",
+        ),
+        (
+            lambda payload: payload["output"].__setitem__("size_bytes", 1),
+            "size mismatch",
+        ),
+        (
+            lambda payload: payload["authority_contract"].__setitem__(
+                "approved_skeleton_or_animation_touched", True
+            ),
+            "touched skeleton or animation",
+        ),
+    ],
+)
+def test_bounded_watertight_proxy_manifest_tamper_fails_closed(
+    tmp_path,
+    monkeypatch,
+    mutate,
+    match,
+):
+    case = _bounded_watertight_v2_fixture(tmp_path, monkeypatch)
+    proxy_manifest = closure.load_json(
+        case["proxy_manifest"], "watertight proxy manifest"
+    )
+    mutate(proxy_manifest)
+    write_json(case["proxy_manifest"], proxy_manifest)
+
+    with pytest.raises(closure.ClosureError, match=match):
+        _validate_bounded_watertight(case)
+
+
+def test_bounded_watertight_requires_external_proxy_manifest_hash(
+    tmp_path,
+    monkeypatch,
+):
+    case = _bounded_watertight_v2_fixture(tmp_path, monkeypatch)
+
+    with pytest.raises(
+        closure.ClosureError,
+        match="proxy manifest changed from external authority",
+    ):
+        _validate_bounded_watertight(
+            case,
+            expected_watertight_proxy_manifest_sha256="0" * 64,
+        )
+
+
+def test_bounded_watertight_rejects_proxy_audit_external_hash_tamper(
+    tmp_path,
+    monkeypatch,
+):
+    case = _bounded_watertight_v2_fixture(tmp_path, monkeypatch)
+    retained_sha256 = closure.sha256_file(case["proxy_audit"])
+    payload = closure.load_json(
+        case["proxy_audit"],
+        "watertight proxy geometry audit",
+    )
+    payload["records"][0]["created_by_untrusted_producer"] = True
+    write_json(case["proxy_audit"], payload)
+
+    with pytest.raises(
+        closure.ClosureError,
+        match="proxy geometry audit changed from external authority",
+    ):
+        _validate_bounded_watertight(
+            case,
+            expected_watertight_proxy_geometry_audit_sha256=retained_sha256,
+        )
+
+
+def test_bounded_watertight_rejects_self_consistent_arbitrary_proxy(
+    tmp_path,
+    monkeypatch,
+):
+    case = _bounded_watertight_v2_fixture(tmp_path, monkeypatch)
+    arbitrary_proxy = tmp_path / "self_consistent_arbitrary_proxy.glb"
+    write_production_proxy_glb(arbitrary_proxy, shift=1.0)
+    arbitrary_manifest = tmp_path / "self_consistent_proxy.manifest.json"
+    manifest_payload = closure.load_json(
+        case["proxy_manifest"],
+        "watertight proxy manifest",
+    )
+    manifest_payload["output"] = descriptor(arbitrary_proxy)
+    write_json(arbitrary_manifest, manifest_payload)
+    arbitrary_audit = tmp_path / "self_consistent_proxy.audit.json"
+    write_json(arbitrary_audit, proxy_geometry_audit(arbitrary_proxy))
+
+    with pytest.raises(
+        closure.ClosureError,
+        match="not independently correspondent",
+    ):
+        closure.validate_upstream_lineage(
+            case["raw_manifest"],
+            arbitrary_manifest,
+            arbitrary_proxy,
+            bounded_geometry_closure_path=case["upstream"],
+            expected_bounded_geometry_closure_sha256=closure.sha256_file(
+                case["upstream"]
+            ),
+            expected_bounded_geometry_closure_manifest_sha256=case[
+                "geometry_manifest_sha256"
+            ],
+            expected_watertight_proxy_manifest_sha256=closure.sha256_file(
+                arbitrary_manifest
+            ),
+            watertight_proxy_geometry_audit_path=arbitrary_audit,
+            expected_watertight_proxy_geometry_audit_sha256=closure.sha256_file(
+                arbitrary_audit
+            ),
+            raw_static_decision_batch_path=case["decision_batch"],
+            expected_raw_static_decision_batch_sha256=closure.sha256_file(
+                case["decision_batch"]
+            ),
+            require_oriented_batch_external_authority=True,
+        )
+
+
+def test_bounded_watertight_rejects_retained_correspondence_tamper(
+    tmp_path,
+    monkeypatch,
+):
+    case = _bounded_watertight_v2_fixture(tmp_path, monkeypatch)
+    observed: dict[str, object] = {}
+    _validate_bounded_watertight(
+        case,
+        observed_watertight_proxy_correspondence=observed,
+    )
+    retained = deepcopy(observed)
+    retained["proxy_to_repaired"]["max_ratio"] = 0.0
+
+    with pytest.raises(
+        closure.ClosureError,
+        match="correspondence changed from closure authority",
+    ):
+        _validate_bounded_watertight(
+            case,
+            expected_watertight_proxy_correspondence=retained,
+        )
+
+
+def test_bounded_watertight_requires_external_geometry_closure_hash(
+    tmp_path,
+    monkeypatch,
+):
+    case = _bounded_watertight_v2_fixture(tmp_path, monkeypatch)
+
+    with pytest.raises(
+        closure.ClosureError,
+        match="bounded geometry closure changed from external authority",
+    ):
+        _validate_bounded_watertight(
+            case,
+            expected_bounded_geometry_closure_sha256="0" * 64,
+        )
+
+
+def test_bounded_watertight_rejects_file_and_internal_hash_confusion(
+    tmp_path,
+    monkeypatch,
+):
+    case = _bounded_watertight_v2_fixture(tmp_path, monkeypatch)
+    file_sha256 = closure.sha256_file(case["upstream"])
+    manifest_sha256 = case["geometry_manifest_sha256"]
+    assert file_sha256 != manifest_sha256
+
+    with pytest.raises(
+        closure.ClosureError,
+        match="changed from external authority",
+    ):
+        _validate_bounded_watertight(
+            case,
+            expected_bounded_geometry_closure_sha256=manifest_sha256,
+        )
+
+    with pytest.raises(
+        closure.ClosureError,
+        match="internal manifest hash changed",
+    ):
+        _validate_bounded_watertight(
+            case,
+            expected_bounded_geometry_closure_manifest_sha256=file_sha256,
+        )
+
+
+def _write_load_audit(path, tokenrig_input, empty_objects):
+    common = {
+        "filepath": str(tokenrig_input),
+        "patch_sha256": "a" * 64,
+        "pid": 101,
+        "generation": 7,
+    }
+    events = []
+    for sequence in (1, 2):
+        events.extend(
+            (
+                {
+                    **common,
+                    "sequence": sequence,
+                    "phase": "before_clean",
+                    "inventory": {"objects": [{"name": "old", "type": "MESH"}]},
+                },
+                {
+                    **common,
+                    "sequence": sequence,
+                    "phase": "after_clean",
+                    "inventory": {
+                        "objects": [],
+                        "mesh_count": 0,
+                        "material_count": 0,
+                        "image_count": 0,
+                    },
+                },
+                {
+                    **common,
+                    "sequence": sequence,
+                    "phase": "after_import",
+                    "inventory": {
+                        "objects": [
+                            {"name": "geometry_0", "type": "MESH"},
+                            *deepcopy(empty_objects),
+                        ],
+                        "mesh_count": 1,
+                    },
+                },
+            )
+        )
+    path.write_bytes(
+        b"\n".join(closure.canonical_bytes(event) for event in events) + b"\n"
+    )
+    return common
+
+
+@pytest.mark.parametrize(
+    "empty_objects",
+    [
+        [],
+        [{"name": "world", "type": "EMPTY"}],
+    ],
+)
+def test_load_audit_accepts_mesh_with_optional_exact_world_root(
+    tmp_path,
+    empty_objects,
+):
+    tokenrig_input = tmp_path / "tokenrig_input.glb"
+    tokenrig_input.write_bytes(b"static Pixel3D input")
+    audit = tmp_path / "load_audit.jsonl"
+    common = _write_load_audit(audit, tokenrig_input, empty_objects)
+
+    events = closure.validate_load_audit(
+        audit,
+        tokenrig_input,
+        {
+            "patch_sha256": common["patch_sha256"],
+            "pid": common["pid"],
+            "generation": common["generation"],
+        },
+    )
+
+    assert len(events) == 6
+
+
+@pytest.mark.parametrize(
+    "empty_objects",
+    [
+        [{"name": "other", "type": "EMPTY"}],
+        [
+            {"name": "world", "type": "EMPTY"},
+            {"name": "other", "type": "EMPTY"},
+        ],
+    ],
+)
+def test_load_audit_rejects_other_or_multiple_empty_roots(
+    tmp_path,
+    empty_objects,
+):
+    tokenrig_input = tmp_path / "tokenrig_input.glb"
+    tokenrig_input.write_bytes(b"static Pixel3D input")
+    audit = tmp_path / "load_audit.jsonl"
+    common = _write_load_audit(audit, tokenrig_input, empty_objects)
+
+    with pytest.raises(closure.ClosureError, match="inventory is contaminated"):
+        closure.validate_load_audit(
+            audit,
+            tokenrig_input,
+            {
+                "patch_sha256": common["patch_sha256"],
+                "pid": common["pid"],
+                "generation": common["generation"],
+            },
+        )
 
 
 def test_geometry_closure_v2_selects_hash_equivalent_direct_adopted_raw(
