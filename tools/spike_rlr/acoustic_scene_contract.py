@@ -57,9 +57,9 @@ APPROVED_INDEPENDENT_RLR_SUBPROCESS_CONTRACT = {
         # The registration launcher authenticates and executes this same open
         # inode, so a pathname replacement cannot switch code after hashing.
         "sha256": (
-            "33dc025dc7eaa476fe26807d4c14caa4d625dbad6873e675bf656033c8e1fda5"
+            "7e2d0991f3b8dbb1b2adbcf3e14a3795b698b6f06baba6e42c98af966be0e1d7"
         ),
-        "size_bytes": 33764,
+        "size_bytes": 34079,
     },
     "environment": {
         "CUDA_VISIBLE_DEVICES": "2",

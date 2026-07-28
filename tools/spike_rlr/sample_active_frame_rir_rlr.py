@@ -753,6 +753,18 @@ def _validated_float_vector(value: Any, *, label: str) -> list[float]:
     return value
 
 
+def _uses_canonical_coordinate_frame_if_declared(
+    spec: Mapping[str, Any],
+) -> bool:
+    if "coordinate_frame" not in spec:
+        return True
+    coordinate_frame = spec["coordinate_frame"]
+    return (
+        isinstance(coordinate_frame, Mapping)
+        and coordinate_frame.get("system") == _COORDINATE_FRAME
+    )
+
+
 def _validated_trajectory_prefix(
     request: Mapping[str, Any],
     *,
@@ -865,7 +877,7 @@ def run(
         or not isinstance(seed_sha256, str)
         or not _SHA256.fullmatch(seed_sha256)
         or request.get("source_position_coordinate_frame") != _COORDINATE_FRAME
-        or spec.get("coordinate_frame", {}).get("system") != _COORDINATE_FRAME
+        or not _uses_canonical_coordinate_frame_if_declared(spec)
     ):
         raise ValueError("independent RLR sample identity is malformed")
 

@@ -49,14 +49,38 @@ def test_audio_only_stub_exposes_fail_closed_imported_scipy_surfaces(
         truncnorm.rvs()
 
 
+@pytest.mark.parametrize(
+    "coordinate_frame",
+    [
+        None,
+        "right-handed Z-up meters",
+        {"system": "right-handed Y-up meters"},
+    ],
+)
+def test_worker_rejects_explicit_noncanonical_coordinate_frame(
+    coordinate_frame,
+):
+    assert worker._uses_canonical_coordinate_frame_if_declared({}) is True
+    assert worker._uses_canonical_coordinate_frame_if_declared(
+        {"coordinate_frame": {"system": "right-handed Z-up meters"}}
+    ) is True
+    assert (
+        worker._uses_canonical_coordinate_frame_if_declared(
+            {"coordinate_frame": coordinate_frame}
+        )
+        is False
+    )
+
+
 def test_worker_consumes_rename_stable_readonly_snapshot(
     tmp_path,
     monkeypatch,
 ):
     tag = "dog_snapshot_canary"
+    # Production apartment_v1 specs leave this descriptive field absent; the
+    # authenticated request is the authority for source-position coordinates.
     spec = {
         "spec_version": "apartment_v1",
-        "coordinate_frame": {"system": "right-handed Z-up meters"},
         "audio_config": {"sample_rate_hz": 16000},
         "render_config": {"n_frames": 3, "fps": 15},
         "mic": {"pos_m": [0.0, 0.0, 1.2], "yaw_deg": 0.0},
