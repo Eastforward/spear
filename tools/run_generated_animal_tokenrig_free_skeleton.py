@@ -556,7 +556,8 @@ def validate_load_audit(path, source, expected_server):
         if (
             not isinstance(objects, list)
             or len(mesh_objects) != 1
-            or empty_objects != [{"name": "world", "type": "EMPTY"}]
+            or empty_objects
+            not in ([], [{"name": "world", "type": "EMPTY"}])
             or mesh_objects[0].get("name") in {"Camera", "Cube", "Light"}
             or any(
                 not isinstance(item, dict)

@@ -439,6 +439,25 @@ def test_runtime_evidence_requires_two_markers_and_two_clean_loads(
     observed = runner.validate_runtime_evidence(runtime, source.resolve(), server_pid)
     assert len(observed) == 2
 
+    proxy_events = [
+        json.loads(line)
+        for line in runtime["audit_path"].read_text(encoding="utf-8").splitlines()
+    ]
+    for event in proxy_events:
+        if event["phase"] == "after_import":
+            event["inventory"]["objects"] = [
+                item
+                for item in event["inventory"]["objects"]
+                if item["type"] != "EMPTY"
+            ]
+    runtime["audit_path"].write_text(
+        "".join(json.dumps(event, sort_keys=True) + "\n" for event in proxy_events),
+        encoding="utf-8",
+    )
+    observed = runner.validate_runtime_evidence(runtime, source.resolve(), server_pid)
+    assert len(observed) == 2
+
+    write_load_audit(runtime["audit_path"], source.resolve(), server_marker)
     contaminated_events = [
         json.loads(line)
         for line in runtime["audit_path"].read_text(encoding="utf-8").splitlines()
