@@ -1,0 +1,350 @@
+{
+  "schema": "avengine_bounded_quadruped_identity_plan_v1",
+  "state_classification": "research_candidate",
+  "formal_dataset_registration_authorized": false,
+  "execution_authorized": false,
+  "source": {
+    "sha256": "d0076b03c38a88ecbeda457aaa0a4651540db7bd661f33b50a41be8e3707d096",
+    "size_bytes": 148940
+  },
+  "scene_contract": {
+    "primary_mesh": "Dog",
+    "armature": "DogArmature",
+    "motion_root_bone": "Bone",
+    "expected_actions": [
+      "Idle",
+      "Walking"
+    ],
+    "remove_unskinned_object": {
+      "name": "Icosphere",
+      "type": "MESH",
+      "vertex_count": 42,
+      "face_count": 80,
+      "must_be_unskinned": true,
+      "must_have_no_materials": true,
+      "must_be_only_pose_bone_custom_shape": true,
+      "expected_pose_bone_custom_shape_assignments": 34
+    }
+  },
+  "ear_morph": {
+    "coordinate_space": "mesh_local",
+    "symmetry_axis": "Y",
+    "symmetry_plane_y": 0.020605,
+    "symmetry_tolerance": 0.00001,
+    "positive_y": {
+      "side": "positive_y",
+      "vertex_indices": [
+        123,
+        124,
+        125,
+        126,
+        127,
+        169,
+        170,
+        171,
+        172,
+        173,
+        178,
+        179,
+        180,
+        181,
+        182,
+        183,
+        184,
+        185,
+        186,
+        187,
+        188,
+        189,
+        190,
+        191,
+        192,
+        193,
+        194,
+        195,
+        196,
+        197,
+        198,
+        199,
+        200,
+        201,
+        202,
+        203,
+        204,
+        205,
+        206,
+        207,
+        208,
+        209,
+        210,
+        211,
+        212,
+        213,
+        214,
+        215,
+        216,
+        217,
+        218,
+        219,
+        220,
+        221,
+        222,
+        223
+      ],
+      "pivot_y": 0.333947,
+      "pivot_z": 2.89712,
+      "rotation_degrees": 70.0
+    },
+    "negative_y": {
+      "side": "negative_y",
+      "vertex_indices": [
+        699,
+        700,
+        701,
+        702,
+        703,
+        783,
+        784,
+        785,
+        786,
+        787,
+        796,
+        797,
+        798,
+        799,
+        800,
+        801,
+        802,
+        803,
+        804,
+        805,
+        806,
+        807,
+        808,
+        809,
+        810,
+        811,
+        812,
+        813,
+        814,
+        815,
+        816,
+        817,
+        818,
+        819,
+        820,
+        821,
+        822,
+        823,
+        824,
+        825,
+        826,
+        827,
+        828,
+        829,
+        830,
+        831,
+        832,
+        833,
+        834,
+        835,
+        836,
+        837,
+        838,
+        839,
+        840,
+        841
+      ],
+      "pivot_y": -0.292737,
+      "pivot_z": 2.89712,
+      "rotation_degrees": -70.0
+    }
+  },
+  "uv": {
+    "method": "blender_smart_project_v1",
+    "resolution": 512,
+    "angle_limit_radians": 1.15,
+    "island_margin": 0.02
+  },
+  "coat": {
+    "method": "normalized_face_region_texture_v1",
+    "base_color_srgb": [
+      0.55,
+      0.075,
+      0.035,
+      1.0
+    ],
+    "white_color_srgb": [
+      0.9,
+      0.87,
+      0.78,
+      1.0
+    ],
+    "white_regions": [
+      {
+        "id": "lower_legs_and_belly",
+        "all": [
+          {
+            "axis": "z",
+            "op": "lte",
+            "value": 0.28
+          }
+        ]
+      },
+      {
+        "id": "chest",
+        "all": [
+          {
+            "axis": "x",
+            "op": "gte",
+            "value": 0.6
+          },
+          {
+            "axis": "z",
+            "op": "lte",
+            "value": 0.62
+          }
+        ]
+      },
+      {
+        "id": "muzzle",
+        "all": [
+          {
+            "axis": "x",
+            "op": "gte",
+            "value": 0.78
+          },
+          {
+            "axis": "z",
+            "op": "lte",
+            "value": 0.82
+          }
+        ]
+      },
+      {
+        "id": "facial_blaze",
+        "all": [
+          {
+            "axis": "x",
+            "op": "gte",
+            "value": 0.68
+          },
+          {
+            "axis": "z",
+            "op": "gte",
+            "value": 0.76
+          },
+          {
+            "axis": "lateral_abs",
+            "op": "lte",
+            "value": 0.16
+          }
+        ]
+      }
+    ]
+  },
+  "gates": {
+    "maximum_moved_vertex_fraction": 0.1,
+    "maximum_displacement_bbox_diagonal_ratio": 0.1,
+    "require_all_duplicate_position_vertices": true,
+    "require_exact_topology_in_memory": true,
+    "require_exact_weights_in_memory": true,
+    "require_exact_skeleton_in_memory": true,
+    "require_exact_actions_in_memory": true,
+    "require_embedded_texture_readback": true,
+    "roundtrip_canonical_precision_decimals": 3,
+    "roundtrip_animation_sample_phases": [
+      0.0,
+      0.0125,
+      0.025,
+      0.0375,
+      0.05,
+      0.0625,
+      0.075,
+      0.0875,
+      0.1,
+      0.1125,
+      0.125,
+      0.1375,
+      0.15,
+      0.1625,
+      0.175,
+      0.1875,
+      0.2,
+      0.2125,
+      0.225,
+      0.2375,
+      0.25,
+      0.2625,
+      0.275,
+      0.2875,
+      0.3,
+      0.3125,
+      0.325,
+      0.3375,
+      0.35,
+      0.3625,
+      0.375,
+      0.3875,
+      0.4,
+      0.4125,
+      0.425,
+      0.4375,
+      0.45,
+      0.4625,
+      0.475,
+      0.4875,
+      0.5,
+      0.5125,
+      0.525,
+      0.5375,
+      0.55,
+      0.5625,
+      0.575,
+      0.5875,
+      0.6,
+      0.6125,
+      0.625,
+      0.6375,
+      0.65,
+      0.6625,
+      0.675,
+      0.6875,
+      0.7,
+      0.7125,
+      0.725,
+      0.7375,
+      0.75,
+      0.7625,
+      0.775,
+      0.7875,
+      0.8,
+      0.8125,
+      0.825,
+      0.8375,
+      0.85,
+      0.8625,
+      0.875,
+      0.8875,
+      0.9,
+      0.9125,
+      0.925,
+      0.9375,
+      0.95,
+      0.9625,
+      0.975,
+      0.9875,
+      1.0
+    ],
+    "maximum_bind_matrix_semantic_delta": 0.001,
+    "maximum_sampled_skinned_world_delta": 0.001,
+    "maximum_animation_duration_delta_frames": 0.001
+  },
+  "authority": {
+    "source_mesh_is_geometry_authority": true,
+    "only_explicit_ear_vertices_may_move": true,
+    "coat_may_not_change_geometry": true,
+    "machine_execution_authorization_required": true,
+    "user_approval_inferred": false
+  }
+}
