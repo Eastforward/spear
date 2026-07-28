@@ -115,6 +115,14 @@ def _valid_review(tmp_path: Path) -> dict:
                 "decision": "rejected",
                 "state_classification": "rejected",
                 "formal_dataset_registration_authorized": False,
+                "next_gate": "stop",
+                "checks": {
+                    "complete_silhouette": True,
+                    "four_limbs_usable": False,
+                    "texture_coherent": True,
+                    "pose_riggable": False,
+                    "no_large_holes": True,
+                },
             },
             "raw_pixal_glb": _record(files["raw_pixal"]),
             "reference_2d": _record(files["reference"]),
@@ -198,6 +206,109 @@ def test_contract_accepts_only_pending_human_review(tmp_path):
     assert contract.validate_review(review) == review
 
 
+def test_contract_keeps_legacy_mirror_rejection_review_compatible(tmp_path):
+    review = _valid_review(tmp_path)
+    review["schema"] = contract.LEGACY_REVIEW_SCHEMA
+    decision = review["source_authorities"]["raw_static_decision"]
+    decision.pop("next_gate")
+    decision.pop("checks")
+    automatic = review["automatic_checks"]
+    automatic["raw_static_rejection_preserved"] = automatic.pop(
+        "raw_static_decision_preserved"
+    )
+    automatic["raw_rejection_not_overwritten_or_upgraded"] = automatic.pop(
+        "raw_static_decision_not_overwritten_or_upgraded"
+    )
+    _rehash(review)
+
+    assert contract.validate_review(review) == review
+
+
+def test_contract_accepts_oriented_sheet_review_without_raw_rejection(tmp_path):
+    review = _valid_review(tmp_path)
+    raw = review["source_authorities"]["raw_static_decision"]
+    raw.update(
+        {
+            "decision": "approved_for_lod_and_binding",
+            "state_classification": "research_candidate",
+            "next_gate": "lod_then_species_rig_binding",
+            "checks": {
+                name: True for name in sorted(contract.RAW_STATIC_CHECK_FIELDS)
+            },
+        }
+    )
+    geometry = review["derived_geometry"]
+    geometry.update(
+        {
+            "repair_method": contract.ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT,
+            "lineage_kind": contract.REPAIR_LINEAGE_KINDS[
+                contract.ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+            ],
+        }
+    )
+    _rehash(review)
+
+    assert contract.validate_review(review) == review
+
+
+def test_contract_accepts_v2_oriented_statuses_without_new_manual_claim(
+    tmp_path,
+):
+    review = _valid_review(tmp_path)
+    raw = review["source_authorities"]["raw_static_decision"]
+    raw.update(
+        {
+            "decision": "approved_for_lod_and_binding",
+            "state_classification": "research_candidate",
+            "next_gate": "lod_then_species_rig_binding",
+            "checks": {
+                name: True for name in sorted(contract.RAW_STATIC_CHECK_FIELDS)
+            },
+        }
+    )
+    geometry = review["derived_geometry"]
+    geometry.update(
+        {
+            "repair_method": contract.ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT,
+            "lineage_kind": contract.REPAIR_LINEAGE_KINDS[
+                contract.ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+            ],
+            "automatic_gate_statuses": dict(
+                contract.ORIENTED_V2_AUTOMATIC_GATE_STATUSES
+            ),
+            "inherited_manual_review_statuses": dict(
+                contract.ORIENTED_V2_INHERITED_MANUAL_REVIEW_STATUSES
+            ),
+        }
+    )
+    _rehash(review)
+
+    assert contract.validate_review(review) == review
+
+
+def test_contract_accepts_direct_authority_v3_without_preflight_claim(tmp_path):
+    review = _valid_review(tmp_path)
+    authority_path = _json(
+        tmp_path / "direct_source_authority.json",
+        {"authority_sha256": "a" * 64},
+    )
+    review["schema"] = contract.DIRECT_REVIEW_SCHEMA
+    authorities = review["source_authorities"]
+    authorities.pop("frozen_preflight")
+    authorities["direct_source_authority"] = {
+        **_record(authority_path),
+        "authority_sha256": "a" * 64,
+    }
+    automatic = review["automatic_checks"]
+    automatic.pop("frozen_request_reauthenticated")
+    automatic.pop("pixal_attempt_reauthenticated")
+    automatic["direct_source_authority_reauthenticated"] = True
+    automatic["adopted_pixal_batch_and_attempt_reauthenticated"] = True
+    _rehash(review)
+
+    assert contract.validate_review(review) == review
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
@@ -222,9 +333,14 @@ def test_contract_accepts_only_pending_human_review(tmp_path):
                 {
                     "decision": "approved_for_lod_and_binding",
                     "state_classification": "research_candidate",
+                    "next_gate": "lod_then_species_rig_binding",
+                    "checks": {
+                        name: True
+                        for name in sorted(contract.RAW_STATIC_CHECK_FIELDS)
+                    },
                 }
             ),
-            "raw static rejection",
+            "selected bounded repair contract",
         ),
         (
             lambda value: value["derived_geometry"]["pbr_container_readback"].update(
@@ -234,7 +350,7 @@ def test_contract_accepts_only_pending_human_review(tmp_path):
         ),
         (
             lambda value: value["automatic_checks"].update(
-                {"raw_static_rejection_preserved": False}
+                {"raw_static_decision_preserved": False}
             ),
             "automatic checks",
         ),
@@ -463,14 +579,28 @@ def _geometry_fixture(tmp_path: Path):
     }
     repair_manifest_path = _json(tmp_path / "repair_manifest.json", repair_manifest)
     geometry_audit = {
-        "schema": "avengine_quadruped_i23d_geometry_audit_v3",
+        "schema": "avengine_quadruped_i23d_geometry_audit_v4",
         "records": [
             {
                 "mesh": {
                     "absolute_path": str(repaired),
                     "sha256": _sha256(repaired),
                     "size_bytes": repaired.stat().st_size,
-                }
+                },
+                "topology": {
+                    "topology_acceptance_semantics": (
+                        "every_exact_position_directed_edge_occurrence_has_one_"
+                        "oppositely_oriented_partner"
+                    ),
+                    "degenerate_triangles_after_position_indexing": 0,
+                    "unpaired_oriented_edges": 0,
+                    "unpaired_oriented_edge_occurrences": 0,
+                    "unpaired_oriented_edge_ratio_per_triangle": 0.0,
+                },
+                "decision": {
+                    "status": "manual_source_geometry_review_required",
+                    "rejection_reasons": [],
+                },
             }
         ],
     }
@@ -564,6 +694,19 @@ def _geometry_fixture(tmp_path: Path):
         "raw_attempt_manifest": raw_manifest,
         "reference": reference,
         "decision_path": decision,
+        "decision": {
+            "decision": "rejected",
+            "state_classification": "rejected",
+            "formal_dataset_registration_authorized": False,
+            "next_gate": "stop",
+            "checks": {
+                "complete_silhouette": True,
+                "four_limbs_usable": False,
+                "texture_coherent": True,
+                "pose_riggable": False,
+                "no_large_holes": True,
+            },
+        },
     }
     return closure_path, repaired, source
 
@@ -580,6 +723,102 @@ def test_geometry_closure_preserves_raw_rejection_and_pending_pbr(tmp_path):
     assert result["automatic_statuses"]["watertight"] == "passed"
     assert result["pbr_container"]["pbr_fidelity_qualified"] is False
     assert result["clay"]["front_axis"] == "negative-x"
+
+
+def test_geometry_closure_accepts_oriented_sheet_with_preserved_approval(
+    tmp_path,
+    monkeypatch,
+):
+    closure_path, repaired, source = _geometry_fixture(tmp_path)
+    decision_batch = _json(
+        tmp_path / "raw_decision_batch.json",
+        {"decision_batch_sha256": "a" * 64},
+    )
+    source["decision_batch_path"] = decision_batch
+    source["decision"] = {
+        "decision": "approved_for_lod_and_binding",
+        "state_classification": "research_candidate",
+        "formal_dataset_registration_authorized": False,
+        "next_gate": "lod_then_species_rig_binding",
+        "checks": {
+            name: True for name in sorted(contract.RAW_STATIC_CHECK_FIELDS)
+        },
+    }
+    oriented = {
+        "implementation_contract": (
+            contract.ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+        ),
+        "lineage": {
+            "instance_id": source["request"]["instance_id"],
+            "pixal_source": _record(source["raw_glb"]),
+            "pixal_manifest": _record(source["raw_attempt_manifest"]),
+            "static_decision_batch": _record(decision_batch),
+            "static_decision": _record(source["decision_path"]),
+            "static_decision_value": "approved_for_lod_and_binding",
+            "static_decision_state": "research_candidate",
+            "raw_four_limbs_usable": True,
+            "raw_pose_riggable": True,
+        },
+        "output": _record(repaired),
+    }
+    monkeypatch.setattr(
+        contract,
+        "validate_bounded_repair_manifest",
+        lambda _payload: oriented,
+    )
+
+    result = producer._validate_geometry_closure(
+        closure_path=closure_path,
+        repaired_glb=repaired,
+        source=source,
+    )
+
+    assert result["repair_method"] == (
+        contract.ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+    )
+
+
+def test_geometry_closure_rejects_oriented_sheet_with_raw_rejection(
+    tmp_path,
+    monkeypatch,
+):
+    closure_path, repaired, source = _geometry_fixture(tmp_path)
+    decision_batch = _json(
+        tmp_path / "raw_decision_batch.json",
+        {"decision_batch_sha256": "a" * 64},
+    )
+    oriented = {
+        "implementation_contract": (
+            contract.ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+        ),
+        "lineage": {
+            "instance_id": source["request"]["instance_id"],
+            "pixal_source": _record(source["raw_glb"]),
+            "pixal_manifest": _record(source["raw_attempt_manifest"]),
+            "static_decision_batch": _record(decision_batch),
+            "static_decision": _record(source["decision_path"]),
+            "static_decision_value": "approved_for_lod_and_binding",
+            "static_decision_state": "research_candidate",
+            "raw_four_limbs_usable": True,
+            "raw_pose_riggable": True,
+        },
+        "output": _record(repaired),
+    }
+    monkeypatch.setattr(
+        contract,
+        "validate_bounded_repair_manifest",
+        lambda _payload: oriented,
+    )
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="does not match the preserved raw static decision",
+    ):
+        producer._validate_geometry_closure(
+            closure_path=closure_path,
+            repaired_glb=repaired,
+            source=source,
+        )
 
 
 def test_geometry_closure_rejects_legacy_global_remesh_manifest(tmp_path):
@@ -644,7 +883,7 @@ def test_geometry_closure_rejects_raw_decision_upgrade(tmp_path):
     closure_path.unlink()
     _json(closure_path, closure)
 
-    with pytest.raises(contracts.ContractError, match="upgraded the raw rejection"):
+    with pytest.raises(contracts.ContractError, match="frozen raw decisions"):
         producer._validate_geometry_closure(
             closure_path=closure_path,
             repaired_glb=repaired,
@@ -706,7 +945,20 @@ def test_publish_review_outputs_no_decision_registry_or_ue_job(tmp_path, monkeyp
         "decision_batch_path": source_files["decision_batch"],
         "decision_batch": {"decision_batch_sha256": "5" * 64},
         "decision_path": source_files["decision"],
-        "decision": {"decision_sha256": "6" * 64},
+        "decision": {
+            "decision_sha256": "6" * 64,
+            "decision": "rejected",
+            "state_classification": "rejected",
+            "formal_dataset_registration_authorized": False,
+            "next_gate": "stop",
+            "checks": {
+                "complete_silhouette": True,
+                "four_limbs_usable": False,
+                "texture_coherent": True,
+                "pose_riggable": False,
+                "no_large_holes": True,
+            },
+        },
         "raw_glb": source_files["raw"],
         "reference": source_files["reference"],
     }

@@ -64,6 +64,13 @@ def pending_review(tmp_path, monkeypatch):
         "state_classification": "rejected",
         "formal_dataset_registration_authorized": False,
         "next_gate": "stop",
+        "checks": {
+            "complete_silhouette": True,
+            "four_limbs_usable": False,
+            "texture_coherent": True,
+            "pose_riggable": False,
+            "no_large_holes": True,
+        },
         "decision_sha256": "",
     }
     raw_decision["decision_sha256"] = review_contract.hash_without(
@@ -124,6 +131,8 @@ def pending_review(tmp_path, monkeypatch):
                 "file": _record(raw_path),
                 "formal_dataset_registration_authorized": False,
                 "state_classification": "rejected",
+                "next_gate": "stop",
+                "checks": copy.deepcopy(raw_decision["checks"]),
             },
             "raw_pixal_glb": _record(source_files["raw_pixal"]),
             "reference_2d": _record(source_files["reference"]),
@@ -238,9 +247,9 @@ def test_freezes_exact_research_only_approval_and_preserves_raw_rejection(
         decision["review_binding"]["internal_review_sha256"]
         == pending_review["review"]["review_sha256"]
     )
-    assert decision["raw_static_rejection"]["decision"] == "rejected"
-    assert decision["raw_static_rejection"]["preserved"] is True
-    assert decision["raw_static_rejection"]["overwritten"] is False
+    assert decision["raw_static_decision"]["decision"] == "rejected"
+    assert decision["raw_static_decision"]["preserved"] is True
+    assert decision["raw_static_decision"]["overwritten"] is False
     assert decision["authenticated_review_artifact_count"] == 27
     assert decision["effect"]["source_asset_v2_authorized"] is True
     assert decision["effect"]["rigging_authorized"] is True
@@ -255,15 +264,41 @@ def test_freezes_exact_research_only_approval_and_preserves_raw_rejection(
     assert decision["state_classification"] == "research_candidate"
 
 
-def test_validate_decision_rejects_rebound_raw_rejection_descriptor(
+def test_direct_review_authenticates_authority_file_separately_from_internal_hash(
+    pending_review,
+    tmp_path,
+):
+    authority_path = _write_bytes(
+        tmp_path / "direct_source_authority.json",
+        b"direct source authority",
+    )
+    review = pending_review["review"]
+    review["schema"] = review_contract.DIRECT_REVIEW_SCHEMA
+    review["source_authorities"].pop("frozen_preflight")
+    review["source_authorities"]["direct_source_authority"] = {
+        **_record(authority_path),
+        "authority_sha256": "a" * 64,
+    }
+    pending_review["write_review"]()
+
+    output = _freeze(pending_review, tmp_path / "direct_human_decision.json")
+
+    decision = freezer.validate_decision(_load(output))
+    assert decision["decision"] == freezer.APPROVED
+    assert decision["authenticated_review_artifact_count"] == 27
+
+
+def test_validate_decision_rejects_rebound_raw_decision_descriptor(
     pending_review,
     tmp_path,
 ):
     output = _freeze(pending_review, tmp_path / "valid.json")
     payload = _load(output)
-    replacement = tmp_path / "replacement_rejection.json"
-    replacement.write_bytes(Path(payload["raw_static_rejection"]["file"]["path"]).read_bytes())
-    payload["raw_static_rejection"]["file"] = _record(replacement)
+    replacement = tmp_path / "replacement_decision.json"
+    replacement.write_bytes(
+        Path(payload["raw_static_decision"]["file"]["path"]).read_bytes()
+    )
+    payload["raw_static_decision"]["file"] = _record(replacement)
     _rehash(payload)
 
     with pytest.raises(
@@ -271,6 +306,22 @@ def test_validate_decision_rejects_rebound_raw_rejection_descriptor(
         match="exactly bound to the frozen review",
     ):
         freezer.validate_decision(payload)
+
+
+def test_validate_decision_keeps_legacy_raw_rejection_compatible(
+    pending_review,
+    tmp_path,
+):
+    output = _freeze(pending_review, tmp_path / "valid.json")
+    payload = _load(output)
+    payload["schema"] = freezer.LEGACY_DECISION_SCHEMA
+    payload["raw_static_rejection"] = payload.pop("raw_static_decision")
+    payload["automatic_checks"]["raw_static_rejection_preserved"] = (
+        payload["automatic_checks"].pop("raw_static_decision_preserved")
+    )
+    _rehash(payload)
+
+    assert freezer.validate_decision(payload) == payload
 
 
 def test_requires_explicit_approval_bound_to_exact_external_review(
@@ -321,7 +372,7 @@ def test_reauthenticates_repaired_geometry_before_approval(
         _freeze(pending_review, tmp_path / "rebound_geometry.json")
 
 
-def test_semantically_preserves_original_raw_static_rejection(
+def test_preserves_approved_raw_static_decision_without_fabricating_rejection(
     pending_review, tmp_path
 ):
     raw = pending_review["raw_decision"]
@@ -330,6 +381,10 @@ def test_semantically_preserves_original_raw_static_rejection(
             "decision": freezer.APPROVED,
             "state_classification": "research_candidate",
             "next_gate": freezer.NEXT_GATE,
+            "checks": {
+                name: True
+                for name in sorted(review_contract.RAW_STATIC_CHECK_FIELDS)
+            },
         }
     )
     raw["decision_sha256"] = review_contract.hash_without(raw, "decision_sha256")
@@ -341,12 +396,20 @@ def test_semantically_preserves_original_raw_static_rejection(
             "decision_sha256": raw["decision_sha256"],
             "file": _record(pending_review["raw_path"]),
             "state_classification": "research_candidate",
+            "next_gate": freezer.NEXT_GATE,
+            "checks": copy.deepcopy(raw["checks"]),
         }
     )
     pending_review["write_review"]()
 
-    with pytest.raises(contracts.ContractError, match="raw static rejection"):
-        _freeze(pending_review, tmp_path / "upgraded_raw.json")
+    output = _freeze(pending_review, tmp_path / "approved_raw.json")
+    decision = freezer.validate_decision(_load(output))
+
+    assert decision["raw_static_decision"]["decision"] == freezer.APPROVED
+    assert decision["raw_static_decision"]["state_classification"] == (
+        "research_candidate"
+    )
+    assert "raw_static_rejection" not in decision
 
 
 def test_atomic_no_replace_preserves_existing_output(pending_review, tmp_path):

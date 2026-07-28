@@ -242,38 +242,73 @@ def _nested_descriptor(review: Mapping[str, Any], role: str) -> Any:
     return value
 
 
-def _validate_raw_rejection(
+def _validate_raw_static_decision(
     review: Mapping[str, Any], review_root: Path
 ) -> dict[str, Any]:
     raw = review["source_authorities"]["raw_static_decision"]
     _raw_path, raw_bytes, raw_record = _authenticated_snapshot(
         Path(raw["file"]["path"]),
         raw["file"]["sha256"],
-        "preserved raw static rejection",
+        "preserved raw static decision",
         expected_size=raw["file"]["size_bytes"],
     )
-    raw_payload = _json_object(raw_bytes, "preserved raw static rejection")
+    raw_payload = _json_object(raw_bytes, "preserved raw static decision")
+    expected = {
+        "rejected": ("rejected", "stop"),
+        "approved_for_lod_and_binding": (
+            "research_candidate",
+            "lod_then_species_rig_binding",
+        ),
+    }.get(raw.get("decision"))
     if (
-        raw_payload.get("schema") != "avengine_controlled_animal_static_decision_v1"
-        or raw_payload.get("decision") != "rejected"
-        or raw_payload.get("state_classification") != "rejected"
+        expected is None
+        or raw_payload.get("schema")
+        != "avengine_controlled_animal_static_decision_v1"
+        or raw_payload.get("decision") != raw.get("decision")
+        or raw_payload.get("state_classification") != expected[0]
         or raw_payload.get("formal_dataset_registration_authorized") is not False
+        or raw_payload.get("next_gate") != expected[1]
+        or (
+            "next_gate" in raw
+            and raw.get("next_gate") != raw_payload.get("next_gate")
+        )
+        or (
+            "checks" in raw
+            and contracts.canonical_json(raw.get("checks"))
+            != contracts.canonical_json(raw_payload.get("checks"))
+        )
         or raw_payload.get("decision_sha256") != raw["decision_sha256"]
         or raw_payload.get("decision_sha256")
         != review_contract.hash_without(raw_payload, "decision_sha256")
     ):
         raise contracts.ContractError(
-            "raw static rejection no longer matches its frozen rejected decision"
+            "raw static decision no longer matches its frozen authority"
         )
     return {
-        "decision": "rejected",
+        "decision": raw["decision"],
         "decision_sha256": raw["decision_sha256"],
         "file": raw_record,
         "formal_dataset_registration_authorized": False,
         "overwritten": False,
         "preserved": True,
-        "state_classification": "rejected",
+        "state_classification": expected[0],
     }
+
+
+def _validate_raw_rejection(
+    review: Mapping[str, Any], review_root: Path
+) -> dict[str, Any]:
+    """Legacy v1 receipt helper restricted to an actual raw rejection."""
+
+    result = _validate_raw_static_decision(review, review_root)
+    if (
+        result["decision"] != "rejected"
+        or result["state_classification"] != "rejected"
+    ):
+        raise contracts.ContractError(
+            "legacy raw static rejection helper requires a rejected authority"
+        )
+    return result
 
 
 def _producer_record(path: Path, label: str) -> dict[str, Any]:

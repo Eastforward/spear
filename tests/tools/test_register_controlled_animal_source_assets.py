@@ -141,6 +141,401 @@ def test_registration_replays_current_bounded_repair_contract(tmp_path):
         registry._reauthenticate_bounded_derived_geometry(**kwargs)
 
 
+def test_registration_replays_oriented_sheet_contract_and_decision_batch(
+    tmp_path,
+    monkeypatch,
+):
+    (
+        closure_path,
+        repaired,
+        source,
+    ) = derived_review_support._geometry_fixture(tmp_path)
+    closure = contracts.load_json(closure_path)
+    repair_path = Path(closure["output"]["repair_manifest"]["path"])
+    audit_path = Path(
+        closure["output"]["independent_geometry_audit"]["path"]
+    )
+    decision_batch = tmp_path / "raw_decision_batch.json"
+    contracts.write_json_no_replace(
+        decision_batch,
+        {"decision_batch_sha256": "a" * 64},
+    )
+    oriented = {
+        "implementation_contract": (
+            registry.derived_review_contract
+            .ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+        ),
+        "lineage": {
+            "pixal_manifest": _absolute_record(source["raw_attempt_manifest"]),
+            "pixal_source": _absolute_record(source["raw_glb"]),
+            "static_decision_batch": _absolute_record(decision_batch),
+            "static_decision": _absolute_record(source["decision_path"]),
+            "static_decision_value": "approved_for_lod_and_binding",
+            "static_decision_state": "research_candidate",
+            "raw_four_limbs_usable": True,
+            "raw_pose_riggable": True,
+        },
+        "output": _absolute_record(repaired),
+    }
+    monkeypatch.setattr(
+        registry.derived_review_contract,
+        "validate_bounded_repair_manifest",
+        lambda _payload: oriented,
+    )
+    review = {
+        "derived_geometry": {
+            "repair_method": (
+                registry.derived_review_contract
+                .ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+            )
+        }
+    }
+
+    registry._reauthenticate_bounded_derived_geometry(
+        review=review,
+        raw_pixal_path=source["raw_glb"],
+        reviewed_reference_path=source["reference"],
+        raw_decision_path=source["decision_path"],
+        raw_attempt_manifest_path=source["raw_attempt_manifest"],
+        repaired_glb_path=repaired,
+        geometry_closure_path=closure_path,
+        repair_manifest_path=repair_path,
+        geometry_audit_path=audit_path,
+        raw_decision_batch_path=decision_batch,
+    )
+
+
+def test_registration_rejects_cross_mode_repair_manifest(
+    tmp_path,
+    monkeypatch,
+):
+    (
+        closure_path,
+        repaired,
+        source,
+    ) = derived_review_support._geometry_fixture(tmp_path)
+    closure = contracts.load_json(closure_path)
+    repair_path = Path(closure["output"]["repair_manifest"]["path"])
+    audit_path = Path(
+        closure["output"]["independent_geometry_audit"]["path"]
+    )
+    oriented = {
+        "implementation_contract": (
+            registry.derived_review_contract
+            .ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+        ),
+        "lineage": {},
+        "output": _absolute_record(repaired),
+    }
+    monkeypatch.setattr(
+        registry.derived_review_contract,
+        "validate_bounded_repair_manifest",
+        lambda _payload: oriented,
+    )
+    review = {
+        "derived_geometry": {
+            "repair_method": (
+                registry.derived_review_contract.REPAIR_IMPLEMENTATION_CONTRACT
+            )
+        }
+    }
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="implementation no longer matches",
+    ):
+        registry._reauthenticate_bounded_derived_geometry(
+            review=review,
+            raw_pixal_path=source["raw_glb"],
+            reviewed_reference_path=source["reference"],
+            raw_decision_path=source["decision_path"],
+            raw_attempt_manifest_path=source["raw_attempt_manifest"],
+            repaired_glb_path=repaired,
+            geometry_closure_path=closure_path,
+            repair_manifest_path=repair_path,
+            geometry_audit_path=audit_path,
+        )
+
+
+def test_registration_rejects_review_raw_decision_batch_path_rebind(tmp_path):
+    raw_decision_path = tmp_path / "raw_decision.json"
+    raw_decision_path.write_bytes(b"canonical raw decision")
+    canonical_batch = tmp_path / "canonical_batch.json"
+    canonical_batch.write_bytes(b"canonical batch")
+    rebound_batch = tmp_path / "rebound_batch.json"
+    rebound_batch.write_bytes(canonical_batch.read_bytes())
+    raw_payload = {
+        "decision": "approved_for_lod_and_binding",
+        "state_classification": "research_candidate",
+        "decision_sha256": "a" * 64,
+    }
+    raw_authority = {
+        "raw_static_decision": {
+            "file": _absolute_record(raw_decision_path),
+            **raw_payload,
+        },
+        "raw_static_decision_batch": {
+            "file": _absolute_record(rebound_batch),
+            "decision_batch_sha256": "b" * 64,
+        },
+    }
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="rebound its canonical raw static authorities",
+    ):
+        registry._reauthenticate_review_raw_authorities(
+            raw_authority=raw_authority,
+            raw_decision={
+                "path": raw_decision_path,
+                "payload": raw_payload,
+            },
+            decision_batch_path=canonical_batch,
+            decision_batch={"decision_batch_sha256": "b" * 64},
+        )
+
+
+def test_register_derived_accepts_canonical_approved_oriented_path(
+    tmp_path,
+    monkeypatch,
+):
+    instance_id = "dog_fixture_123456789abc"
+
+    def fixture_file(name, payload=None):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if payload is None:
+            path.write_bytes(name.encode("utf-8"))
+        else:
+            contracts.write_json_no_replace(path, payload)
+        return path
+
+    preflight_path = fixture_file("preflight.json", {"fixture": True})
+    pixal_batch_path = fixture_file("pixal_batch.json", {"fixture": True})
+    pixal_inputs_path = fixture_file("pixal_inputs.json", {"fixture": True})
+    raw_glb = fixture_file("raw.glb")
+    raw_attempt = fixture_file("raw_attempt.json", {"fixture": True})
+    reference = fixture_file("reference.png")
+    pixal_input = fixture_file("pixal_input.png")
+    raw_decision_path = fixture_file("raw_decision.json", {"fixture": True})
+    decision_batch_path = fixture_file(
+        "decision_batch.json", {"fixture": True}
+    )
+    repaired = fixture_file("repaired.glb")
+    closure = fixture_file("closure.json", {"fixture": True})
+    repair_manifest = fixture_file(
+        "repair_manifest.json", {"fixture": True}
+    )
+    audit = fixture_file("audit.json", {"fixture": True})
+    pbr_contact = fixture_file("pbr_contact.png")
+    clay_contact = fixture_file("clay_contact.png")
+    review_path = fixture_file("review.json", {"fixture": True})
+    derived_decision_path = fixture_file(
+        "derived_decision.json", {"fixture": True}
+    )
+    request = {
+        "instance_id": instance_id,
+        "profile_schema_id": "dog_fixture_v1",
+        "profile_sha256": "1" * 64,
+        "request_sha256": "2" * 64,
+        "sampled_attributes": {"coat_color": "red", "size": "medium"},
+        "target_physical_profile": {"control_attribute": "size"},
+        "generation_plan": {"model_revisions": {"pixal": "fixture"}},
+    }
+    profile = {"profile_schema_id": request["profile_schema_id"]}
+    attempt = {
+        "execution_job_id": "animal_fixture",
+        "output": {
+            "path": raw_glb.relative_to(pixal_batch_path.parent).as_posix(),
+            "sha256": _sha256(raw_glb),
+        },
+        "attempt_manifest": {
+            "path": raw_attempt.relative_to(
+                pixal_batch_path.parent
+            ).as_posix(),
+            "sha256": _sha256(raw_attempt),
+            "size_bytes": raw_attempt.stat().st_size,
+        },
+        "pixal_input": {"path": str(pixal_input.resolve())},
+    }
+    input_job = {"reference": {"source": _absolute_record(reference)}}
+    raw_payload = {
+        "decision": "approved_for_lod_and_binding",
+        "state_classification": "research_candidate",
+        "decision_sha256": "3" * 64,
+    }
+    raw_decision = {"path": raw_decision_path, "payload": raw_payload}
+    review = {
+        "review_sha256": "4" * 64,
+        "instance_identity": {
+            "instance_id": instance_id,
+            "profile_schema_id": request["profile_schema_id"],
+            "profile_sha256": request["profile_sha256"],
+            "request_sha256": request["request_sha256"],
+            "sampled_attributes": request["sampled_attributes"],
+            "target_physical_profile": request["target_physical_profile"],
+        },
+        "source_authorities": {
+            "raw_pixal_glb": _absolute_record(raw_glb),
+            "reference_2d": _absolute_record(reference),
+            "raw_static_decision_batch": {
+                "file": _absolute_record(decision_batch_path),
+                "decision_batch_sha256": "8" * 64,
+            },
+            "raw_static_decision": {
+                "file": _absolute_record(raw_decision_path),
+                **raw_payload,
+            },
+        },
+        "derived_geometry": {
+            "repair_method": (
+                registry.derived_review_contract
+                .ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+            ),
+            "repaired_glb": _absolute_record(repaired),
+            "geometry_closure": _absolute_record(closure),
+            "repair_manifest": _absolute_record(repair_manifest),
+            "independent_geometry_audit": _absolute_record(audit),
+        },
+        "evidence": {
+            "pbr_five_view": {
+                "contact_sheet": {
+                    **_absolute_record(pbr_contact),
+                    "path": pbr_contact.name,
+                }
+            },
+            "clay_five_view": {
+                "contact_sheet": _absolute_record(clay_contact)
+            },
+        },
+    }
+    preserved = {
+        "decision": raw_payload["decision"],
+        "decision_sha256": raw_payload["decision_sha256"],
+        "file": _absolute_record(raw_decision_path),
+        "formal_dataset_registration_authorized": False,
+        "overwritten": False,
+        "preserved": True,
+        "state_classification": raw_payload["state_classification"],
+    }
+    derived_decision = {
+        "instance_id": instance_id,
+        "decision": registry.derived_static_decisions.APPROVED,
+        "decision_sha256": "5" * 64,
+        "attribute_evidence": {
+            "coat_color": "passed_static_visual",
+            "size": "deferred_to_metric_3d",
+        },
+        "authenticated_review_artifact_count": 1,
+        "review_binding": {
+            "review_file": _absolute_record(review_path),
+            "internal_review_sha256": review["review_sha256"],
+        },
+        "raw_static_decision": preserved,
+    }
+    monkeypatch.setattr(
+        registry,
+        "_load_registration_context",
+        lambda *_args, **_kwargs: (
+            preflight_path,
+            {"preflight_sha256": "6" * 64},
+            {instance_id: request},
+            {request["profile_schema_id"]: profile},
+            pixal_batch_path,
+            {"batch_sha256": "7" * 64},
+            pixal_inputs_path,
+            {},
+            {instance_id: input_job},
+            {instance_id: attempt},
+        ),
+    )
+    monkeypatch.setattr(
+        registry,
+        "load_decision_batch",
+        lambda _path: (
+            decision_batch_path,
+            {"decision_batch_sha256": "8" * 64},
+            {instance_id: raw_decision},
+        ),
+    )
+    monkeypatch.setattr(
+        registry.derived_static_decisions,
+        "validate_decision",
+        lambda _value: copy.deepcopy(derived_decision),
+    )
+    monkeypatch.setattr(
+        registry.derived_review_contract,
+        "validate_review",
+        lambda _value: copy.deepcopy(review),
+    )
+    monkeypatch.setattr(
+        registry.derived_static_decisions,
+        "_authenticate_review_artifacts",
+        lambda *_args: 1,
+    )
+    monkeypatch.setattr(
+        registry.derived_static_decisions.stable,
+        "_validate_raw_static_decision",
+        lambda *_args: copy.deepcopy(preserved),
+    )
+    replayed = {}
+
+    def replay(**kwargs):
+        replayed.update(kwargs)
+
+    monkeypatch.setattr(
+        registry,
+        "_reauthenticate_bounded_derived_geometry",
+        replay,
+    )
+    monkeypatch.setattr(
+        registry,
+        "spear_artifact",
+        lambda path: {
+            "root_id": "spear_repo",
+            "path": Path(path).name,
+            "sha256": _sha256(Path(path)),
+            "size_bytes": Path(path).stat().st_size,
+        },
+    )
+    monkeypatch.setattr(registry, "license_records", lambda: [])
+    monkeypatch.setattr(
+        registry.contracts,
+        "build_source_asset_v2",
+        lambda source_request, **kwargs: {
+            "schema": contracts.SOURCE_ASSET_SCHEMA,
+            "asset_id": source_request["instance_id"],
+            "artifacts": kwargs["artifacts"],
+        },
+    )
+    monkeypatch.setattr(
+        registry.contracts,
+        "validate_source_asset_v2",
+        lambda value, **_kwargs: value,
+    )
+    output_root = tmp_path / "registered"
+
+    manifest_path = registry.register_derived(
+        preflight_path,
+        pixal_batch_path,
+        decision_batch_path,
+        derived_decision_path,
+        _sha256(derived_decision_path),
+        output_root,
+    )
+    manifest = contracts.load_json(manifest_path)
+
+    assert manifest["schema"] == registry.DERIVED_REGISTRY_SCHEMA
+    assert manifest["automatic_checks"] == (
+        registry.DERIVED_REGISTRY_AUTOMATIC_CHECKS
+    )
+    assert replayed["raw_decision_batch_path"] == decision_batch_path
+    assert replayed["review"]["derived_geometry"]["repair_method"] == (
+        registry.derived_review_contract
+        .ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+    )
+
+
 def test_spear_artifact_rejects_leaf_symlink(tmp_path, monkeypatch):
     monkeypatch.setattr(registry, "SPEAR_ROOT", tmp_path)
     direct = tmp_path / "direct.bin"

@@ -3,9 +3,9 @@
 
 The pending derived-static review remains immutable.  This tool publishes a
 separate, hash-bound research-only decision that preserves the original raw
-Pixal rejection and may authorize only ``source_asset_v2`` registration and
-rigging.  It never authorizes animation, UE execution, Native changes, or
-formal dataset registration.
+Pixel3D static decision without rewriting it and may authorize only
+``source_asset_v2`` registration and rigging.  It never authorizes animation,
+UE execution, Native changes, or formal dataset registration.
 """
 
 from __future__ import annotations
@@ -26,7 +26,10 @@ from tools import controlled_source_asset_schema as contracts
 from tools import freeze_controlled_animal_derived_static_machine_rejection as stable
 
 
-DECISION_SCHEMA = "avengine_controlled_animal_derived_static_human_decision_v1"
+LEGACY_DECISION_SCHEMA = (
+    "avengine_controlled_animal_derived_static_human_decision_v1"
+)
+DECISION_SCHEMA = "avengine_controlled_animal_derived_static_human_decision_v2"
 APPROVED = "approved_for_lod_and_binding"
 CHECK_FIELDS = frozenset(review_contract.HUMAN_CHECK_FIELDS)
 NEXT_GATE = "lod_then_species_rig_binding"
@@ -53,7 +56,7 @@ AUTOMATIC_CHECKS = {
     "internal_review_sha256_matched": True,
     "review_contract_revalidated": True,
     "all_review_artifacts_reauthenticated": True,
-    "raw_static_rejection_preserved": True,
+    "raw_static_decision_preserved": True,
     "all_six_human_checks_explicit": True,
     "explicit_user_approval_bound_to_exact_review": True,
     "research_only_source_asset_and_rigging_authorized": True,
@@ -81,7 +84,7 @@ _DECISION_FIELDS = frozenset(
         "caveats",
         "notes",
         "review_binding",
-        "raw_static_rejection",
+        "raw_static_decision",
         "user_instruction_binding",
         "user_instruction_authority",
         "authority",
@@ -95,6 +98,18 @@ _DECISION_FIELDS = frozenset(
         "decision_sha256",
     }
 )
+_LEGACY_DECISION_FIELDS = frozenset(
+    (set(_DECISION_FIELDS) - {"raw_static_decision"})
+    | {"raw_static_rejection"}
+)
+LEGACY_AUTOMATIC_CHECKS = {
+    **{
+        name: value
+        for name, value in AUTOMATIC_CHECKS.items()
+        if name != "raw_static_decision_preserved"
+    },
+    "raw_static_rejection_preserved": True,
+}
 
 
 def _exact(value: Any, fields: set[str] | frozenset[str], label: str) -> Mapping[str, Any]:
@@ -133,7 +148,11 @@ def _file_record(value: Any, label: str) -> Mapping[str, Any]:
     return record
 
 
-def _validate_raw_rejection(value: Any) -> None:
+def _validate_raw_static_decision(
+    value: Any,
+    *,
+    require_rejection: bool = False,
+) -> None:
     raw = _exact(
         value,
         {
@@ -145,19 +164,24 @@ def _validate_raw_rejection(value: Any) -> None:
             "preserved",
             "state_classification",
         },
-        "raw_static_rejection",
+        "raw_static_decision",
     )
-    _file_record(raw["file"], "raw_static_rejection.file")
-    _sha256(raw["decision_sha256"], "raw_static_rejection.decision_sha256")
+    _file_record(raw["file"], "raw_static_decision.file")
+    _sha256(raw["decision_sha256"], "raw_static_decision.decision_sha256")
+    expected_state = {
+        "rejected": "rejected",
+        "approved_for_lod_and_binding": "research_candidate",
+    }.get(raw["decision"])
     if (
-        raw["decision"] != "rejected"
-        or raw["state_classification"] != "rejected"
+        expected_state is None
+        or raw["state_classification"] != expected_state
         or raw["formal_dataset_registration_authorized"] is not False
         or raw["overwritten"] is not False
         or raw["preserved"] is not True
+        or (require_rejection and raw["decision"] != "rejected")
     ):
         raise contracts.ContractError(
-            "the original raw static rejection must remain preserved"
+            "the original raw static decision must remain preserved"
         )
 
 
@@ -191,8 +215,20 @@ def _expected_attribute_evidence(review: Mapping[str, Any]) -> dict[str, str]:
 def validate_decision(value: Any) -> dict[str, Any]:
     """Validate a decision and reauthenticate its exact derived-static review."""
 
-    decision = _exact(value, _DECISION_FIELDS, "derived-static human decision")
-    if decision["schema"] != DECISION_SCHEMA:
+    schema = value.get("schema") if isinstance(value, Mapping) else None
+    if schema == LEGACY_DECISION_SCHEMA:
+        decision = _exact(
+            value,
+            _LEGACY_DECISION_FIELDS,
+            "legacy derived-static human decision",
+        )
+        raw_field = "raw_static_rejection"
+        expected_automatic_checks = LEGACY_AUTOMATIC_CHECKS
+    elif schema == DECISION_SCHEMA:
+        decision = _exact(value, _DECISION_FIELDS, "derived-static human decision")
+        raw_field = "raw_static_decision"
+        expected_automatic_checks = AUTOMATIC_CHECKS
+    else:
         raise contracts.ContractError("derived-static human decision schema changed")
     instance_id = _text(decision["instance_id"], "instance_id")
     if not _IDENTIFIER_RE.fullmatch(instance_id):
@@ -289,25 +325,28 @@ def validate_decision(value: Any) -> dict[str, Any]:
             "attribute_evidence does not match the exact review attributes"
         )
 
-    _validate_raw_rejection(decision["raw_static_rejection"])
-    review_raw_rejection = authenticated_review["source_authorities"][
+    _validate_raw_static_decision(
+        decision[raw_field],
+        require_rejection=schema == LEGACY_DECISION_SCHEMA,
+    )
+    review_raw_decision = authenticated_review["source_authorities"][
         "raw_static_decision"
     ]
-    decision_raw_rejection = decision["raw_static_rejection"]
+    decision_raw_authority = decision[raw_field]
     if (
-        contracts.canonical_json(decision_raw_rejection["file"])
-        != contracts.canonical_json(review_raw_rejection["file"])
-        or decision_raw_rejection["decision_sha256"]
-        != review_raw_rejection["decision_sha256"]
-        or decision_raw_rejection["decision"]
-        != review_raw_rejection["decision"]
-        or decision_raw_rejection["state_classification"]
-        != review_raw_rejection["state_classification"]
-        or decision_raw_rejection["formal_dataset_registration_authorized"]
-        != review_raw_rejection["formal_dataset_registration_authorized"]
+        contracts.canonical_json(decision_raw_authority["file"])
+        != contracts.canonical_json(review_raw_decision["file"])
+        or decision_raw_authority["decision_sha256"]
+        != review_raw_decision["decision_sha256"]
+        or decision_raw_authority["decision"]
+        != review_raw_decision["decision"]
+        or decision_raw_authority["state_classification"]
+        != review_raw_decision["state_classification"]
+        or decision_raw_authority["formal_dataset_registration_authorized"]
+        != review_raw_decision["formal_dataset_registration_authorized"]
     ):
         raise contracts.ContractError(
-            "raw static rejection is not exactly bound to the frozen review"
+            "raw static decision is not exactly bound to the frozen review"
         )
     instruction = _exact(
         decision["user_instruction_binding"],
@@ -351,7 +390,7 @@ def validate_decision(value: Any) -> dict[str, Any]:
         decision["state_classification"] != "research_candidate"
         or decision["formal_dataset_registration_authorized"] is not False
         or decision["next_gate"] != NEXT_GATE
-        or decision["automatic_checks"] != AUTOMATIC_CHECKS
+        or decision["automatic_checks"] != expected_automatic_checks
     ):
         raise contracts.ContractError(
             "derived-static approval state or gate boundary changed"
@@ -371,8 +410,22 @@ def _artifact_descriptors(review: Mapping[str, Any]) -> list[tuple[str, Any]]:
     geometry = review["derived_geometry"]
     evidence = review["evidence"]
     producer = review["producer"]
+    if review.get("schema") == review_contract.DIRECT_REVIEW_SCHEMA:
+        direct_authority = authorities["direct_source_authority"]
+        primary_authority = (
+            "direct source authority",
+            {
+                name: direct_authority[name]
+                for name in ("path", "sha256", "size_bytes")
+            },
+        )
+    else:
+        primary_authority = (
+            "source frozen preflight",
+            authorities["frozen_preflight"]["file"],
+        )
     result: list[tuple[str, Any]] = [
-        ("source frozen preflight", authorities["frozen_preflight"]["file"]),
+        primary_authority,
         ("source Pixal batch", authorities["pixal_batch"]["file"]),
         (
             "source raw static decision batch",
@@ -504,7 +557,9 @@ def freeze_decision(
             "human approval requires a still-pending derived-static review"
         )
     artifact_count = _authenticate_review_artifacts(review, review_path.parent)
-    raw_rejection = stable._validate_raw_rejection(review, review_path.parent)
+    raw_static_decision = stable._validate_raw_static_decision(
+        review, review_path.parent
+    )
 
     payload: dict[str, Any] = {
         "schema": DECISION_SCHEMA,
@@ -523,7 +578,7 @@ def freeze_decision(
             "human_review_status_at_freeze": review["human_review"]["status"],
             "human_review_decision_at_freeze": review["human_review"]["decision"],
         },
-        "raw_static_rejection": raw_rejection,
+        "raw_static_decision": raw_static_decision,
         "user_instruction_binding": {
             "decision": APPROVED,
             "review_file_sha256": user_explicit_review_file_sha256,

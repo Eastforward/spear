@@ -17,13 +17,58 @@ from typing import Any
 
 from tools import controlled_source_asset_schema as contracts
 
-REVIEW_SCHEMA = "avengine_controlled_animal_derived_static_review_v1"
+LEGACY_REVIEW_SCHEMA = "avengine_controlled_animal_derived_static_review_v1"
+REVIEW_SCHEMA = "avengine_controlled_animal_derived_static_review_v2"
+DIRECT_REVIEW_SCHEMA = "avengine_controlled_animal_derived_static_review_v3"
 REVIEW_STATUS = "rendered_pending_human_derived_static_review"
 NEXT_GATE = "explicit_human_derived_static_review_decision"
 REPAIR_MANIFEST_SCHEMA = "avengine_pixal_same_mesh_mirrored_limb_repair_v1"
 REPAIR_IMPLEMENTATION_CONTRACT = "bounded_local_surface_identity_v2"
+ORIENTED_REPAIR_MANIFEST_SCHEMA = (
+    "avengine_pixal_oriented_sheet_index_repair_v1"
+)
+ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT = "bounded_oriented_sheet_identity_v1"
+REPAIR_LINEAGE_KINDS = {
+    REPAIR_IMPLEMENTATION_CONTRACT: "bounded_same_pixal_mesh_repair",
+    ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT: (
+        "bounded_same_pixal_mesh_index_repair"
+    ),
+}
 VIEWS = ("front", "back", "side", "top", "quarter")
 FRONT_AXES = frozenset({"negative-x", "positive-x", "negative-y", "positive-y"})
+LEGACY_AUTOMATIC_GATE_STATUSES = {
+    "four_independent_leg_chains": "passed",
+    "no_low_cross_limb_membrane": "passed",
+    "nonmanifold": "passed",
+    "watertight": "passed",
+}
+LEGACY_INHERITED_MANUAL_REVIEW_STATUSES = {
+    "single_breed_valid_tail": "passed_manual_multiview",
+    "centerline": "passed_manual_top_view_review",
+    "clay_five_view": "passed_manual_geometry_review",
+}
+ORIENTED_V2_AUTOMATIC_GATE_STATUSES = {
+    "four_independent_leg_chains": "inherited_raw_static_approval",
+    "no_low_cross_limb_membrane": "inherited_raw_static_approval",
+    "nonmanifold": "passed_independent_audit_v4",
+    "watertight": "passed_oriented_pairing",
+}
+ORIENTED_V2_INHERITED_MANUAL_REVIEW_STATUSES = {
+    "single_breed_valid_tail": "pending_derived_human_review_no_new_claim",
+    "centerline": "pending_derived_human_review_no_new_claim",
+    "clay_five_view": (
+        "rendered_readback_only_pending_derived_human_review"
+    ),
+}
+RAW_STATIC_CHECK_FIELDS = frozenset(
+    {
+        "complete_silhouette",
+        "four_limbs_usable",
+        "texture_coherent",
+        "pose_riggable",
+        "no_large_holes",
+    }
+)
 HUMAN_CHECK_FIELDS = frozenset(
     {
         "breed_and_body_shape_coherent",
@@ -38,8 +83,8 @@ AUTOMATIC_CHECK_FIELDS = frozenset(
     {
         "frozen_request_reauthenticated",
         "pixal_attempt_reauthenticated",
-        "raw_static_rejection_preserved",
-        "raw_rejection_not_overwritten_or_upgraded",
+        "raw_static_decision_preserved",
+        "raw_static_decision_not_overwritten_or_upgraded",
         "bounded_same_source_repair_lineage_reauthenticated",
         "repair_geometry_closure_reauthenticated",
         "repaired_glb_matched_geometry_closure",
@@ -53,6 +98,32 @@ AUTOMATIC_CHECK_FIELDS = frozenset(
         "no_source_asset_or_registry_published",
         "no_ue_or_native_execution_performed",
         "overall",
+    }
+)
+DIRECT_AUTOMATIC_CHECK_FIELDS = frozenset(
+    (
+        set(AUTOMATIC_CHECK_FIELDS)
+        - {
+            "frozen_request_reauthenticated",
+            "pixal_attempt_reauthenticated",
+        }
+    )
+    | {
+        "direct_source_authority_reauthenticated",
+        "adopted_pixal_batch_and_attempt_reauthenticated",
+    }
+)
+LEGACY_AUTOMATIC_CHECK_FIELDS = frozenset(
+    (
+        set(AUTOMATIC_CHECK_FIELDS)
+        - {
+            "raw_static_decision_preserved",
+            "raw_static_decision_not_overwritten_or_upgraded",
+        }
+    )
+    | {
+        "raw_static_rejection_preserved",
+        "raw_rejection_not_overwritten_or_upgraded",
     }
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -319,13 +390,28 @@ def _closed_topology_audit(value: Any, label: str) -> Mapping[str, Any]:
 
 
 def validate_bounded_repair_manifest(value: Any) -> dict[str, Any]:
-    """Validate the current bounded local repair result without filesystem I/O.
+    """Validate either strict bounded same-Pixel3D repair without filesystem I/O.
 
     The original v1 producer used the same schema string while globally voxel
     remeshing, smoothing, and decimating the animal.  The implementation
     contract and export readback are therefore mandatory parts of the schema
     identity; a schema-only consumer is unsafe.
     """
+
+    candidate = _mapping(value, "bounded geometry repair manifest")
+    if (
+        candidate.get("schema") == ORIENTED_REPAIR_MANIFEST_SCHEMA
+        or candidate.get("implementation_contract")
+        == ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+    ):
+        from tools import repair_pixal_oriented_sheet_indices as oriented
+
+        try:
+            return oriented.validate_repair_manifest(candidate)
+        except oriented.OrientedSheetRepairError as error:
+            raise DerivedStaticReviewContractError(
+                f"bounded oriented-sheet repair is invalid: {error}"
+            ) from error
 
     manifest = _exact(
         value,
@@ -705,7 +791,12 @@ def validate_review(value: Any) -> dict[str, Any]:
     }
     review = _exact(value, fields, "derived static review")
     _finite_json(review, "derived static review")
-    if review["schema"] != REVIEW_SCHEMA:
+    review_schema = review["schema"]
+    if review_schema not in {
+        LEGACY_REVIEW_SCHEMA,
+        REVIEW_SCHEMA,
+        DIRECT_REVIEW_SCHEMA,
+    }:
         raise DerivedStaticReviewContractError("derived static review schema changed")
     _text(review["created_at"], "created_at")
     if review["status"] != REVIEW_STATUS:
@@ -746,29 +837,54 @@ def validate_review(value: Any) -> dict[str, Any]:
     ):
         _mapping(identity[name], f"instance_identity.{name}")
 
+    authority_fields = {
+        "pixal_batch",
+        "raw_static_decision_batch",
+        "raw_static_decision",
+        "raw_pixal_glb",
+        "reference_2d",
+    }
+    authority_fields.add(
+        "direct_source_authority"
+        if review_schema == DIRECT_REVIEW_SCHEMA
+        else "frozen_preflight"
+    )
     authorities = _exact(
         review["source_authorities"],
-        {
-            "frozen_preflight",
-            "pixal_batch",
-            "raw_static_decision_batch",
-            "raw_static_decision",
-            "raw_pixal_glb",
-            "reference_2d",
-        },
+        authority_fields,
         "source_authorities",
     )
-    preflight = _exact(
-        authorities["frozen_preflight"],
-        {"file", "preflight_sha256", "validation_mode"},
-        "source_authorities.frozen_preflight",
-    )
-    _file_record(preflight["file"], "frozen preflight", absolute=True)
-    _sha256(preflight["preflight_sha256"], "frozen preflight internal SHA-256")
-    if preflight["validation_mode"] != "frozen_historical_preflight_v1":
-        raise DerivedStaticReviewContractError(
-            "derived review requires frozen historical preflight validation"
+    if review_schema == DIRECT_REVIEW_SCHEMA:
+        direct = _exact(
+            authorities["direct_source_authority"],
+            {"path", "sha256", "size_bytes", "authority_sha256"},
+            "source_authorities.direct_source_authority",
         )
+        _file_record(
+            {
+                "path": direct["path"],
+                "sha256": direct["sha256"],
+                "size_bytes": direct["size_bytes"],
+            },
+            "direct source authority",
+            absolute=True,
+        )
+        _sha256(
+            direct["authority_sha256"],
+            "direct source authority internal SHA-256",
+        )
+    else:
+        preflight = _exact(
+            authorities["frozen_preflight"],
+            {"file", "preflight_sha256", "validation_mode"},
+            "source_authorities.frozen_preflight",
+        )
+        _file_record(preflight["file"], "frozen preflight", absolute=True)
+        _sha256(preflight["preflight_sha256"], "frozen preflight internal SHA-256")
+        if preflight["validation_mode"] != "frozen_historical_preflight_v1":
+            raise DerivedStaticReviewContractError(
+                "derived review requires frozen historical preflight validation"
+            )
     pixal = _exact(
         authorities["pixal_batch"],
         {"file", "batch_sha256"},
@@ -786,27 +902,64 @@ def validate_review(value: Any) -> dict[str, Any]:
         decision_batch["decision_batch_sha256"],
         "raw static decision batch internal SHA-256",
     )
+    raw_decision_fields = {
+        "file",
+        "decision_sha256",
+        "decision",
+        "state_classification",
+        "formal_dataset_registration_authorized",
+    }
+    if review_schema in {REVIEW_SCHEMA, DIRECT_REVIEW_SCHEMA}:
+        raw_decision_fields.update({"next_gate", "checks"})
     decision = _exact(
         authorities["raw_static_decision"],
-        {
-            "file",
-            "decision_sha256",
-            "decision",
-            "state_classification",
-            "formal_dataset_registration_authorized",
-        },
+        raw_decision_fields,
         "source_authorities.raw_static_decision",
     )
     _file_record(decision["file"], "raw static decision", absolute=True)
     _sha256(decision["decision_sha256"], "raw static decision internal SHA-256")
-    if (
-        decision["decision"] != "rejected"
-        or decision["state_classification"] != "rejected"
-        or decision["formal_dataset_registration_authorized"] is not False
-    ):
+    raw_decision = (
+        decision["decision"],
+        decision["state_classification"],
+        decision["formal_dataset_registration_authorized"],
+    )
+    if raw_decision not in {
+        ("rejected", "rejected", False),
+        ("approved_for_lod_and_binding", "research_candidate", False),
+    }:
         raise DerivedStaticReviewContractError(
-            "the raw static rejection must be preserved exactly"
+            "the raw static decision must be preserved exactly"
         )
+    raw_checks = None
+    if review_schema in {REVIEW_SCHEMA, DIRECT_REVIEW_SCHEMA}:
+        raw_checks = _exact(
+            decision["checks"],
+            RAW_STATIC_CHECK_FIELDS,
+            "source_authorities.raw_static_decision.checks",
+        )
+        if any(not isinstance(value, bool) for value in raw_checks.values()):
+            raise DerivedStaticReviewContractError(
+                "raw static decision checks must be exact booleans"
+            )
+        expected_next_gate = (
+            "stop"
+            if decision["decision"] == "rejected"
+            else "lod_then_species_rig_binding"
+        )
+        if (
+            decision["next_gate"] != expected_next_gate
+            or (
+                decision["decision"] == "approved_for_lod_and_binding"
+                and not all(raw_checks.values())
+            )
+            or (
+                decision["decision"] == "rejected"
+                and all(raw_checks.values())
+            )
+        ):
+            raise DerivedStaticReviewContractError(
+                "raw static decision checks/next gate changed"
+            )
     _file_record(authorities["raw_pixal_glb"], "raw Pixal GLB", absolute=True)
     _file_record(authorities["reference_2d"], "2D reference", absolute=True)
 
@@ -832,39 +985,83 @@ def validate_review(value: Any) -> dict[str, Any]:
         "independent_geometry_audit",
     ):
         _file_record(geometry[name], f"derived_geometry.{name}", absolute=True)
-    if geometry["repair_method"] != REPAIR_IMPLEMENTATION_CONTRACT:
+    repair_method = geometry["repair_method"]
+    if repair_method not in REPAIR_LINEAGE_KINDS:
         raise DerivedStaticReviewContractError(
             "derived geometry repair implementation contract changed"
         )
-    if geometry["lineage_kind"] != "bounded_same_pixal_mesh_repair":
+    if geometry["lineage_kind"] != REPAIR_LINEAGE_KINDS[repair_method]:
         raise DerivedStaticReviewContractError("derived geometry lineage kind changed")
+    expected_raw_decision = (
+        ("rejected", "rejected", False)
+        if repair_method == REPAIR_IMPLEMENTATION_CONTRACT
+        else (
+            "approved_for_lod_and_binding",
+            "research_candidate",
+            False,
+        )
+    )
+    if raw_decision != expected_raw_decision:
+        raise DerivedStaticReviewContractError(
+            "raw static decision does not match the selected bounded repair contract"
+        )
+    if raw_checks is not None:
+        expected_limb_state = (
+            repair_method
+            == ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+        )
+        if (
+            raw_checks["four_limbs_usable"] is not expected_limb_state
+            or raw_checks["pose_riggable"] is not expected_limb_state
+        ):
+            raise DerivedStaticReviewContractError(
+                "raw limb/riggable checks do not match the selected repair contract"
+            )
+    if (
+        review_schema == LEGACY_REVIEW_SCHEMA
+        and repair_method != REPAIR_IMPLEMENTATION_CONTRACT
+    ):
+        raise DerivedStaticReviewContractError(
+            "legacy derived review schema is restricted to mirror-v2 rejection repair"
+        )
     automatic_statuses = _exact(
         geometry["automatic_gate_statuses"],
-        {
-            "four_independent_leg_chains",
-            "no_low_cross_limb_membrane",
-            "nonmanifold",
-            "watertight",
-        },
+        set(LEGACY_AUTOMATIC_GATE_STATUSES),
         "derived_geometry.automatic_gate_statuses",
     )
-    if any(value != "passed" for value in automatic_statuses.values()):
-        raise DerivedStaticReviewContractError(
-            "derived geometry automatic gate did not pass"
-        )
     inherited_statuses = _exact(
         geometry["inherited_manual_review_statuses"],
-        {"single_breed_valid_tail", "centerline", "clay_five_view"},
+        set(LEGACY_INHERITED_MANUAL_REVIEW_STATUSES),
         "derived_geometry.inherited_manual_review_statuses",
     )
-    expected_inherited = {
-        "single_breed_valid_tail": "passed_manual_multiview",
-        "centerline": "passed_manual_top_view_review",
-        "clay_five_view": "passed_manual_geometry_review",
+    observed_statuses = (
+        dict(automatic_statuses),
+        dict(inherited_statuses),
+    )
+    allowed_statuses = {
+        (
+            tuple(sorted(LEGACY_AUTOMATIC_GATE_STATUSES.items())),
+            tuple(sorted(LEGACY_INHERITED_MANUAL_REVIEW_STATUSES.items())),
+        )
     }
-    if dict(inherited_statuses) != expected_inherited:
+    if repair_method == ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT:
+        allowed_statuses.add(
+            (
+                tuple(sorted(ORIENTED_V2_AUTOMATIC_GATE_STATUSES.items())),
+                tuple(
+                    sorted(
+                        ORIENTED_V2_INHERITED_MANUAL_REVIEW_STATUSES.items()
+                    )
+                ),
+            )
+        )
+    normalized_statuses = (
+        tuple(sorted(observed_statuses[0].items())),
+        tuple(sorted(observed_statuses[1].items())),
+    )
+    if normalized_statuses not in allowed_statuses:
         raise DerivedStaticReviewContractError(
-            "inherited manual geometry statuses changed"
+            "derived geometry gate/manual status matrix changed"
         )
     pbr = _exact(
         geometry["pbr_container_readback"],
@@ -924,9 +1121,14 @@ def validate_review(value: Any) -> dict[str, Any]:
     _text(blender["version"], "producer.blender.version")
     _text(blender["build_hash"], "producer.blender.build_hash")
 
+    automatic_fields = {
+        LEGACY_REVIEW_SCHEMA: LEGACY_AUTOMATIC_CHECK_FIELDS,
+        REVIEW_SCHEMA: AUTOMATIC_CHECK_FIELDS,
+        DIRECT_REVIEW_SCHEMA: DIRECT_AUTOMATIC_CHECK_FIELDS,
+    }[review_schema]
     automatic = _exact(
         review["automatic_checks"],
-        AUTOMATIC_CHECK_FIELDS,
+        automatic_fields,
         "automatic_checks",
     )
     if any(value is not True for value in automatic.values()):
