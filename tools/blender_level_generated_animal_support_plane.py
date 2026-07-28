@@ -30,9 +30,9 @@ if str(SPEAR_ROOT) not in sys.path:
     sys.path.insert(0, str(SPEAR_ROOT))
 
 from tools.generated_animal_support_plane import (  # noqa: E402
-    POLICY,
     evaluate_dual_authority_support_plane,
 )
+from tools.generated_animal_support_plane_contract import POLICY  # noqa: E402
 from tools.generated_quadruped_semantics import infer_quadruped_semantics  # noqa: E402
 
 

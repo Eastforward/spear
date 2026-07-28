@@ -30,6 +30,7 @@ def test_support_plane_leveling_is_semantic_rigid_and_pre_animation():
     assert "infer_quadruped_semantics" in text
     assert "semantics.foot_leaves" in text
     assert "evaluate_dual_authority_support_plane" in text
+    assert "from tools.generated_animal_support_plane_contract import POLICY" in text
     assert "distal_two_weight_scores" in text
     assert 'choices=("mesh-foot-bottoms",)' in text
     assert "bone-endpoints" not in text
