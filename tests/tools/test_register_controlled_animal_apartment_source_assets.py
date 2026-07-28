@@ -188,8 +188,15 @@ def _apartment_v2_manifest(tmp_path: Path) -> Path:
     return path
 
 
-def test_load_apartment_records_accepts_strict_builder_v2(tmp_path):
-    inputs = apartment_builder_support._fixture(tmp_path)
+@pytest.mark.parametrize("compact_approval", [False, True])
+def test_load_apartment_records_accepts_strict_builder_v2(
+    tmp_path,
+    compact_approval,
+):
+    inputs = apartment_builder_support._fixture(
+        tmp_path,
+        compact_approval=compact_approval,
+    )
     inputs.pop("semantic_evidence")
     manifest = apartment_builder.build_specs(
         **inputs,
@@ -203,6 +210,20 @@ def test_load_apartment_records_accepts_strict_builder_v2(tmp_path):
     assert record["_authenticated_apartment_v2"]["runtime_lineage"] == record[
         "runtime_lineage"
     ]
+    evidence = record["_authenticated_apartment_v2"]["presentation_evidence"]
+    if compact_approval:
+        assert (
+            evidence["mode"]
+            == apartment_builder.MOTION_STYLE_AND_CURRENT_READBACK_MODE
+        )
+        assert set(evidence) == {
+            "mode",
+            "motion_style_approval",
+            "current_asset_short_readback",
+        }
+    else:
+        assert "presentation_receipt" in evidence
+        assert "output_video" in evidence
 
 
 def test_load_apartment_records_rejects_v2_authority_expansion(tmp_path):
@@ -1039,9 +1060,11 @@ def test_registration_audio_rejects_missing_or_wrong_hash_worker(
         )
 
 
+@pytest.mark.parametrize("compact_evidence", [False, True])
 def test_apartment_registry_wires_independent_gate_for_walk_and_idle(
     tmp_path,
     monkeypatch,
+    compact_evidence,
 ):
     tag = "dog_registration_wiring"
     asset_id = "animal_registration_wiring_v1"
@@ -1121,6 +1144,27 @@ def test_apartment_registry_wires_independent_gate_for_walk_and_idle(
         "path": reviewed_descriptor["path"],
         "sha256": reviewed_descriptor["sha256"],
     }
+    if compact_evidence:
+        style_approval = tmp_path / "motion_style_approval.json"
+        style_approval.write_bytes(b"motion-style approval")
+        current_readback = tmp_path / "current_asset_short_readback.json"
+        current_readback.write_bytes(b"current-asset short readback")
+        presentation_evidence = {
+            "mode": apartment_builder.MOTION_STYLE_AND_CURRENT_READBACK_MODE,
+            "motion_style_approval": {
+                **_descriptor(style_approval),
+                "approval_sha256": "d" * 64,
+            },
+            "current_asset_short_readback": {
+                **_descriptor(current_readback),
+                "receipt_sha256": "e" * 64,
+            },
+        }
+    else:
+        presentation_evidence = {
+            "presentation_receipt": placeholder_descriptor,
+            "output_video": placeholder_descriptor,
+        }
     record["_authenticated_apartment_v2"] = {
         "inputs": {
             "animation_decision": {
@@ -1137,10 +1181,7 @@ def test_apartment_registry_wires_independent_gate_for_walk_and_idle(
             "ue_import_glb": copy.deepcopy(reviewed_descriptor),
             "texture_transcode_manifest": None,
         },
-        "presentation_evidence": {
-            "presentation_receipt": placeholder_descriptor,
-            "output_video": placeholder_descriptor,
-        },
+        "presentation_evidence": presentation_evidence,
         "emitter_measurement": placeholder_descriptor,
     }
     for action_name, output_dir in (
@@ -1253,6 +1294,40 @@ def test_apartment_registry_wires_independent_gate_for_walk_and_idle(
     assert "apartment_walking_independent_rlr_sample_report" in extra
     assert "apartment_idle_independent_rlr_sample" in extra
     assert "apartment_idle_independent_rlr_sample_report" in extra
+    if compact_evidence:
+        assert extra["motion_style_approval"] == style_approval.resolve()
+        assert (
+            extra["current_asset_short_readback"]
+            == current_readback.resolve()
+        )
+        assert "owner_review_presentation_receipt" not in extra
+        assert "owner_review_presentation_video" not in extra
+        style_approval.write_bytes(b"tampered motion-style approval")
+        with pytest.raises(
+            schema.ContractError,
+            match="motion-style approval artifact changed",
+        ):
+            apartment_registration._validate_apartment_registry(
+                record,
+                independent_evidence_staging_root=(
+                    tmp_path / "staging_samples_tampered"
+                ),
+                independent_evidence_final_root=(
+                    tmp_path / "final_samples_tampered"
+                ),
+            )
+        style_approval.write_bytes(b"motion-style approval")
+    else:
+        assert (
+            extra["owner_review_presentation_receipt"]
+            == placeholder.resolve()
+        )
+        assert (
+            extra["owner_review_presentation_video"]
+            == placeholder.resolve()
+        )
+        assert "motion_style_approval" not in extra
+        assert "current_asset_short_readback" not in extra
 
     registry["clips"]["Walking"]["spec"] = _descriptor(decision_path)
     (registry_dir / f"{tag}.json").write_text(json.dumps(registry))

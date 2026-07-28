@@ -1727,19 +1727,40 @@ def _validate_apartment_registry(
                         "animation_decision_freeze_receipt"
                     ]["path"]
                 ).resolve(),
-                "owner_review_presentation_receipt": Path(
-                    authority["presentation_evidence"][
-                        "presentation_receipt"
-                    ]["path"]
-                ).resolve(),
-                "owner_review_presentation_video": Path(
-                    authority["presentation_evidence"]["output_video"]["path"]
-                ).resolve(),
                 "generated_animal_emitter_measurement": Path(
                     authority["emitter_measurement"]["path"]
                 ).resolve(),
             }
         )
+        presentation_evidence = authority["presentation_evidence"]
+        if apartment_builder._uses_compact_approval_evidence(
+            presentation_evidence
+        ):
+            extra.update(
+                {
+                    "motion_style_approval": _descriptor_file(
+                        presentation_evidence.get("motion_style_approval"),
+                        "motion-style approval",
+                    ),
+                    "current_asset_short_readback": _descriptor_file(
+                        presentation_evidence.get(
+                            "current_asset_short_readback"
+                        ),
+                        "current-asset short readback",
+                    ),
+                }
+            )
+        else:
+            extra.update(
+                {
+                    "owner_review_presentation_receipt": Path(
+                        presentation_evidence["presentation_receipt"]["path"]
+                    ).resolve(),
+                    "owner_review_presentation_video": Path(
+                        presentation_evidence["output_video"]["path"]
+                    ).resolve(),
+                }
+            )
     for action in ("Walking", "Idle"):
         clip = registry["clips"][action]
         action_record = record["actions"][action]
