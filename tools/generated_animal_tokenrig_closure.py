@@ -28,6 +28,14 @@ import sys
 from typing import Any
 import uuid
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tools import (
+    controlled_animal_derived_static_review_contract as derived_review_contract,
+)
+from tools import controlled_source_asset_schema as contracts
+
 
 SCHEMA = "avengine_generated_animal_tokenrig_source_closure_v1"
 READBACK_SCHEMA = "avengine_generated_animal_tokenrig_binding_readback_v1"
@@ -256,6 +264,37 @@ def require_descriptor_matches(
     same_file(observed, expected, label)
 
 
+def require_descriptor_content_matches(
+    descriptor: Any,
+    expected: Path,
+    label: str,
+    *,
+    size_fields: tuple[str, ...] = ("size_bytes", "bytes"),
+) -> None:
+    """Bind a historical descriptor to externally selected current bytes."""
+
+    if not isinstance(descriptor, dict):
+        raise ClosureError(f"{label} descriptor must be an object")
+    path_value = descriptor.get("path")
+    if not isinstance(path_value, str) or not path_value:
+        raise ClosureError(f"{label} descriptor path is invalid")
+    expected = require_regular_file(expected, label)
+    expected_hash = require_sha256(descriptor.get("sha256"), f"{label} sha256")
+    if sha256_file(expected) != expected_hash:
+        raise ClosureError(f"{label} SHA-256 mismatch")
+    size = next(
+        (descriptor.get(field) for field in size_fields if field in descriptor),
+        None,
+    )
+    if (
+        isinstance(size, bool)
+        or not isinstance(size, int)
+        or size <= 0
+        or expected.stat().st_size != size
+    ):
+        raise ClosureError(f"{label} size mismatch")
+
+
 def git_output(root: Path, arguments: list[str], label: str) -> bytes:
     try:
         return subprocess.check_output(
@@ -307,17 +346,34 @@ def validate_upstream_lineage(
     raw_manifest_path: Path,
     upstream_manifest_path: Path,
     tokenrig_input: Path,
+    *,
+    raw_static_decision_batch_path: Path | None = None,
+    expected_raw_static_decision_batch_sha256: str | None = None,
+    require_oriented_batch_external_authority: bool = False,
 ) -> tuple[Path, str, list[Path]]:
     raw_manifest = load_json(raw_manifest_path, "raw Pixal manifest")
-    raw_glb = descriptor_path(
-        parse_raw_pixal_output(raw_manifest),
-        "raw Pixal GLB",
-        size_fields=("bytes", "size_bytes"),
-    )
+    raw_output = parse_raw_pixal_output(raw_manifest)
     upstream = load_json(upstream_manifest_path, "upstream geometry manifest")
     schema = upstream.get("schema")
+    raw_glb = (
+        None
+        if schema == "avengine_generated_animal_geometry_closure_v2"
+        else descriptor_path(
+            raw_output,
+            "raw Pixal GLB",
+            size_fields=("bytes", "size_bytes"),
+        )
+    )
     extra_evidence: list[Path] = []
     if schema == "avengine_watertight_textured_runtime_proxy_v1":
+        assert raw_glb is not None
+        if (
+            raw_static_decision_batch_path is not None
+            or expected_raw_static_decision_batch_sha256 is not None
+        ):
+            raise ClosureError(
+                "raw/watertight fallback cannot consume derived repair authority"
+            )
         require_descriptor_matches(
             upstream.get("input"), raw_glb, "watertight raw Pixal input"
         )
@@ -332,7 +388,81 @@ def validate_upstream_lineage(
         ):
             raise ClosureError("watertight upstream touched skeleton or animation")
         upstream_kind = "watertight_runtime_proxy"
+    elif schema == "avengine_generated_animal_geometry_closure_v2":
+        from tools import (
+            publish_generated_animal_geometry_closure as geometry_closures,
+        )
+
+        if (
+            raw_static_decision_batch_path is None
+            and require_oriented_batch_external_authority
+        ):
+            raise ClosureError(
+                "geometry closure v2 requires an externally pinned raw "
+                "static decision batch"
+            )
+        supplied_batch: Path | None = None
+        if raw_static_decision_batch_path is not None:
+            if expected_raw_static_decision_batch_sha256 is None:
+                raise ClosureError(
+                    "geometry closure v2 raw decision batch needs an "
+                    "expected SHA-256"
+                )
+            supplied_batch = require_regular_file(
+                raw_static_decision_batch_path,
+                "externally supplied raw static decision batch",
+            )
+            expected_batch_sha256 = require_sha256(
+                expected_raw_static_decision_batch_sha256,
+                "expected raw static decision batch SHA-256",
+            )
+            if sha256_file(supplied_batch) != expected_batch_sha256:
+                raise ClosureError(
+                    "raw static decision batch changed from external authority"
+                )
+        elif expected_raw_static_decision_batch_sha256 is not None:
+            raise ClosureError(
+                "raw static decision batch path/hash must be supplied together"
+            )
+        try:
+            replay = geometry_closures.load_geometry_closure_v2(
+                upstream_manifest_path,
+                expected_pixal_manifest=raw_manifest_path,
+                expected_raw_static_decision_batch=supplied_batch,
+                expected_repaired_glb=tokenrig_input,
+            )
+        except geometry_closures.GeometryClosureError as error:
+            raise ClosureError(
+                f"geometry closure v2 strict replay failed: {error}"
+            ) from error
+        replay_paths = replay["paths"]
+        raw_glb = require_regular_file(
+            replay_paths["raw_pixal_glb"],
+            "geometry closure v2 raw Pixel3D GLB",
+        )
+        require_descriptor_content_matches(
+            raw_output,
+            raw_glb,
+            "raw Pixal GLB",
+            size_fields=("bytes", "size_bytes"),
+        )
+        if (
+            supplied_batch is not None
+            and replay_paths["raw_static_decision_batch"] != supplied_batch
+        ):
+            raise ClosureError(
+                "geometry closure v2 raw decision batch identity changed"
+            )
+        extra_evidence.extend(
+            (
+                replay_paths["repair_manifest"],
+                replay_paths["geometry_audit"],
+                replay_paths["raw_static_decision_batch"],
+            )
+        )
+        upstream_kind = "bounded_geometry_closure"
     elif schema == "avengine_generated_animal_geometry_closure_v1":
+        assert raw_glb is not None
         if upstream.get("status") != "pass_geometry_only":
             raise ClosureError("geometry closure did not pass its geometry-only gate")
         require_descriptor_matches(
@@ -355,6 +485,14 @@ def validate_upstream_lineage(
             require_size=False,
         )
         repair = load_json(repair_path, "geometry repair manifest")
+        try:
+            repair = derived_review_contract.validate_bounded_repair_manifest(
+                repair
+            )
+        except derived_review_contract.DerivedStaticReviewContractError as error:
+            raise ClosureError(
+                f"geometry repair manifest failed its strict contract: {error}"
+            ) from error
         require_descriptor_matches(
             repair.get("output"), tokenrig_input, "geometry repair output"
         )
@@ -373,9 +511,110 @@ def validate_upstream_lineage(
             "geometry repair raw Pixal manifest",
         )
         extra_evidence.append(repair_path)
+        if (
+            repair["implementation_contract"]
+            == derived_review_contract.ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+        ):
+            batch_from_repair = descriptor_path(
+                repair["lineage"].get("static_decision_batch"),
+                "oriented repair canonical raw static decision batch",
+            )
+            if (
+                raw_static_decision_batch_path is None
+                and require_oriented_batch_external_authority
+            ):
+                raise ClosureError(
+                    "oriented repair requires an externally pinned raw "
+                    "static decision batch"
+                )
+            if raw_static_decision_batch_path is not None:
+                supplied_batch = require_regular_file(
+                    raw_static_decision_batch_path,
+                    "externally supplied raw static decision batch",
+                )
+                same_file(
+                    supplied_batch,
+                    batch_from_repair,
+                    "oriented repair raw static decision batch",
+                )
+                if expected_raw_static_decision_batch_sha256 is None:
+                    raise ClosureError(
+                        "oriented repair raw decision batch needs an expected SHA-256"
+                    )
+                expected_batch_sha256 = require_sha256(
+                    expected_raw_static_decision_batch_sha256,
+                    "expected raw static decision batch SHA-256",
+                )
+                if sha256_file(supplied_batch) != expected_batch_sha256:
+                    raise ClosureError(
+                        "raw static decision batch changed from external authority"
+                    )
+            elif expected_raw_static_decision_batch_sha256 is not None:
+                raise ClosureError(
+                    "raw static decision batch path/hash must be supplied together"
+                )
+            from tools import (
+                register_controlled_animal_source_assets as source_registry,
+            )
+
+            try:
+                authenticated_batch, _batch, decisions = (
+                    source_registry.load_decision_batch(batch_from_repair)
+                )
+            except contracts.ContractError as error:
+                raise ClosureError(
+                    f"oriented repair raw decision batch is invalid: {error}"
+                ) from error
+            selected = decisions.get(repair["lineage"]["instance_id"])
+            selected_path = (
+                selected.get("path") if isinstance(selected, dict) else None
+            )
+            selected_payload = (
+                selected.get("payload") if isinstance(selected, dict) else None
+            )
+            static_decision = descriptor_path(
+                repair["lineage"].get("static_decision"),
+                "oriented repair raw static decision",
+            )
+            if (
+                authenticated_batch != batch_from_repair
+                or not isinstance(selected_payload, dict)
+                or selected_path != static_decision
+                or selected_payload.get("decision")
+                != "approved_for_lod_and_binding"
+                or selected_payload.get("state_classification")
+                != "research_candidate"
+                or selected_payload.get(
+                    "formal_dataset_registration_authorized"
+                )
+                is not False
+                or selected_payload.get("next_gate")
+                != "lod_then_species_rig_binding"
+                or not isinstance(selected_payload.get("checks"), dict)
+                or set(selected_payload["checks"])
+                != derived_review_contract.RAW_STATIC_CHECK_FIELDS
+                or any(
+                    value is not True
+                    for value in selected_payload["checks"].values()
+                )
+            ):
+                raise ClosureError(
+                    "oriented repair is not bound to the canonical approved "
+                    "raw static decision"
+                )
+            extra_evidence.append(batch_from_repair)
+        elif (
+            raw_static_decision_batch_path is not None
+            or expected_raw_static_decision_batch_sha256 is not None
+        ):
+            raise ClosureError(
+                "mirror-v2 repair cannot consume oriented raw decision "
+                "batch authority"
+            )
         upstream_kind = "bounded_geometry_closure"
     else:
         raise ClosureError(f"unsupported upstream geometry schema: {schema!r}")
+    assert raw_glb is not None
     return raw_glb, upstream_kind, extra_evidence
 
 
@@ -1054,8 +1293,29 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     upstream_manifest = require_regular_file(
         args.upstream_manifest, "upstream geometry manifest"
     )
+    raw_static_decision_batch = getattr(
+        args, "raw_static_decision_batch", None
+    )
+    expected_raw_static_decision_batch_sha256 = getattr(
+        args,
+        "expected_raw_static_decision_batch_sha256",
+        None,
+    )
+    if (raw_static_decision_batch is None) != (
+        expected_raw_static_decision_batch_sha256 is None
+    ):
+        raise ClosureError(
+            "raw static decision batch path/hash must be supplied together"
+        )
     raw_glb, upstream_kind, extra_upstream = validate_upstream_lineage(
-        raw_manifest, upstream_manifest, tokenrig_input
+        raw_manifest,
+        upstream_manifest,
+        tokenrig_input,
+        raw_static_decision_batch_path=raw_static_decision_batch,
+        expected_raw_static_decision_batch_sha256=(
+            expected_raw_static_decision_batch_sha256
+        ),
+        require_oriented_batch_external_authority=True,
     )
     readback = require_regular_file(args.geometry_readback, "geometry readback")
     readback_payload = validate_readback(readback, tokenrig_input, tokenrig_output)
@@ -1689,6 +1949,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     build_parser.add_argument("--output-root", type=Path, required=True)
     build_parser.add_argument("--raw-pixal-manifest", type=Path, required=True)
     build_parser.add_argument("--upstream-manifest", type=Path, required=True)
+    build_parser.add_argument("--raw-static-decision-batch", type=Path)
+    build_parser.add_argument(
+        "--expected-raw-static-decision-batch-sha256"
+    )
     build_parser.add_argument("--tokenrig-input", type=Path, required=True)
     build_parser.add_argument("--tokenrig-output", type=Path, required=True)
     build_parser.add_argument("--geometry-readback", type=Path, required=True)

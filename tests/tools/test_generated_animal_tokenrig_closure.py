@@ -8,6 +8,8 @@ import tempfile
 import pytest
 
 from tools import generated_animal_tokenrig_closure as closure
+from tools import publish_generated_animal_geometry_closure as geometry_closures
+from tools import register_controlled_animal_source_assets as source_registry
 
 
 def test_closure_validation_remains_compatible_with_python_39() -> None:
@@ -188,6 +190,449 @@ def test_upstream_raw_pixal_link_cannot_be_redirected_to_same_bytes(tmp_path):
     with pytest.raises(closure.ClosureError, match="different file"):
         closure.validate_upstream_lineage(
             raw_manifest, upstream_manifest, tokenrig_input
+        )
+
+
+def _bounded_upstream_fixture(tmp_path):
+    raw = tmp_path / "pixal_raw.glb"
+    raw.write_bytes(b"raw Pixel3D")
+    tokenrig_input = tmp_path / "bounded.glb"
+    tokenrig_input.write_bytes(b"bounded Pixel3D")
+    raw_manifest = tmp_path / "raw.manifest.json"
+    write_json(
+        raw_manifest,
+        {
+            "backend": "pixal3d",
+            "output": {
+                **descriptor(raw),
+                "bytes": raw.stat().st_size,
+            },
+        },
+    )
+    repair_path = tmp_path / "repair.json"
+    write_json(repair_path, {"fixture": True})
+    upstream_path = tmp_path / "geometry_closure.json"
+    write_json(
+        upstream_path,
+        {
+            "schema": "avengine_generated_animal_geometry_closure_v1",
+            "status": "pass_geometry_only",
+            "candidate": {"source_pixal_glb": descriptor(raw)},
+            "output": {
+                "glb": descriptor(tokenrig_input),
+                "repair_manifest": descriptor(repair_path),
+            },
+            "downstream": {"tokenrig_entry_authorized": True},
+        },
+    )
+    return raw, raw_manifest, tokenrig_input, repair_path, upstream_path
+
+
+def _direct_copy_v2_fixture(tmp_path, monkeypatch):
+    historical_raw = tmp_path / "original" / "pixal_raw.glb"
+    historical_raw.parent.mkdir()
+    historical_raw.write_bytes(b"direct-adopted Pixel3D")
+    adopted_raw = tmp_path / "adopted" / "pixal_raw.glb"
+    adopted_raw.parent.mkdir()
+    adopted_raw.write_bytes(historical_raw.read_bytes())
+    tokenrig_input = tmp_path / "bounded.glb"
+    tokenrig_input.write_bytes(b"bounded Pixel3D")
+    raw_manifest = tmp_path / "adopted" / "pixal_raw.manifest.json"
+    write_json(
+        raw_manifest,
+        {
+            "backend": "pixal3d",
+            "output": {
+                **descriptor(historical_raw),
+                "bytes": historical_raw.stat().st_size,
+            },
+        },
+    )
+    upstream = tmp_path / "geometry_closure_v2.json"
+    write_json(
+        upstream,
+        {"schema": "avengine_generated_animal_geometry_closure_v2"},
+    )
+    repair = tmp_path / "repair.json"
+    repair.write_bytes(b"repair")
+    audit = tmp_path / "audit.json"
+    audit.write_bytes(b"audit")
+    decision_batch = tmp_path / "raw_decision_batch.json"
+    decision_batch.write_bytes(b"decision batch")
+    observed: dict[str, object] = {}
+
+    def load_geometry_closure(path, **expected):
+        observed["path"] = path
+        observed["expected"] = expected
+        return {
+            "paths": {
+                "raw_pixal_glb": adopted_raw,
+                "repair_manifest": repair,
+                "geometry_audit": audit,
+                "raw_static_decision_batch": decision_batch,
+            }
+        }
+
+    monkeypatch.setattr(
+        geometry_closures,
+        "load_geometry_closure_v2",
+        load_geometry_closure,
+    )
+    return {
+        "historical_raw": historical_raw,
+        "adopted_raw": adopted_raw,
+        "raw_manifest": raw_manifest,
+        "tokenrig_input": tokenrig_input,
+        "upstream": upstream,
+        "repair": repair,
+        "audit": audit,
+        "decision_batch": decision_batch,
+        "observed": observed,
+    }
+
+
+def test_geometry_closure_v2_selects_hash_equivalent_direct_adopted_raw(
+    tmp_path,
+    monkeypatch,
+):
+    case = _direct_copy_v2_fixture(tmp_path, monkeypatch)
+    case["historical_raw"].unlink()
+
+    observed_raw, kind, extra = closure.validate_upstream_lineage(
+        case["raw_manifest"],
+        case["upstream"],
+        case["tokenrig_input"],
+    )
+
+    assert os.path.samefile(observed_raw, case["adopted_raw"])
+    assert kind == "bounded_geometry_closure"
+    assert extra == [case["repair"], case["audit"], case["decision_batch"]]
+    assert case["observed"]["path"] == case["upstream"]
+    expected = case["observed"]["expected"]
+    assert "expected_raw_pixal_glb" not in expected
+    assert expected["expected_pixal_manifest"] == case["raw_manifest"]
+    assert expected["expected_repaired_glb"] == case["tokenrig_input"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("sha256", "0" * 64, "SHA-256 mismatch"),
+        ("bytes", 1, "size mismatch"),
+    ],
+)
+def test_geometry_closure_v2_direct_copy_still_requires_raw_content_binding(
+    tmp_path,
+    monkeypatch,
+    field,
+    value,
+    match,
+):
+    case = _direct_copy_v2_fixture(tmp_path, monkeypatch)
+    manifest = closure.load_json(case["raw_manifest"], "raw Pixal manifest")
+    manifest["output"][field] = value
+    write_json(case["raw_manifest"], manifest)
+
+    with pytest.raises(closure.ClosureError, match=match):
+        closure.validate_upstream_lineage(
+            case["raw_manifest"],
+            case["upstream"],
+            case["tokenrig_input"],
+        )
+
+
+def test_tokenrig_lineage_reader_keeps_strict_mirror_v2_path(
+    tmp_path,
+    monkeypatch,
+):
+    raw, raw_manifest, tokenrig_input, repair_path, upstream = (
+        _bounded_upstream_fixture(tmp_path)
+    )
+    mirror = {
+        "implementation_contract": (
+            closure.derived_review_contract.REPAIR_IMPLEMENTATION_CONTRACT
+        ),
+        "lineage": {
+            "pixal_source": descriptor(raw),
+            "pixal_manifest": descriptor(raw_manifest),
+        },
+        "output": descriptor(tokenrig_input),
+    }
+    monkeypatch.setattr(
+        closure.derived_review_contract,
+        "validate_bounded_repair_manifest",
+        lambda _payload: deepcopy(mirror),
+    )
+
+    observed_raw, kind, extra = closure.validate_upstream_lineage(
+        raw_manifest,
+        upstream,
+        tokenrig_input,
+    )
+
+    assert observed_raw == raw
+    assert kind == "bounded_geometry_closure"
+    assert extra == [repair_path]
+
+
+def test_tokenrig_build_mode_keeps_legacy_watertight_without_batch(tmp_path):
+    raw = tmp_path / "pixal_raw.glb"
+    raw.write_bytes(b"raw pixal")
+    tokenrig_input = tmp_path / "watertight.glb"
+    tokenrig_input.write_bytes(b"watertight")
+    raw_manifest = tmp_path / "raw.manifest.json"
+    write_json(
+        raw_manifest,
+        {
+            "backend": "pixal3d",
+            "output": {
+                **descriptor(raw),
+                "bytes": raw.stat().st_size,
+            },
+        },
+    )
+    upstream = tmp_path / "watertight.json"
+    write_json(
+        upstream,
+        {
+            "schema": "avengine_watertight_textured_runtime_proxy_v1",
+            "input": descriptor(raw),
+            "output": descriptor(tokenrig_input),
+            "authority_contract": {
+                "approved_skeleton_or_animation_touched": False
+            },
+        },
+    )
+    _raw, kind, extra = closure.validate_upstream_lineage(
+        raw_manifest,
+        upstream,
+        tokenrig_input,
+        require_oriented_batch_external_authority=True,
+    )
+
+    assert kind == "watertight_runtime_proxy"
+    assert extra == []
+
+
+def test_tokenrig_lineage_reader_rejects_oriented_batch_on_mirror_v2(
+    tmp_path,
+    monkeypatch,
+):
+    raw, raw_manifest, tokenrig_input, _repair_path, upstream = (
+        _bounded_upstream_fixture(tmp_path)
+    )
+    batch = tmp_path / "raw_decision_batch.json"
+    batch.write_bytes(b"oriented authority")
+    mirror = {
+        "implementation_contract": (
+            closure.derived_review_contract.REPAIR_IMPLEMENTATION_CONTRACT
+        ),
+        "lineage": {
+            "pixal_source": descriptor(raw),
+            "pixal_manifest": descriptor(raw_manifest),
+        },
+        "output": descriptor(tokenrig_input),
+    }
+    monkeypatch.setattr(
+        closure.derived_review_contract,
+        "validate_bounded_repair_manifest",
+        lambda _payload: deepcopy(mirror),
+    )
+
+    with pytest.raises(
+        closure.ClosureError,
+        match="mirror-v2 repair cannot consume oriented",
+    ):
+        closure.validate_upstream_lineage(
+            raw_manifest,
+            upstream,
+            tokenrig_input,
+            raw_static_decision_batch_path=batch,
+            expected_raw_static_decision_batch_sha256=(
+                closure.sha256_file(batch)
+            ),
+            require_oriented_batch_external_authority=True,
+        )
+
+
+def test_tokenrig_lineage_reader_accepts_oriented_canonical_batch(
+    tmp_path,
+    monkeypatch,
+):
+    raw, raw_manifest, tokenrig_input, repair_path, upstream = (
+        _bounded_upstream_fixture(tmp_path)
+    )
+    decision = tmp_path / "raw_decision.json"
+    write_json(decision, {"fixture": True})
+    batch = tmp_path / "raw_decision_batch.json"
+    write_json(batch, {"fixture": True})
+    instance_id = "dog_fixture_oriented_sheet_v1"
+    oriented = {
+        "implementation_contract": (
+            closure.derived_review_contract
+            .ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+        ),
+        "lineage": {
+            "instance_id": instance_id,
+            "pixal_source": descriptor(raw),
+            "pixal_manifest": descriptor(raw_manifest),
+            "static_decision_batch": descriptor(batch),
+            "static_decision": descriptor(decision),
+        },
+        "output": descriptor(tokenrig_input),
+    }
+    approved = {
+        "decision": "approved_for_lod_and_binding",
+        "state_classification": "research_candidate",
+        "formal_dataset_registration_authorized": False,
+        "next_gate": "lod_then_species_rig_binding",
+        "checks": {
+            name: True
+            for name in closure.derived_review_contract.RAW_STATIC_CHECK_FIELDS
+        },
+    }
+    monkeypatch.setattr(
+        closure.derived_review_contract,
+        "validate_bounded_repair_manifest",
+        lambda _payload: deepcopy(oriented),
+    )
+    monkeypatch.setattr(
+        source_registry,
+        "load_decision_batch",
+        lambda _path: (
+            batch,
+            {},
+            {
+                instance_id: {
+                    "path": decision,
+                    "payload": deepcopy(approved),
+                }
+            },
+        ),
+    )
+
+    _raw, kind, extra = closure.validate_upstream_lineage(
+        raw_manifest,
+        upstream,
+        tokenrig_input,
+        raw_static_decision_batch_path=batch,
+        expected_raw_static_decision_batch_sha256=closure.sha256_file(batch),
+        require_oriented_batch_external_authority=True,
+    )
+
+    assert kind == "bounded_geometry_closure"
+    assert extra == [repair_path, batch]
+
+
+def test_tokenrig_lineage_reader_rejects_oriented_batch_rebinding(
+    tmp_path,
+    monkeypatch,
+):
+    raw, raw_manifest, tokenrig_input, _repair_path, upstream = (
+        _bounded_upstream_fixture(tmp_path)
+    )
+    decision = tmp_path / "raw_decision.json"
+    decision.write_bytes(b"decision")
+    rebound = tmp_path / "rebound_decision.json"
+    rebound.write_bytes(decision.read_bytes())
+    batch = tmp_path / "raw_decision_batch.json"
+    batch.write_bytes(b"batch")
+    instance_id = "dog_fixture_oriented_sheet_v1"
+    oriented = {
+        "implementation_contract": (
+            closure.derived_review_contract
+            .ORIENTED_REPAIR_IMPLEMENTATION_CONTRACT
+        ),
+        "lineage": {
+            "instance_id": instance_id,
+            "pixal_source": descriptor(raw),
+            "pixal_manifest": descriptor(raw_manifest),
+            "static_decision_batch": descriptor(batch),
+            "static_decision": descriptor(decision),
+        },
+        "output": descriptor(tokenrig_input),
+    }
+    monkeypatch.setattr(
+        closure.derived_review_contract,
+        "validate_bounded_repair_manifest",
+        lambda _payload: deepcopy(oriented),
+    )
+    monkeypatch.setattr(
+        source_registry,
+        "load_decision_batch",
+        lambda _path: (
+            batch,
+            {},
+            {
+                instance_id: {
+                    "path": rebound,
+                    "payload": {
+                        "decision": "approved_for_lod_and_binding",
+                    },
+                }
+            },
+        ),
+    )
+
+    with pytest.raises(
+        closure.ClosureError,
+        match="canonical approved raw static decision",
+    ):
+        closure.validate_upstream_lineage(
+            raw_manifest,
+            upstream,
+            tokenrig_input,
+            raw_static_decision_batch_path=batch,
+            expected_raw_static_decision_batch_sha256=(
+                closure.sha256_file(batch)
+            ),
+            require_oriented_batch_external_authority=True,
+        )
+
+
+def test_tokenrig_lineage_reader_rejects_raw_fallback_with_derived_authority(
+    tmp_path,
+):
+    raw = tmp_path / "pixal_raw.glb"
+    raw.write_bytes(b"raw pixal")
+    tokenrig_input = tmp_path / "watertight.glb"
+    tokenrig_input.write_bytes(b"watertight")
+    raw_manifest = tmp_path / "raw.manifest.json"
+    write_json(
+        raw_manifest,
+        {
+            "backend": "pixal3d",
+            "output": {
+                **descriptor(raw),
+                "bytes": raw.stat().st_size,
+            },
+        },
+    )
+    upstream = tmp_path / "watertight.json"
+    write_json(
+        upstream,
+        {
+            "schema": "avengine_watertight_textured_runtime_proxy_v1",
+            "input": descriptor(raw),
+            "output": descriptor(tokenrig_input),
+            "authority_contract": {
+                "approved_skeleton_or_animation_touched": False
+            },
+        },
+    )
+    batch = tmp_path / "decision_batch.json"
+    batch.write_bytes(b"batch")
+
+    with pytest.raises(closure.ClosureError, match="raw/watertight fallback"):
+        closure.validate_upstream_lineage(
+            raw_manifest,
+            upstream,
+            tokenrig_input,
+            raw_static_decision_batch_path=batch,
+            expected_raw_static_decision_batch_sha256=(
+                closure.sha256_file(batch)
+            ),
+            require_oriented_batch_external_authority=True,
         )
 
 
