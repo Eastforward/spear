@@ -1518,6 +1518,7 @@ class SecureReviewPublication:
         self.published = False
         self.root_fd = -1
         self.root_identity = (-1, -1)
+        self.resolved_staging_root: Optional[Path] = None
         self.directories: dict[str, DirectoryHandle] = {}
         try:
             try:
@@ -1550,13 +1551,17 @@ class SecureReviewPublication:
             for label in MEDIA_LABELS:
                 self._mkdir(f"media/{label}_frames")
             self._require_proc_path()
+            self._bind_resolved_staging_root()
         except Exception:
             self.close()
             raise
 
     @property
     def proc_root(self) -> Path:
-        return Path(f"/proc/self/fd/{self.root_fd}")
+        # Use the long-lived producer PID rather than ``/proc/self``.  Every
+        # renderer/encoder descendant must resolve the same held directory,
+        # including FFmpeg/FFprobe grandchildren that do not inherit this fd.
+        return Path(f"/proc/{os.getpid()}/fd/{self.root_fd}")
 
     def proc_path(self, relative: str) -> Path:
         return self.proc_root / relative
@@ -1568,7 +1573,53 @@ class SecureReviewPublication:
             or _identity(current) != self.root_identity
             or _identity(os.fstat(self.root_fd)) != self.root_identity
         ):
-            raise DirectNativeReviewError("/proc/self/fd staging identity changed")
+            raise DirectNativeReviewError("/proc producer-fd staging identity changed")
+
+    def _bind_resolved_staging_root(self) -> None:
+        resolved = Path(os.path.realpath(self.proc_root))
+        expected = self.parent_path / self.staging_name
+        if resolved != expected:
+            raise DirectNativeReviewError(
+                "held publication realpath differs from its private staging path"
+            )
+        descriptor, identity = open_absolute_directory(resolved)
+        try:
+            if (
+                identity != self.root_identity
+                or _identity(os.fstat(descriptor)) != self.root_identity
+            ):
+                raise DirectNativeReviewError(
+                    "resolved private staging identity changed"
+                )
+        finally:
+            os.close(descriptor)
+        self.resolved_staging_root = resolved
+
+    def _require_staging_path_still_held(self) -> None:
+        if self.resolved_staging_root is None:
+            raise DirectNativeReviewError("private staging realpath was not bound")
+        self._require_proc_path()
+        self._require_parent_path_still_held()
+        entry = os.stat(
+            self.staging_name,
+            dir_fd=self.parent_fd,
+            follow_symlinks=False,
+        )
+        resolved = Path(os.path.realpath(self.proc_root))
+        descriptor, identity = open_absolute_directory(self.resolved_staging_root)
+        try:
+            if (
+                not stat.S_ISDIR(entry.st_mode)
+                or _identity(entry) != self.root_identity
+                or resolved != self.resolved_staging_root
+                or identity != self.root_identity
+                or _identity(os.fstat(descriptor)) != self.root_identity
+            ):
+                raise DirectNativeReviewError(
+                    "private staging path no longer binds the held publication"
+                )
+        finally:
+            os.close(descriptor)
 
     def _mkdir(self, relative: str) -> None:
         parent_relative, name = (
@@ -1714,7 +1765,7 @@ class SecureReviewPublication:
         return records
 
     def seal(self, expected_files: set[str]) -> dict[str, dict[str, Any]]:
-        self._require_proc_path()
+        self._require_staging_path_still_held()
         records = self._scan(required_mode=None)
         if set(records) != expected_files:
             raise DirectNativeReviewError(
@@ -1740,6 +1791,7 @@ class SecureReviewPublication:
         sealed = self._scan(required_mode=0o444)
         if sealed != records:
             raise DirectNativeReviewError("publication bytes changed while sealing")
+        self._require_staging_path_still_held()
         return sealed
 
     def verify(self, expected: Mapping[str, Mapping[str, Any]]) -> None:
@@ -1776,8 +1828,9 @@ class SecureReviewPublication:
             )
 
     def publish(self, expected: Mapping[str, Mapping[str, Any]]) -> None:
-        self._require_parent_path_still_held()
+        self._require_staging_path_still_held()
         self.verify(expected)
+        self._require_staging_path_still_held()
         try:
             renameat2 = getattr(ctypes.CDLL(None, use_errno=True), "renameat2")
         except AttributeError as error:
@@ -2189,6 +2242,7 @@ def build_commands(
                     str(paths["video"]),
                     "--manifest",
                     str(paths["encode_manifest"]),
+                    "--preserve-lexical-media-subprocess-paths",
                 ],
             )
         )
@@ -2209,6 +2263,44 @@ def _replace_prefix(value: Any, old: str, new: str) -> Any:
     return value
 
 
+def _normalize_publication_lineage_value(
+    value: Any,
+    publication: SecureReviewPublication,
+) -> Any:
+    if publication.resolved_staging_root is None:
+        raise DirectNativeReviewError("private staging realpath was not bound")
+    publication._require_staging_path_still_held()
+    normalized = value
+    stale_prefixes = (
+        str(publication.proc_root),
+        str(publication.resolved_staging_root),
+    )
+    for old_prefix in stale_prefixes:
+        normalized = _replace_prefix(
+            normalized,
+            old_prefix,
+            str(publication.output_root),
+        )
+
+    def contains_stale_prefix(candidate: Any) -> bool:
+        if isinstance(candidate, str):
+            return any(
+                candidate == prefix or candidate.startswith(prefix + "/")
+                for prefix in stale_prefixes
+            )
+        if isinstance(candidate, list):
+            return any(contains_stale_prefix(item) for item in candidate)
+        if isinstance(candidate, dict):
+            return any(contains_stale_prefix(item) for item in candidate.values())
+        return False
+
+    if contains_stale_prefix(normalized):
+        raise DirectNativeReviewError(
+            "generated lineage retains a private staging path"
+        )
+    return normalized
+
+
 def _published_file_record(root: Path, relative: str, payload: bytes) -> dict[str, Any]:
     return {
         "path": str(root / relative),
@@ -2220,29 +2312,30 @@ def _published_file_record(root: Path, relative: str, payload: bytes) -> dict[st
 def normalize_generated_lineage(
     publication: SecureReviewPublication,
 ) -> None:
-    old_prefix = str(publication.proc_root)
-    new_prefix = str(publication.output_root)
+    publication._require_staging_path_still_held()
     deformation_relative = "evidence/deformation_audit.json"
     deformation = strict_json_bytes(
         publication.read_file(deformation_relative), "deformation audit"
     )
     publication.rewrite_owned(
         deformation_relative,
-        pretty_json_bytes(_replace_prefix(deformation, old_prefix, new_prefix)),
+        pretty_json_bytes(
+            _normalize_publication_lineage_value(deformation, publication)
+        ),
     )
     for label in MEDIA_LABELS:
         render_relative = f"media/{label}_render_manifest.json"
         render = strict_json_bytes(
             publication.read_file(render_relative), f"{label} render manifest"
         )
-        render = _replace_prefix(render, old_prefix, new_prefix)
+        render = _normalize_publication_lineage_value(render, publication)
         render_bytes = pretty_json_bytes(render)
         publication.rewrite_owned(render_relative, render_bytes)
         encode_relative = f"media/{label}_encode_manifest.json"
         encode = strict_json_bytes(
             publication.read_file(encode_relative), f"{label} encode manifest"
         )
-        encode = _replace_prefix(encode, old_prefix, new_prefix)
+        encode = _normalize_publication_lineage_value(encode, publication)
         encode["render_manifest"] = _published_file_record(
             publication.output_root, render_relative, render_bytes
         )
@@ -2254,6 +2347,7 @@ def normalize_generated_lineage(
         }
         encode_bytes = pretty_json_bytes(encode)
         publication.rewrite_owned(encode_relative, encode_bytes)
+    publication._require_staging_path_still_held()
 
 
 def _expected_review_files() -> set[str]:
@@ -2298,7 +2392,7 @@ def _command_records(
 
 def _media_subprocess_contract_for_root(
     review_root: Path,
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, Any]:
     ffmpeg_records = []
     ffprobe_records = []
     for label in MEDIA_LABELS:
@@ -2354,38 +2448,67 @@ def _media_subprocess_contract_for_root(
                 ],
             }
         )
-    return {"ffmpeg": ffmpeg_records, "ffprobe": ffprobe_records}
+    return {
+        "scope": "authenticated_encoder_process_only",
+        "ffmpeg": ffmpeg_records,
+        "ffprobe": ffprobe_records,
+    }
 
 
 def _media_subprocess_contract(
     publication: SecureReviewPublication,
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, Any]:
     return _media_subprocess_contract_for_root(publication.proc_root)
 
 
 def _normalize_historical_proc_argv(
     argv: Any,
     *,
+    expected_argv: Sequence[str],
     published_root: Path,
     expected_proc_prefix: Optional[str],
     label: str,
 ) -> tuple[list[str], Optional[str]]:
-    if not isinstance(argv, list) or not argv:
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or len(argv) != len(expected_argv)
+        or any(not isinstance(argument, str) for argument in expected_argv)
+    ):
         raise DirectNativeReviewError(f"{label} argv is incomplete")
     normalized = []
     proc_prefix = expected_proc_prefix
-    marker = "/proc/self/fd/"
-    for argument in argv:
+    marker = "/proc/"
+    published_prefix = str(published_root)
+    for argument, expected_argument in zip(argv, expected_argv):
         if not isinstance(argument, str):
             raise DirectNativeReviewError(f"{label} argv contains a non-string")
-        if argument.startswith(marker):
+        root_bound = (
+            expected_argument == published_prefix
+            or expected_argument.startswith(published_prefix + "/")
+        )
+        held_path = argument.startswith(marker)
+        if root_bound and not held_path:
+            raise DirectNativeReviewError(
+                f"{label} root-bound argv bypasses the held publication root"
+            )
+        if held_path:
             remainder = argument[len(marker) :]
-            descriptor, separator, suffix = remainder.partition("/")
-            if not descriptor.isdigit():
+            producer_pid, fd_separator, descriptor_path = remainder.partition("/fd/")
+            descriptor, path_separator, suffix = descriptor_path.partition("/")
+            if (
+                fd_separator != "/fd/"
+                or not producer_pid.isdigit()
+                or int(producer_pid) <= 0
+                or str(int(producer_pid)) != producer_pid
+                or not descriptor.isdigit()
+                or int(descriptor) <= 0
+                or str(int(descriptor)) != descriptor
+            ):
                 raise DirectNativeReviewError(
                     f"{label} argv contains an invalid held-fd path"
                 )
-            current_prefix = f"{marker}{descriptor}"
+            current_prefix = f"{marker}{producer_pid}/fd/{descriptor}"
             if proc_prefix is None:
                 proc_prefix = current_prefix
             elif current_prefix != proc_prefix:
@@ -2393,7 +2516,7 @@ def _normalize_historical_proc_argv(
                     f"{label} argv changed held publication roots"
                 )
             argument = str(published_root)
-            if separator:
+            if path_separator:
                 argument = f"{argument}/{suffix}"
         normalized.append(argument)
     return normalized, proc_prefix
@@ -3072,9 +3195,11 @@ def _validate_receipt_shape(receipt: Mapping[str, Any]) -> None:
             )
     media_contract = require_exact_keys(
         toolchain["media_subprocess_contract"],
-        {"ffmpeg", "ffprobe"},
+        {"scope", "ffmpeg", "ffprobe"},
         "media subprocess contract",
     )
+    if media_contract["scope"] != "authenticated_encoder_process_only":
+        raise DirectNativeReviewError("media subprocess contract scope changed")
     for executable_name in ("ffmpeg", "ffprobe"):
         records = media_contract[executable_name]
         if (
@@ -3413,6 +3538,7 @@ def _validate_execution_lineage_against_root(
             )
         normalized, proc_prefix = _normalize_historical_proc_argv(
             command_record["observed_argv"],
+            expected_argv=expected_argv,
             published_root=root,
             expected_proc_prefix=proc_prefix,
             label=f"review command {stage}",
@@ -3439,6 +3565,7 @@ def _validate_execution_lineage_against_root(
                 )
             normalized, proc_prefix = _normalize_historical_proc_argv(
                 observed_record["observed_argv"],
+                expected_argv=expected_record["observed_argv"],
                 published_root=root,
                 expected_proc_prefix=proc_prefix,
                 label=(f"{executable_name} subprocess {observed_record['label']}"),
@@ -3491,6 +3618,7 @@ def validate_published_review(
     *,
     expected_raw_review_sha256: str,
     ffprobe: ExecutableIdentity,
+    probe_media: bool = True,
 ) -> dict[str, Any]:
     """Reauthenticate a published review using caller-provided raw authority."""
 
@@ -3546,6 +3674,7 @@ def validate_published_review(
                 MEDIA_LABELS,
                 reviewed_glb,
                 REVIEW_FRAMES,
+                probe_videos=probe_media,
             )
         finally:
             if old_path is None:
@@ -3724,6 +3853,7 @@ def main(argv=None) -> int:
         command_environment = dict(os.environ)
         command_environment["PATH"] = executable_path
         for stage, command in commands:
+            publication._require_staging_path_still_held()
             for executable in executables.values():
                 executable.verify()
             for tool in review_tools.values():
@@ -3734,6 +3864,7 @@ def main(argv=None) -> int:
                 env=command_environment,
                 check=True,
             )
+            publication._require_staging_path_still_held()
             for executable in executables.values():
                 executable.verify()
             for tool in review_tools.values():
@@ -3755,12 +3886,14 @@ def main(argv=None) -> int:
                 MEDIA_LABELS,
                 input_glb,
                 REVIEW_FRAMES,
+                probe_videos=False,
             )
         finally:
             if old_path is None:
                 os.environ.pop("PATH", None)
             else:
                 os.environ["PATH"] = old_path
+        publication._require_staging_path_still_held()
         for tool in review_tools.values():
             tool.verify()
         normalize_generated_lineage(publication)
@@ -3793,6 +3926,7 @@ def main(argv=None) -> int:
             publication.output_root,
             expected_raw_review_sha256=raw_review_sha256,
             ffprobe=executables["ffprobe"],
+            probe_media=False,
         )
         for tool in review_tools.values():
             tool.verify()

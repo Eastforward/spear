@@ -40,6 +40,14 @@ def parse_args(argv=None):
     parser.add_argument("--fps", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument(
+        "--preserve-lexical-media-subprocess-paths",
+        action="store_true",
+        help=(
+            "Use the absolute lexical frame/output paths for FFmpeg and "
+            "FFprobe while retaining resolved paths for artifact validation."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -54,6 +62,9 @@ def write_json_exclusive(path: Path, payload: dict) -> None:
 
 def main(argv=None):
     args = parse_args(argv)
+    raw_input_glb = Path(os.path.abspath(args.input_glb))
+    raw_render_manifest = Path(os.path.abspath(args.render_manifest))
+    raw_frame_dir = Path(os.path.abspath(args.frame_dir))
     raw_output = Path(os.path.abspath(args.output))
     raw_manifest = Path(os.path.abspath(args.manifest))
     if os.path.lexists(raw_output):
@@ -62,9 +73,9 @@ def main(argv=None):
         raise RuntimeError(
             f"refusing to replace encode manifest: {raw_manifest}"
         )
-    args.input_glb = args.input_glb.resolve()
-    args.render_manifest = args.render_manifest.resolve()
-    args.frame_dir = args.frame_dir.resolve()
+    args.input_glb = raw_input_glb.resolve()
+    args.render_manifest = raw_render_manifest.resolve()
+    args.frame_dir = raw_frame_dir.resolve()
     args.output = raw_output
     args.manifest = raw_manifest
     if (args.width, args.height, args.fps) != (512, 384, 8):
@@ -81,6 +92,15 @@ def main(argv=None):
         n_frames=args.n_frames,
     )
     ffmpeg = expected_review_ffmpeg_config(args.frame_dir, args.n_frames)
+    ffmpeg_command = (
+        expected_review_ffmpeg_config(
+            raw_frame_dir,
+            args.n_frames,
+            resolve_input_pattern=False,
+        )
+        if args.preserve_lexical_media_subprocess_paths
+        else ffmpeg
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [
@@ -88,23 +108,23 @@ def main(argv=None):
             "-nostdin",
             "-n",
             "-loglevel",
-            ffmpeg["loglevel"],
+            ffmpeg_command["loglevel"],
             "-framerate",
-            str(ffmpeg["input_framerate"]),
+            str(ffmpeg_command["input_framerate"]),
             "-start_number",
-            str(ffmpeg["start_number"]),
+            str(ffmpeg_command["start_number"]),
             "-i",
-            ffmpeg["input_pattern"],
+            ffmpeg_command["input_pattern"],
             "-frames:v",
-            str(ffmpeg["frame_count"]),
+            str(ffmpeg_command["frame_count"]),
             "-c:v",
-            ffmpeg["video_codec"],
+            ffmpeg_command["video_codec"],
             "-crf",
-            str(ffmpeg["crf"]),
+            str(ffmpeg_command["crf"]),
             "-pix_fmt",
-            ffmpeg["pixel_format"],
+            ffmpeg_command["pixel_format"],
             "-movflags",
-            ffmpeg["movflags"],
+            ffmpeg_command["movflags"],
             str(args.output),
         ],
         cwd=SPEAR_ROOT,
@@ -116,6 +136,11 @@ def main(argv=None):
         expected_width=args.width,
         expected_height=args.height,
         expected_fps=args.fps,
+        probe_path=(
+            raw_output
+            if args.preserve_lexical_media_subprocess_paths
+            else None
+        ),
     )
     # Re-read the render lineage after FFmpeg so a concurrent frame or input
     # mutation cannot be hidden behind a previously loaded JSON object.

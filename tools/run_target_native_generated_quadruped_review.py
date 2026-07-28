@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import time
+from typing import Optional
 
 
 SPEAR_ROOT = Path(__file__).resolve().parents[1]
@@ -792,16 +793,22 @@ def review_media_paths(paths: dict[str, Path], label: str) -> dict[str, Path]:
 
 
 def expected_review_ffmpeg_config(
-    frame_dir: Path, n_frames: int
+    frame_dir: Path,
+    n_frames: int,
+    *,
+    resolve_input_pattern: bool = True,
 ) -> dict:
+    input_pattern = frame_dir / "frame_%04d.png"
+    if resolve_input_pattern:
+        input_pattern = input_pattern.resolve()
+    else:
+        input_pattern = Path(os.path.abspath(os.fspath(input_pattern)))
     return {
         "overwrite": False,
         "loglevel": "error",
         "input_framerate": REVIEW_MEDIA_FPS,
         "start_number": 0,
-        "input_pattern": str(
-            (frame_dir / "frame_%04d.png").resolve()
-        ),
+        "input_pattern": str(input_pattern),
         "frame_count": n_frames,
         "video_codec": "libx264",
         "crf": 18,
@@ -899,8 +906,21 @@ def verify_video(
     expected_width: int = REVIEW_MEDIA_WIDTH,
     expected_height: int = REVIEW_MEDIA_HEIGHT,
     expected_fps: int = REVIEW_MEDIA_FPS,
+    probe_path: Optional[Path] = None,
 ) -> dict:
     path = regular_file(path, "review video")
+    if probe_path is None:
+        probe_path = path
+    else:
+        probe_path = Path(os.path.abspath(os.fspath(probe_path)))
+        if (
+            os.path.islink(probe_path)
+            or not probe_path.is_file()
+            or not probe_path.samefile(path)
+        ):
+            raise RuntimeError(
+                "ffprobe lexical path does not bind the reviewed video"
+            )
     result = subprocess.run(
         [
             "ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -909,7 +929,7 @@ def verify_video(
                 "stream=codec_name,width,height,nb_frames,"
                 "r_frame_rate,avg_frame_rate:format=duration"
             ),
-            "-of", "json", str(path),
+            "-of", "json", str(probe_path),
         ],
         check=True,
         capture_output=True,
@@ -1214,13 +1234,23 @@ def require_review_encode_stage(
     label: str,
     input_glb: Path,
     n_frames: int,
+    *,
+    probe_video: bool = True,
 ) -> tuple[dict, dict]:
     action, view, yaw = review_media_spec(label)
     media_paths = review_media_paths(paths, label)
     render_payload = require_review_render_stage(
         paths, label, input_glb, n_frames
     )
-    video_record = verify_video(media_paths["video"], n_frames)
+    video_record = (
+        verify_video(media_paths["video"], n_frames)
+        if probe_video
+        else require_recorded_video_readback(
+            media_paths["encode_manifest"],
+            media_paths["video"],
+            n_frames,
+        )
+    )
     require_encode_manifest(
         media_paths["encode_manifest"],
         label=label,
@@ -1245,14 +1275,68 @@ def require_review_media_set(
     labels: tuple[str, ...],
     input_glb: Path,
     n_frames: int,
+    *,
+    probe_videos: bool = True,
 ) -> tuple[dict, dict]:
     media = {}
     lineage = {}
     for label in labels:
         media[label], lineage[label] = require_review_encode_stage(
-            paths, label, input_glb, n_frames
+            paths,
+            label,
+            input_glb,
+            n_frames,
+            probe_video=probe_videos,
         )
     return media, lineage
+
+
+def require_recorded_video_readback(
+    encode_manifest_path: Path,
+    video_path: Path,
+    n_frames: int,
+) -> dict:
+    payload = load_json_artifact(
+        encode_manifest_path,
+        "review encode manifest for recorded video readback",
+    )
+    record = payload.get("video")
+    expected_fields = {
+        "path",
+        "sha256",
+        "size_bytes",
+        "codec",
+        "width",
+        "height",
+        "frame_count",
+        "frame_rate",
+        "duration_seconds",
+    }
+    if not isinstance(record, dict) or set(record) != expected_fields:
+        raise RuntimeError("recorded FFprobe video readback fields changed")
+    current = file_record(video_path)
+    duration = record.get("duration_seconds")
+    try:
+        frame_rate = Fraction(str(record.get("frame_rate", "0/1")))
+    except (ValueError, ZeroDivisionError) as error:
+        raise RuntimeError("recorded FFprobe frame rate is invalid") from error
+    if (
+        any(record.get(name) != current[name] for name in current)
+        or record.get("codec") != "h264"
+        or record.get("width") != REVIEW_MEDIA_WIDTH
+        or record.get("height") != REVIEW_MEDIA_HEIGHT
+        or record.get("frame_count") != n_frames
+        or frame_rate != REVIEW_MEDIA_FPS
+        or isinstance(duration, bool)
+        or not isinstance(duration, (int, float))
+        or not math.isfinite(duration)
+        or abs(duration - n_frames / REVIEW_MEDIA_FPS)
+        > 1.0 / REVIEW_MEDIA_FPS
+    ):
+        raise RuntimeError(
+            "recorded FFprobe readback contradicts the sealed video"
+        )
+    return dict(record)
 
 
 def load_json_artifact(path: Path, label: str) -> dict:

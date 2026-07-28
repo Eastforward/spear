@@ -7,11 +7,15 @@ import copy
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
 
+from tools import encode_quadruped_review_media as media_encoder
 from tools import run_direct_native_authored_quadruped_animation_review as review
+from tools import run_target_native_generated_quadruped_review as strict_review
 
 
 SCRIPT = (
@@ -173,17 +177,20 @@ def minimal_receipt():
             }
         )
     subprocess_contract = {
-        executable_name: [
-            {
-                "label": label,
-                "resolved_executable_identity": (
-                    f"toolchain.executables.{executable_name}"
-                ),
-                "observed_argv": [executable_name, label],
-            }
-            for label in review.MEDIA_LABELS
-        ]
-        for executable_name in ("ffmpeg", "ffprobe")
+        "scope": "authenticated_encoder_process_only",
+        **{
+            executable_name: [
+                {
+                    "label": label,
+                    "resolved_executable_identity": (
+                        f"toolchain.executables.{executable_name}"
+                    ),
+                    "observed_argv": [executable_name, label],
+                }
+                for label in review.MEDIA_LABELS
+            ]
+            for executable_name in ("ffmpeg", "ffprobe")
+        },
     }
     media_outputs = {
         label: {
@@ -483,7 +490,7 @@ def test_published_tree_binding_uses_fixed_185_file_protocol_not_receipt_self_re
 def test_execution_lineage_requires_exact_commands_labels_and_one_held_root(tmp_path):
     receipt = minimal_receipt()
     published_root = tmp_path / "published-review"
-    observed_root = Path("/proc/self/fd/73")
+    observed_root = Path("/proc/4242/fd/73")
     commands = review.build_commands(
         root=observed_root,
         blender=Path(
@@ -526,12 +533,61 @@ def test_execution_lineage_requires_exact_commands_labels_and_one_held_root(tmp_
         -1
     ] = split_root["toolchain"]["media_subprocess_contract"]["ffprobe"][0][
         "observed_argv"
-    ][-1].replace("/proc/self/fd/73", "/proc/self/fd/74")
+    ][-1].replace("/proc/4242/fd/73", "/proc/4242/fd/74")
     with pytest.raises(review.DirectNativeReviewError, match="publication roots"):
         review._validate_execution_lineage_against_root(
             split_root,
             published_root,
         )
+
+    mixed_command = copy.deepcopy(receipt)
+    command = mixed_command["toolchain"]["commands"][0]
+    root_index = next(
+        index
+        for index, argument in enumerate(command["observed_argv"])
+        if argument.startswith(str(observed_root) + "/")
+    )
+    command["observed_argv"][root_index] = command["published_equivalent_argv"][
+        root_index
+    ]
+    with pytest.raises(review.DirectNativeReviewError, match="bypasses the held"):
+        review._validate_execution_lineage_against_root(
+            mixed_command,
+            published_root,
+        )
+
+    mixed_media = copy.deepcopy(receipt)
+    media_argv = mixed_media["toolchain"]["media_subprocess_contract"]["ffprobe"][0][
+        "observed_argv"
+    ]
+    media_argv[-1] = media_argv[-1].replace(
+        str(observed_root),
+        str(published_root),
+    )
+    with pytest.raises(review.DirectNativeReviewError, match="bypasses the held"):
+        review._validate_execution_lineage_against_root(
+            mixed_media,
+            published_root,
+        )
+
+    for invalid_root in (
+        "/proc/0/fd/73",
+        "/proc/04242/fd/73",
+        "/proc/4242/fd/0",
+        "/proc/4242/fd/073",
+        "/proc/self/fd/73",
+    ):
+        with pytest.raises(
+            review.DirectNativeReviewError,
+            match="invalid held-fd path",
+        ):
+            review._normalize_historical_proc_argv(
+                [f"{invalid_root}/artifact"],
+                expected_argv=[str(published_root / "artifact")],
+                published_root=published_root,
+                expected_proc_prefix=None,
+                label="invalid held root",
+            )
 
 
 def test_embedded_gate_parity_rejects_self_reported_pass_values():
@@ -783,6 +839,217 @@ def test_ancestor_symlink_is_rejected_before_private_staging(tmp_path):
     assert not any(real.iterdir())
 
 
+def test_proc_root_is_resolvable_by_nested_media_subprocesses(tmp_path):
+    output_root = tmp_path / "review"
+    publication = review.SecureReviewPublication(output_root)
+    source = b"held publication payload"
+    output_relative = "media/walking_side_frames/nested_probe.json"
+    publication.write_exclusive("evidence/probe.bin", source)
+    nested_script = (
+        "import json\n"
+        "from pathlib import Path\n"
+        "import sys\n"
+        "payload = Path(sys.argv[1]).read_bytes()\n"
+        "output = Path(sys.argv[2])\n"
+        "output.write_text(json.dumps({\n"
+        "    'source': str(Path(sys.argv[1]).resolve()),\n"
+        "    'manifest': str(output.resolve()),\n"
+        "    'size_bytes': len(payload),\n"
+        "}), encoding='utf-8')\n"
+    )
+    child_script = (
+        "import subprocess\n"
+        "import sys\n"
+        f"nested_script = {nested_script!r}\n"
+        "subprocess.run(\n"
+        "    [sys.executable, '-c', nested_script, sys.argv[1], sys.argv[2]],\n"
+        "    check=True,\n"
+        "    close_fds=True,\n"
+        ")\n"
+    )
+    try:
+        assert str(publication.proc_root).startswith(f"/proc/{os.getpid()}/fd/")
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                child_script,
+                str(publication.proc_path("evidence/probe.bin")),
+                str(publication.proc_path(output_relative)),
+            ],
+            check=True,
+            close_fds=True,
+        )
+        generated = review.strict_json_bytes(
+            publication.read_file(output_relative),
+            "nested generated lineage",
+        )
+        resolved_prefix = str(publication.resolved_staging_root)
+        assert generated["source"].startswith(resolved_prefix + "/")
+        assert generated["manifest"].startswith(resolved_prefix + "/")
+        normalized = review._normalize_publication_lineage_value(
+            generated,
+            publication,
+        )
+        publication.rewrite_owned(
+            output_relative,
+            review.pretty_json_bytes(normalized),
+        )
+        records = publication.seal({"evidence/probe.bin", output_relative})
+        publication.publish(records)
+    finally:
+        publication.close()
+    published = json.loads((output_root / output_relative).read_text(encoding="utf-8"))
+    assert published == {
+        "source": str(output_root / "evidence/probe.bin"),
+        "manifest": str(output_root / output_relative),
+        "size_bytes": len(source),
+    }
+
+
+def test_direct_encoder_media_subprocess_argv_matches_receipt_contract(
+    tmp_path,
+    monkeypatch,
+):
+    publication = review.SecureReviewPublication(tmp_path / "review")
+    publication.write_exclusive("evidence/input.glb", b"glb")
+    publication.write_exclusive("media/walking_side_render_manifest.json", b"{}")
+    captured = {}
+
+    def fake_render_manifest(*_args, **_kwargs):
+        return {"frames": []}
+
+    def fake_ffmpeg(argv, **_kwargs):
+        captured["ffmpeg"] = list(argv)
+        Path(argv[-1]).write_bytes(b"video")
+        return SimpleNamespace()
+
+    def fake_verify_video(path, _expected_frames, **kwargs):
+        captured["probe_path"] = Path(kwargs["probe_path"])
+        return strict_review.file_record(path)
+
+    monkeypatch.setattr(
+        media_encoder,
+        "require_render_manifest",
+        fake_render_manifest,
+    )
+    monkeypatch.setattr(media_encoder.subprocess, "run", fake_ffmpeg)
+    monkeypatch.setattr(media_encoder, "verify_video", fake_verify_video)
+    try:
+        paths = review.media_paths(publication.proc_root, "walking_side")
+        assert (
+            media_encoder.main(
+                [
+                    "--input-glb",
+                    str(publication.proc_path("evidence/input.glb")),
+                    "--render-manifest",
+                    str(paths["render_manifest"]),
+                    "--frame-dir",
+                    str(paths["frame_dir"]),
+                    "--label",
+                    "walking_side",
+                    "--action",
+                    "Walking",
+                    "--view",
+                    "side",
+                    "--asset-yaw-deg",
+                    "0.0",
+                    "--n-frames",
+                    "24",
+                    "--width",
+                    "512",
+                    "--height",
+                    "384",
+                    "--fps",
+                    "8",
+                    "--output",
+                    str(paths["video"]),
+                    "--manifest",
+                    str(paths["encode_manifest"]),
+                    "--preserve-lexical-media-subprocess-paths",
+                ]
+            )
+            == 0
+        )
+        contract = review._media_subprocess_contract_for_root(publication.proc_root)
+        assert captured["ffmpeg"] == contract["ffmpeg"][0]["observed_argv"]
+        assert captured["probe_path"] == paths["video"]
+        manifest = review.strict_json_bytes(
+            publication.read_file("media/walking_side_encode_manifest.json"),
+            "encoder manifest",
+        )
+        assert manifest["ffmpeg"]["input_pattern"].startswith(
+            str(publication.resolved_staging_root) + "/"
+        )
+    finally:
+        publication.close()
+
+
+def test_verify_video_uses_authenticated_lexical_probe_alias(
+    tmp_path,
+    monkeypatch,
+):
+    publication = review.SecureReviewPublication(tmp_path / "review")
+    publication.write_exclusive("media/walking_side.mp4", b"video")
+    captured = {}
+
+    def fake_probe(argv, **_kwargs):
+        captured["ffprobe"] = list(argv)
+        return SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "streams": [
+                        {
+                            "codec_name": "h264",
+                            "width": 512,
+                            "height": 384,
+                            "nb_frames": "24",
+                            "r_frame_rate": "8/1",
+                            "avg_frame_rate": "8/1",
+                        }
+                    ],
+                    "format": {"duration": "3.0"},
+                }
+            )
+        )
+
+    monkeypatch.setattr(strict_review.subprocess, "run", fake_probe)
+    try:
+        lexical_video = publication.proc_path("media/walking_side.mp4")
+        video_record = strict_review.verify_video(
+            lexical_video,
+            24,
+            probe_path=lexical_video,
+        )
+        contract = review._media_subprocess_contract_for_root(publication.proc_root)
+        assert contract["scope"] == "authenticated_encoder_process_only"
+        assert captured["ffprobe"] == contract["ffprobe"][0]["observed_argv"]
+        publication.write_exclusive(
+            "media/walking_side_recorded_probe.json",
+            review.pretty_json_bytes({"video": video_record}),
+        )
+        recorded = strict_review.require_recorded_video_readback(
+            publication.proc_path("media/walking_side_recorded_probe.json"),
+            lexical_video,
+            24,
+        )
+        assert recorded == video_record
+        changed = dict(video_record)
+        changed["codec"] = "forged"
+        publication.rewrite_owned(
+            "media/walking_side_recorded_probe.json",
+            review.pretty_json_bytes({"video": changed}),
+        )
+        with pytest.raises(RuntimeError, match="contradicts the sealed video"):
+            strict_review.require_recorded_video_readback(
+                publication.proc_path("media/walking_side_recorded_probe.json"),
+                lexical_video,
+                24,
+            )
+    finally:
+        publication.close()
+
+
 def test_parent_swap_is_rejected_and_hidden_root_is_quarantined(tmp_path):
     parent = tmp_path / "parent"
     parent.mkdir()
@@ -1029,3 +1296,6 @@ def test_build_commands_contains_one_audit_and_all_six_fixed_media_pairs(tmp_pat
     assert flattened.count('"--width", "512"') == 12
     assert flattened.count('"--height", "384"') == 12
     assert flattened.count('"--fps", "8"') == 12
+    assert flattened.count('"--preserve-lexical-media-subprocess-paths"') == len(
+        review.MEDIA_LABELS
+    )
