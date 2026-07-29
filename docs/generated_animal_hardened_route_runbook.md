@@ -37,6 +37,9 @@ General pitfalls that recur everywhere:
   minutes during model load with near-zero RSS growth.  That is disk
   starvation, not a hang — do not kill and retry (the retry queues behind
   the same disk).
+- A first defect is fixed in the existing stage.  It becomes a permanent
+  generic gate only after the same defect is reproduced on two different
+  assets.  Do not add a breed-specific tool or route for a single failure.
 
 ## 1. Attribute profile (one JSON, no new reference photos)
 
@@ -50,6 +53,15 @@ must equal `tools/controlled_animal_one_shot_policy.py` verbatim; article
 grammar in `positive_template` is hand-written ("a curled tail" vs "an
 otter tail").  Consult `generated_animal_morphotype_readiness_checklist.md`
 for risk scoring before spending GPU.
+
+For a morphology that needs shared reconstruction guards, declare
+`generation_contract.morphotype_traits` in the same profile (use `{}` when
+only the long-coat guard is needed).  The current evidence-backed traits are
+short legs and a brachycephalic muzzle.  A
+short-leg profile must declare a 10--15 degree `source_view_contract` yaw;
+the compiler then adds the longitudinal limb staggering and continuous
+armpit/groin background-corridor guard.  Long-coat protection is derived
+from the existing `coat_length`, so it is not declared a second time.
 
 ## 2. FLUX canonical image (one shot, owner 2D gate)
 
@@ -74,6 +86,23 @@ $PY tools/review_controlled_animal_flux2_candidates.py \
   --decisions $WS/review_inputs/flux2_2d_decisions.json \
   --output-root $WS/flux_2d_review
 ```
+
+For an unproven morphology, use one predeclared bounded exploration batch
+instead of serial workspaces:
+```
+$PY tools/build_controlled_source_asset_inputs.py --profile <profile.json> \
+  --count-per-profile <N> --seed <declared-seed> --plan-id <plan-id> \
+  --split-salt <salt> --output-dir $WS/inputs
+$PY tools/run_controlled_animal_flux2_jobs.py \
+  --preflight $WS/preflight/execution_preflight.json \
+  --output-root $WS/flux --gpu <free-gpu> --bounded-exploration
+```
+All candidates must receive the normal exact-hash hard-gate review.  Each
+profile must have exactly one approval (frozen) or zero approvals
+(`exploration_exhausted`); multiple approvals fail closed.  The frozen
+candidate's existing bytes go directly to Pixal3D.  Do not regenerate the
+selected seed.  Put multiple profiles in one input/preflight batch to pay
+one model load per active GPU worker.
 
 ## 3. Pixal3D
 

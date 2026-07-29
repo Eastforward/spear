@@ -535,6 +535,105 @@ def test_animal_source_view_contract_rejects_roll_or_automatic_yaw():
         schema.validate_attribute_profile(profile)
 
 
+def test_morphotype_traits_compile_evidence_based_guards_in_stable_order():
+    profile = animal_profile()
+    profile["generation_contract"]["morphotype_traits"] = {
+        "leg_length_class": "short",
+        "muzzle_class": "brachycephalic",
+    }
+    profile["generation_contract"]["source_view_contract"] = {
+        "pose_guide": "generic_short_leg_three_quarter_v1",
+        "nominal_camera_azimuth_deg": 12,
+        "camera_roll_deg": 0,
+        "camera_pitch_policy": "level_neutral_product_view",
+        "projected_torso_spine_axis": "straight_and_horizontal",
+        "purpose": "separate all four short limb chains",
+        "expected_raw_i23d_horizontal_yaw": (
+            "non_cardinal_due_to_three_quarter_input"
+        ),
+        "downstream_orientation_gate": (
+            "manual_torso_axis_alignment_then_cardinal_head_tail_v3"
+        ),
+        "automatic_yaw_inference_allowed": False,
+    }
+
+    request = schema.sample_instance_requests(
+        schema.validate_attribute_profile(profile),
+        count=1,
+        batch_seed=20260729,
+    )[0]
+    plan = request["generation_plan"]
+    assert plan["morphotype_guard_ids"] == [
+        "short_leg_limb_corridors_v1",
+        "long_coat_limb_readability_v1",
+        "brachycephalic_muzzle_emitter_v1",
+    ]
+    assert plan["source_view_contract"]["nominal_camera_azimuth_deg"] == 12
+    assert "armpit and groin" in plan["prompt"]
+    assert "under-chest membrane" in plan["negative_prompt"]
+    assert "golden_retriever" not in " ".join(
+        (
+            schema.SHORT_LEG_POSE_GUARD,
+            schema.LONG_COAT_POSE_GUARD,
+            schema.BRACHYCEPHALIC_MUZZLE_POSE_GUARD,
+        )
+    )
+
+    profile["generation_contract"]["source_view_contract"][
+        "nominal_camera_azimuth_deg"
+    ] = 30
+    with pytest.raises(schema.ContractError, match="10..15 degree"):
+        schema.validate_attribute_profile(profile)
+
+
+@pytest.mark.parametrize(
+    ("traits", "expected_guard_ids"),
+    [
+        ({}, ["long_coat_limb_readability_v1"]),
+        (
+            {"muzzle_class": "brachycephalic"},
+            [
+                "long_coat_limb_readability_v1",
+                "brachycephalic_muzzle_emitter_v1",
+            ],
+        ),
+        (
+            {
+                "leg_length_class": "standard",
+                "muzzle_class": "standard",
+            },
+            ["long_coat_limb_readability_v1"],
+        ),
+    ],
+    ids=["empty_long_coat", "muzzle_only", "standard_only"],
+)
+def test_morphotype_traits_without_source_view_compile_optional_guards(
+    traits, expected_guard_ids
+):
+    profile = animal_profile()
+    profile["generation_contract"]["morphotype_traits"] = traits
+
+    request = schema.sample_instance_requests(
+        schema.validate_attribute_profile(profile),
+        count=1,
+        batch_seed=20260729,
+    )[0]
+    plan = request["generation_plan"]
+
+    assert plan["morphotype_traits"] == traits
+    assert plan["morphotype_guard_ids"] == expected_guard_ids
+    assert "source_view_contract" not in plan
+
+
+def test_morphotype_traits_reject_unknown_trait_values():
+    profile = animal_profile()
+    profile["generation_contract"]["morphotype_traits"] = {
+        "leg_length_class": "breed_specific_magic",
+    }
+    with pytest.raises(schema.ContractError, match="trait value"):
+        schema.validate_attribute_profile(profile)
+
+
 def test_checked_in_profile_catalog_is_valid_breed_specific_and_balanced():
     paths = sorted(PROFILE_ROOT.rglob("*.json"))
     profiles = [

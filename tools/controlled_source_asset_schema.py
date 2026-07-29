@@ -61,6 +61,37 @@ TAILED_ANIMAL_SEPARATION_NEGATIVE_PROMPT = (
     "tail wrapped around leg, tail obscuring paw, tail obscuring hoof, "
     "tail merged with foot"
 )
+MORPHOTYPE_TRAIT_VALUES = {
+    "leg_length_class": frozenset({"short", "standard"}),
+    "muzzle_class": frozenset({"brachycephalic", "standard"}),
+}
+SHORT_LEG_POSE_GUARD = (
+    "For this short-legged quadruped, stagger the near-side and far-side limb "
+    "pairs longitudinally instead of widening the stance. Keep continuous "
+    "plain-background corridors from each armpit and groin through the upper "
+    "attachments, lower limbs, and four complete planted paws."
+)
+SHORT_LEG_NEGATIVE_PROMPT = (
+    "under-chest membrane, abdominal membrane, fused upper limb roots, "
+    "central hanging paw, merged armpits, merged groin"
+)
+LONG_COAT_POSE_GUARD = (
+    "Keep the limb chains readable through the coat silhouette. Long or curly "
+    "fur must follow the body surface and must not form a skirt, bridge, sheet, "
+    "or flyaway plane between the torso, tail, and limbs."
+)
+LONG_COAT_NEGATIVE_PROMPT = (
+    "fur skirt, fur bridge, fur sheet, flyaway fur plane, coat hiding paws"
+)
+BRACHYCEPHALIC_MUZZLE_POSE_GUARD = (
+    "Keep one compact closed muzzle with a distinct nose tip, mouth line, and "
+    "eye separation so the anatomical forward direction and mouth emitter "
+    "anchor remain measurable."
+)
+BRACHYCEPHALIC_MUZZLE_NEGATIVE_PROMPT = (
+    "merged nose and mouth, missing muzzle, duplicated nose, occluded mouth line"
+)
+LONG_COAT_VALUES = frozenset({"curly", "long", "long_curly", "wavy_long"})
 
 STATE_CLASSIFICATIONS = frozenset(
     {
@@ -413,6 +444,7 @@ def _validate_generation_contract(
             allowed_fields = common_fields | {
                 "source_view_contract",
                 "base_acquisition_policy",
+                "morphotype_traits",
             }
             if not common_fields.issubset(actual_fields) or not actual_fields.issubset(
                 allowed_fields
@@ -425,6 +457,7 @@ def _validate_generation_contract(
                 )
             if base_template.get("kind") != "reference_image":
                 raise ContractError("Pixal animal base_template.kind must be reference_image")
+            source_view = None
             if "source_view_contract" in contract:
                 source_view = _require_exact_fields(
                     contract["source_view_contract"],
@@ -482,6 +515,27 @@ def _validate_generation_contract(
                 if source_view["automatic_yaw_inference_allowed"] is not False:
                     raise ContractError(
                         "source_view_contract cannot authorize automatic yaw inference"
+                    )
+            if "morphotype_traits" in contract:
+                traits = _require_mapping(
+                    contract["morphotype_traits"], "animal morphotype_traits"
+                )
+                if not set(traits).issubset(MORPHOTYPE_TRAIT_VALUES):
+                    raise ContractError("animal morphotype trait fields are invalid")
+                for name, value in traits.items():
+                    if value not in MORPHOTYPE_TRAIT_VALUES[name]:
+                        raise ContractError(
+                            f"animal morphotype trait value is invalid: {name}"
+                        )
+                if traits.get("leg_length_class") == "short" and (
+                    source_view is None
+                    or not 10
+                    <= float(source_view["nominal_camera_azimuth_deg"])
+                    <= 15
+                ):
+                    raise ContractError(
+                        "short-leg morphotype requires a declared 10..15 degree "
+                        "source-view yaw"
                     )
             if "base_acquisition_policy" in contract:
                 policy = _require_exact_fields(
@@ -1400,6 +1454,26 @@ def _compile_animal_generation_plan(
     subject = contract["positive_template"].format(**labels).strip()
     prompt = f"{subject} {contract['pose_guard_prompt'].strip()}"
     negative_prompt = contract["negative_prompt"].strip()
+    morphotype_guard_ids = []
+    traits = contract.get("morphotype_traits")
+    if traits is not None:
+        prompt_fragments = []
+        negative_fragments = []
+        if traits.get("leg_length_class") == "short":
+            morphotype_guard_ids.append("short_leg_limb_corridors_v1")
+            prompt_fragments.append(SHORT_LEG_POSE_GUARD)
+            negative_fragments.append(SHORT_LEG_NEGATIVE_PROMPT)
+        if str(combined.get("coat_length", "")).lower() in LONG_COAT_VALUES:
+            morphotype_guard_ids.append("long_coat_limb_readability_v1")
+            prompt_fragments.append(LONG_COAT_POSE_GUARD)
+            negative_fragments.append(LONG_COAT_NEGATIVE_PROMPT)
+        if traits.get("muzzle_class") == "brachycephalic":
+            morphotype_guard_ids.append("brachycephalic_muzzle_emitter_v1")
+            prompt_fragments.append(BRACHYCEPHALIC_MUZZLE_POSE_GUARD)
+            negative_fragments.append(BRACHYCEPHALIC_MUZZLE_NEGATIVE_PROMPT)
+        if prompt_fragments:
+            prompt = f"{prompt} {' '.join(prompt_fragments)}"
+            negative_prompt = f"{negative_prompt}, {', '.join(negative_fragments)}"
     tail_shape = combined.get("tail_shape")
     if (
         tail_separation_guard
@@ -1458,6 +1532,13 @@ def _compile_animal_generation_plan(
         plan["base_acquisition_policy"] = _deepcopy(
             contract["base_acquisition_policy"]
         )
+    if traits is not None:
+        plan["morphotype_traits"] = _deepcopy(traits)
+        plan["morphotype_guard_ids"] = morphotype_guard_ids
+        if "source_view_contract" in contract:
+            plan["source_view_contract"] = _deepcopy(
+                contract["source_view_contract"]
+            )
     return plan
 
 
