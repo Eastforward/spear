@@ -54,6 +54,217 @@ def _hash_without(value: Mapping[str, Any], key: str) -> str:
     )
 
 
+def _validate_bounded_exploration_binding(
+    payload: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+    jobs: Sequence[Mapping[str, Any]],
+) -> None:
+    frozen = payload.get("bounded_exploration_freeze")
+    if evidence.get("mode") != "native_bounded_exploration_frozen":
+        if frozen is not None:
+            raise contracts.ContractError(
+                "unexpected bounded exploration freeze in Pixal inputs"
+            )
+        return
+    if (
+        not isinstance(frozen, Mapping)
+        or set(frozen) != {
+            "policy",
+            "review_batch_sha256",
+            "freeze_receipts",
+        }
+        or not isinstance(frozen.get("freeze_receipts"), list)
+    ):
+        raise contracts.ContractError(
+            "bounded exploration freeze is missing from Pixal inputs"
+        )
+    try:
+        policy = one_shot.validate_bounded_exploration_policy_record(
+            frozen["policy"]
+        )
+        receipts = [
+            one_shot.validate_bounded_exploration_freeze_record(receipt)
+            for receipt in frozen["freeze_receipts"]
+        ]
+    except one_shot.PolicyError as error:
+        raise contracts.ContractError(str(error)) from error
+    if (
+        contracts.canonical_json(policy)
+        != contracts.canonical_json(evidence["bounded_exploration_policy"])
+        or not isinstance(frozen["review_batch_sha256"], str)
+        or len(frozen["review_batch_sha256"]) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in frozen["review_batch_sha256"]
+        )
+    ):
+        raise contracts.ContractError("bounded exploration freeze policy/hash changed")
+    group_hashes = [
+        receipt["exploration_group_sha256"] for receipt in receipts
+    ]
+    profile_ids = [receipt["profile_schema_id"] for receipt in receipts]
+    all_receipt_hashes = [
+        receipt["freeze_receipt_sha256"] for receipt in receipts
+    ]
+    selected_items = [
+        (
+            receipt["selected_instance_id"],
+            receipt["selected_candidate_sha256"],
+        )
+        for receipt in receipts
+        if receipt["state"] == "frozen"
+    ]
+    selected = dict(selected_items)
+    receipt_hashes = sorted(
+        receipt["freeze_receipt_sha256"]
+        for receipt in receipts
+        if receipt["state"] == "frozen"
+    )
+    job_hashes = {
+        job.get("controlled_request", {}).get("instance_id"):
+        job.get("reference", {}).get("source", {}).get("sha256")
+        for job in jobs
+    }
+    if (
+        len(set(group_hashes)) != len(group_hashes)
+        or len(set(profile_ids)) != len(profile_ids)
+        or len(set(all_receipt_hashes)) != len(all_receipt_hashes)
+        or len(selected) != len(selected_items)
+        or len(selected) != len(receipt_hashes)
+        or len(receipt_hashes) != len(set(receipt_hashes))
+        or receipt_hashes != evidence["freeze_receipt_sha256s"]
+        or selected != job_hashes
+    ):
+        raise contracts.ContractError(
+            "Pixal jobs differ from bounded exploration frozen hashes"
+        )
+
+
+def _reauthenticate_bounded_exploration_source(
+    payload: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+) -> None:
+    evidence_mode = evidence.get("mode")
+    record = payload.get("review_batch")
+    frozen = payload.get("bounded_exploration_freeze")
+    if record is None and evidence_mode == "legacy_sealed_manifest_attestation":
+        return
+    if (
+        not isinstance(record, Mapping)
+        or set(record) != {"path", "sha256", "review_batch_sha256"}
+    ):
+        raise contracts.ContractError(
+            "bounded exploration review batch record is invalid"
+        )
+    path = Path(record["path"]).resolve()
+    if (
+        path.is_symlink()
+        or not path.is_file()
+        or _sha256_file(path) != record["sha256"]
+    ):
+        raise contracts.ContractError(
+            "bounded exploration review batch artifact changed"
+        )
+    review_batch = pixal_inputs.load_review_batch(path)
+    if review_batch.get("review_batch_sha256") != record["review_batch_sha256"]:
+        raise contracts.ContractError(
+            "bounded exploration review batch identity changed"
+        )
+    flux_record = review_batch.get("flux2_batch")
+    if (
+        not isinstance(flux_record, Mapping)
+        or set(flux_record) != {"path", "sha256", "batch_sha256"}
+    ):
+        raise contracts.ContractError(
+            "bounded exploration FLUX batch record is invalid"
+        )
+    flux_path = Path(flux_record["path"]).resolve()
+    if (
+        flux_path.is_symlink()
+        or not flux_path.is_file()
+        or _sha256_file(flux_path) != flux_record["sha256"]
+    ):
+        raise contracts.ContractError(
+            "bounded exploration FLUX batch artifact changed"
+        )
+    from tools import review_controlled_animal_flux2_candidates as flux_review
+
+    flux_batch = contracts.load_json(flux_path)
+    if (
+        not isinstance(flux_batch, Mapping)
+        or flux_batch.get("schema") != flux_review.flux_runner.BATCH_SCHEMA
+        or flux_batch.get("status") != "pending_2d_review"
+        or flux_batch.get("batch_sha256")
+        != _hash_without(flux_batch, "batch_sha256")
+        or flux_batch.get("batch_sha256") != flux_record["batch_sha256"]
+        or flux_batch.get("batch_sha256") != evidence["flux_batch_sha256"]
+    ):
+        raise contracts.ContractError(
+            "bounded exploration FLUX batch identity changed"
+        )
+    source_bounded = (
+        flux_batch.get("selection", {}).get("bounded_exploration") is not None
+    )
+    evidence_bounded = evidence_mode == "native_bounded_exploration_frozen"
+    freeze_present = isinstance(frozen, Mapping)
+    if source_bounded != evidence_bounded or source_bounded != freeze_present:
+        raise contracts.ContractError(
+            "bounded exploration source cannot be downgraded or detached from "
+            "its freeze"
+        )
+    if not source_bounded:
+        return
+    if frozen["review_batch_sha256"] != record["review_batch_sha256"]:
+        raise contracts.ContractError(
+            "bounded exploration review batch identity changed"
+        )
+    _root, loaded_flux_batch, candidates = flux_review.load_flux_batch(flux_path)
+    if contracts.canonical_json(loaded_flux_batch) != contracts.canonical_json(
+        flux_batch
+    ):
+        raise contracts.ContractError(
+            "bounded exploration FLUX batch readback changed"
+        )
+    review_payloads = pixal_inputs._load_authenticated_review_payloads(
+        path,
+        review_batch,
+        expected_review_schema=flux_review.REVIEW_SCHEMA,
+        bounded_exploration=True,
+    )
+    approved_reviews = {
+        instance_id: review_payload
+        for instance_id, review_payload in review_payloads.items()
+        if review_payload["decision"] == "approved_for_pixal3d"
+    }
+    preflight = pixal_inputs._load_authenticated_preflight(flux_batch)
+    route, _route_contract, controlled_jobs = (
+        pixal_inputs._authenticated_route_jobs(
+            flux_batch, preflight, candidates
+        )
+    )
+    if route != "flux2_pixal3d_animal_v1":
+        raise contracts.ContractError(
+            "bounded exploration source is not an animal route"
+        )
+    pixal_inputs._validate_bounded_exploration_declaration(
+        flux_batch=flux_batch,
+        preflight=preflight,
+        controlled_jobs=controlled_jobs,
+    )
+    expected_frozen = pixal_inputs._validate_bounded_exploration_freezes(
+        review_batch=review_batch,
+        flux_batch=flux_batch,
+        candidates=candidates,
+        approved_reviews=approved_reviews,
+    )
+    if contracts.canonical_json(frozen) != contracts.canonical_json(
+        expected_frozen
+    ):
+        raise contracts.ContractError(
+            "bounded exploration freeze differs from its review source"
+        )
+
+
 def load_pixal_inputs(path: Path) -> tuple[Path, dict[str, Any]]:
     path = Path(path).resolve()
     if path.is_symlink() or not path.is_file():
@@ -78,11 +289,10 @@ def load_pixal_inputs(path: Path) -> tuple[Path, dict[str, Any]]:
         or payload.get("automatic_checks", {}).get("overall") != "passed"
     ):
         raise contracts.ContractError("Pixal input manifest contract/hash is invalid")
+    evidence = payload.get("upstream_flux_one_shot_evidence")
     try:
         one_shot.validate_stage_record(payload.get("one_shot_execution"), "pixal3d")
-        one_shot.validate_upstream_flux_evidence(
-            payload.get("upstream_flux_one_shot_evidence")
-        )
+        one_shot.validate_upstream_flux_evidence(evidence)
     except one_shot.PolicyError as error:
         raise contracts.ContractError(str(error)) from error
     jobs = payload.get("jobs")
@@ -91,6 +301,8 @@ def load_pixal_inputs(path: Path) -> tuple[Path, dict[str, Any]]:
     identifiers = [job.get("controlled_request", {}).get("instance_id") for job in jobs]
     if any(not identifier for identifier in identifiers) or len(set(identifiers)) != len(jobs):
         raise contracts.ContractError("Pixal jobs contain missing/duplicate instance IDs")
+    _validate_bounded_exploration_binding(payload, evidence, jobs)
+    _reauthenticate_bounded_exploration_source(payload, evidence)
     root = path.parent
     expected_output_root = Path(payload["pixal_output_root"]).resolve()
     for job in jobs:

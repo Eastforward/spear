@@ -201,6 +201,235 @@ def test_legacy_animal_route_remains_compatible_and_animated():
     assert set(request["rig_profile"]["actions"]) == {"Walking", "Idle"}
 
 
+def _bounded_exploration_freeze_fixture():
+    jobs = []
+    candidates = {}
+    review_index = []
+    approved_reviews = {}
+    for index in range(2):
+        job = _execution_job("flux2_pixal3d_animal_v1")
+        instance_id = f"animal_exploration_{index}"
+        request_sha256 = f"{index + 8:x}" * 64
+        candidate_sha256 = f"{index + 10:x}" * 64
+        job["execution_job_id"] = f"animal_{index}"
+        job["consumer_requests"][0] = {
+            "instance_id": instance_id,
+            "request_sha256": request_sha256,
+        }
+        jobs.append(job)
+        decision = "approved_for_pixal3d" if index == 1 else "rejected"
+        candidates[instance_id] = {
+            "index": {
+                "candidate": {"sha256": candidate_sha256},
+            }
+        }
+        review_index.append(
+            {
+                "instance_id": instance_id,
+                "profile_schema_id": PROFILE_ID,
+                "candidate_sha256": candidate_sha256,
+                "decision": decision,
+                "review": {"sha256": f"{index + 12:x}" * 64},
+            }
+        )
+        if decision == "approved_for_pixal3d":
+            approved_reviews[instance_id] = {
+                "candidate": {"sha256": candidate_sha256}
+            }
+    group = one_shot.build_bounded_exploration_group(
+        profile_schema_id=PROFILE_ID,
+        profile_sha256=PROFILE_SHA256,
+        execution_preflight_sha256=PREFLIGHT_SHA256,
+        request_batch_sha256="5" * 64,
+        jobs=jobs,
+    )
+    receipt = one_shot.build_bounded_exploration_freeze(
+        group=group,
+        candidate_reviews=review_index,
+        flux_batch_sha256=BATCH_SHA256,
+    )
+    policy_record = one_shot.bounded_exploration_policy_record()
+    flux_batch = {
+        "batch_sha256": BATCH_SHA256,
+        "selection": {
+            "bounded_exploration": {
+                "policy": policy_record,
+                "groups": [group],
+            }
+        },
+    }
+    review_batch = {
+        "review_batch_sha256": "6" * 64,
+        "reviews": review_index,
+        "bounded_exploration": {
+            "policy": policy_record,
+            "freeze_receipts": [receipt],
+        },
+    }
+    return flux_batch, review_batch, candidates, approved_reviews
+
+
+def test_pixal_accepts_only_the_exact_frozen_exploration_hash():
+    flux_batch, review_batch, candidates, approved_reviews = (
+        _bounded_exploration_freeze_fixture()
+    )
+
+    frozen = preparation._validate_bounded_exploration_freezes(
+        review_batch=review_batch,
+        flux_batch=flux_batch,
+        candidates=candidates,
+        approved_reviews=approved_reviews,
+    )
+    assert frozen is not None
+    assert frozen["freeze_receipts"][0]["selected_instance_id"] == (
+        "animal_exploration_1"
+    )
+
+    candidates["animal_exploration_1"]["index"]["candidate"]["sha256"] = "f" * 64
+    with pytest.raises(contracts.ContractError, match="candidate set changed"):
+        preparation._validate_bounded_exploration_freezes(
+            review_batch=review_batch,
+            flux_batch=flux_batch,
+            candidates=candidates,
+            approved_reviews=approved_reviews,
+        )
+
+    flux_batch, review_batch, candidates, approved_reviews = (
+        _bounded_exploration_freeze_fixture()
+    )
+    candidates["animal_exploration_0"]["index"]["candidate"]["sha256"] = "f" * 64
+    with pytest.raises(contracts.ContractError, match="reviewed candidate set changed"):
+        preparation._validate_bounded_exploration_freezes(
+            review_batch=review_batch,
+            flux_batch=flux_batch,
+            candidates=candidates,
+            approved_reviews=approved_reviews,
+        )
+
+
+def test_bounded_exploration_cannot_emit_native_evidence_before_freeze():
+    flux_batch, _review_batch, _candidates, _approved_reviews = (
+        _bounded_exploration_freeze_fixture()
+    )
+    flux_batch["one_shot_execution"] = one_shot.stage_record("flux2")
+    with pytest.raises(contracts.ContractError, match="before an authenticated"):
+        preparation._flux_one_shot_evidence(flux_batch, {})
+
+
+def test_bounded_exploration_cannot_omit_a_job_from_declared_profile():
+    flux_batch, _review_batch, _candidates, _approved_reviews = (
+        _bounded_exploration_freeze_fixture()
+    )
+    group = flux_batch["selection"]["bounded_exploration"]["groups"][0]
+    jobs = [
+        {
+            "execution_job_id": candidate["execution_job_id"],
+            "profile_schema_id": group["profile_schema_id"],
+            "profile_sha256": group["profile_sha256"],
+            "consumer_requests": [
+                {
+                    "instance_id": candidate["instance_id"],
+                    "request_sha256": candidate["request_sha256"],
+                }
+            ],
+        }
+        for candidate in group["candidates"]
+    ]
+    preflight = {
+        "preflight_sha256": group["execution_preflight_sha256"],
+        "source_bundle": {
+            "request_batch_sha256": group["request_batch_sha256"],
+        },
+        "routes": {"flux2_pixal3d_animal_v1": jobs},
+    }
+
+    with pytest.raises(contracts.ContractError, match="omitted a preflight job"):
+        preparation._validate_bounded_exploration_declaration(
+            flux_batch=flux_batch,
+            preflight=preflight,
+            controlled_jobs={jobs[0]["consumer_requests"][0]["instance_id"]: jobs[0]},
+        )
+
+
+@pytest.mark.parametrize("attack", ["missing_hard_gates", "all_not_applicable"])
+def test_bounded_review_reauthentication_rejects_self_hashed_gate_bypass(
+    tmp_path, attack
+):
+    candidate_sha256 = "c" * 64
+    review_payload = {
+        "schema": preparation.review.REVIEW_SCHEMA,
+        "instance_id": INSTANCE_ID,
+        "request_sha256": REQUEST_SHA256,
+        "profile_schema_id": PROFILE_ID,
+        "sampled_attributes": {"size": "medium"},
+        "candidate": {
+            "path": "/sealed/candidate.png",
+            "sha256": candidate_sha256,
+            "size_bytes": 1,
+        },
+        "candidate_manifest": {
+            "path": "/sealed/candidate_manifest.json",
+            "sha256": "d" * 64,
+            "size_bytes": 1,
+        },
+        "reviewer": "objective-gate-test",
+        "decision": "approved_for_pixal3d",
+        "checks": {
+            "species_breed": "passed",
+            "anatomy": "passed",
+            "pose_and_limb_separation": "passed",
+            "background": "passed",
+            "sampled_attributes": {"size": "deferred_to_3d_physical_scale"},
+            "hard_gates": {
+                field: "passed" for field in preparation.review.HARD_GATE_FIELDS
+            },
+        },
+        "notes": "self-hashed attack fixture",
+        "downstream_gate": (
+            "frozen_exact_candidate_for_segmentation_and_pixal3d"
+        ),
+    }
+    if attack == "missing_hard_gates":
+        review_payload["checks"].pop("hard_gates")
+    else:
+        review_payload["checks"]["hard_gates"] = {
+            field: "not_applicable"
+            for field in preparation.review.HARD_GATE_FIELDS
+        }
+    review_payload["review_sha256"] = preparation._hash_without(
+        review_payload, "review_sha256"
+    )
+    review_path = tmp_path / f"{attack}.json"
+    contracts.write_json_no_replace(review_path, review_payload)
+    review_batch = {
+        "candidate_count": 1,
+        "reviews": [
+            {
+                "instance_id": INSTANCE_ID,
+                "profile_schema_id": PROFILE_ID,
+                "decision": "approved_for_pixal3d",
+                "candidate_sha256": candidate_sha256,
+                "review": {
+                    "path": review_path.name,
+                    "sha256": preparation._sha256_file(review_path),
+                    "size_bytes": review_path.stat().st_size,
+                },
+            }
+        ],
+    }
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="exact contract|decision/hard gates",
+    ):
+        preparation._load_authenticated_review_payloads(
+            tmp_path / "review_batch.json",
+            review_batch,
+            expected_review_schema=preparation.review.REVIEW_SCHEMA,
+            bounded_exploration=True,
+        )
+
+
 @pytest.mark.parametrize(
     ("route", "asset_class", "rig_mode"),
     [

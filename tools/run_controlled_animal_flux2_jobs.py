@@ -180,6 +180,40 @@ def _partition_jobs(jobs: Sequence[dict[str, Any]], gpus: Sequence[int]):
     return {gpu: values for gpu, values in partitions.items() if values}
 
 
+def _build_bounded_exploration(
+    jobs: Sequence[Mapping[str, Any]], preflight: Mapping[str, Any]
+) -> dict[str, Any]:
+    source_bundle = preflight.get("source_bundle")
+    if not isinstance(source_bundle, Mapping):
+        raise contracts.ContractError("bounded exploration preflight source is invalid")
+    grouped: dict[str, list[Mapping[str, Any]]] = {}
+    for job in jobs:
+        grouped.setdefault(job["profile_schema_id"], []).append(job)
+    groups = []
+    try:
+        for profile_schema_id, profile_jobs in sorted(grouped.items()):
+            profile_sha256s = {job.get("profile_sha256") for job in profile_jobs}
+            if len(profile_sha256s) != 1:
+                raise contracts.ContractError(
+                    "bounded exploration profile revision is not unique"
+                )
+            groups.append(
+                one_shot.build_bounded_exploration_group(
+                    profile_schema_id=profile_schema_id,
+                    profile_sha256=next(iter(profile_sha256s)),
+                    execution_preflight_sha256=preflight["preflight_sha256"],
+                    request_batch_sha256=source_bundle["request_batch_sha256"],
+                    jobs=list(profile_jobs),
+                )
+            )
+    except one_shot.PolicyError as error:
+        raise contracts.ContractError(str(error)) from error
+    return {
+        "policy": one_shot.bounded_exploration_policy_record(),
+        "groups": groups,
+    }
+
+
 def run_jobs(
     *,
     preflight_path: Path,
@@ -189,6 +223,7 @@ def run_jobs(
     execution_job_ids: set[str] | None,
     qa_pair_canary: bool,
     route: str = "flux2_pixal3d_animal_v1",
+    bounded_exploration: bool = False,
 ) -> Path:
     if not gpus or len(gpus) > 4 or len(set(gpus)) != len(gpus) or min(gpus) < 0:
         raise contracts.ContractError("provide one to four unique non-negative GPUs")
@@ -199,6 +234,20 @@ def run_jobs(
         execution_job_ids=execution_job_ids,
         qa_pair_canary=qa_pair_canary,
         route=route,
+    )
+    if bounded_exploration and (
+        route != "flux2_pixal3d_animal_v1"
+        or qa_pair_canary
+        or execution_job_ids is not None
+    ):
+        raise contracts.ContractError(
+            "bounded exploration requires the animal route, full profile groups, "
+            "and no QA-pair subset"
+        )
+    exploration = (
+        _build_bounded_exploration(jobs, preflight)
+        if bounded_exploration
+        else None
     )
     try:
         for job in jobs:
@@ -341,6 +390,50 @@ def run_jobs(
         )
         if contracts.canonical_json(postflight) != contracts.canonical_json(preflight):
             raise contracts.ContractError("execution inputs changed during FLUX.2 batch")
+        selection = {
+            "semantics": (
+                "predeclared_bounded_exploration_all_candidates_retained"
+                if bounded_exploration
+                else "predeclared_request_subset_only_not_output_ranking"
+            ),
+            "route": route,
+            "profile_ids": (
+                sorted(profile_ids)
+                if profile_ids
+                else (
+                    "all_animal_profiles"
+                    if route == "flux2_pixal3d_animal_v1"
+                    else "all_static_object_profiles"
+                )
+            ),
+            "execution_job_ids": (
+                sorted(execution_job_ids) if execution_job_ids else None
+            ),
+            "qa_pair_canary": qa_pair_canary,
+            "planned_qa_pairs": selected_pairs,
+        }
+        if exploration is not None:
+            selection["bounded_exploration"] = exploration
+        automatic_checks = {
+            "preflight_reauthenticated_before_and_after": True,
+            "one_model_load_per_worker": True,
+            "one_flux_invocation_per_candidate": True,
+            "one_flux_image_per_candidate": True,
+            "seed_retry_forbidden": True,
+            "candidate_ranking_or_best_of_n_forbidden": True,
+            "all_selected_requests_count_in_batch_outcome": True,
+            "all_candidates_pending_visual_review": True,
+            "pixal3d_not_started_before_review": True,
+            "overall": "pending_2d_review",
+        }
+        if bounded_exploration:
+            automatic_checks.update(
+                {
+                    "candidate_ranking_or_best_of_n_forbidden": False,
+                    "per_request_candidate_ranking_forbidden": True,
+                    "bounded_exploration_requires_freeze_before_pixal3d": True,
+                }
+            )
         batch: dict[str, Any] = {
             "schema": BATCH_SCHEMA,
             "status": "pending_2d_review",
@@ -352,39 +445,13 @@ def run_jobs(
                 "sha256": _sha256_file(Path(preflight_path)),
                 "preflight_sha256": preflight["preflight_sha256"],
             },
-            "selection": {
-                "semantics": "predeclared_request_subset_only_not_output_ranking",
-                "route": route,
-                "profile_ids": (
-                    sorted(profile_ids)
-                    if profile_ids
-                    else (
-                        "all_animal_profiles"
-                        if route == "flux2_pixal3d_animal_v1"
-                        else "all_static_object_profiles"
-                    )
-                ),
-                "execution_job_ids": sorted(execution_job_ids) if execution_job_ids else None,
-                "qa_pair_canary": qa_pair_canary,
-                "planned_qa_pairs": selected_pairs,
-            },
+            "selection": selection,
             "model": MODEL,
             "parameters": PARAMETERS,
             "candidate_count": len(results),
             "candidates": sorted(results, key=lambda item: item["execution_job_id"]),
             "workers": workers,
-            "automatic_checks": {
-                "preflight_reauthenticated_before_and_after": True,
-                "one_model_load_per_worker": True,
-                "one_flux_invocation_per_candidate": True,
-                "one_flux_image_per_candidate": True,
-                "seed_retry_forbidden": True,
-                "candidate_ranking_or_best_of_n_forbidden": True,
-                "all_selected_requests_count_in_batch_outcome": True,
-                "all_candidates_pending_visual_review": True,
-                "pixal3d_not_started_before_review": True,
-                "overall": "pending_2d_review",
-            },
+            "automatic_checks": automatic_checks,
         }
         batch["batch_sha256"] = _json_sha256(batch)
         _write_json_no_replace(staging / "flux2_batch_manifest.json", batch)
@@ -408,6 +475,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", action="append", default=[])
     parser.add_argument("--execution-job-id", action="append", default=[])
     parser.add_argument("--qa-pair-canary", action="store_true")
+    parser.add_argument("--bounded-exploration", action="store_true")
     parser.add_argument(
         "--route",
         choices=list(FLUX_ROUTES),
@@ -430,6 +498,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             qa_pair_canary=args.qa_pair_canary,
             route=args.route,
+            bounded_exploration=args.bounded_exploration,
         )
         manifest = contracts.load_json(manifest_path)
     except (contracts.ContractError, OSError, subprocess.SubprocessError) as error:

@@ -8,7 +8,7 @@ import copy
 import hashlib
 from pathlib import Path
 import sys
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -16,6 +16,7 @@ if __package__ in (None, ""):
 from tools import controlled_source_asset_schema as contracts
 from tools import prepare_controlled_animal_pixal_inputs as pixal_inputs
 from tools import review_controlled_animal_flux2_candidates as review
+from tools import run_controlled_animal_pixal_jobs as pixal_runner
 
 
 SCHEMA = "avengine_controlled_animal_one_shot_batch_audit_v2"
@@ -135,12 +136,120 @@ def _audit_pixal_batch(
     }
 
 
+def _authenticate_pixal_inputs(
+    pixal_inputs_path: Path,
+    *,
+    flux_batch: Mapping[str, Any],
+    candidates: Mapping[str, Mapping[str, Any]],
+    bounded_exploration: bool,
+) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    path, payload = pixal_runner.load_pixal_inputs(pixal_inputs_path)
+    freeze = payload.get("bounded_exploration_freeze")
+    upstream_evidence = payload.get("upstream_flux_one_shot_evidence")
+    if bounded_exploration:
+        if (
+            not isinstance(freeze, Mapping)
+            or not isinstance(upstream_evidence, Mapping)
+            or upstream_evidence.get("mode")
+            != "native_bounded_exploration_frozen"
+        ):
+            raise contracts.ContractError(
+                "bounded FLUX audit requires Pixal inputs with a "
+                "reauthenticated exploration freeze"
+            )
+        expected_evidence = pixal_inputs._flux_one_shot_evidence(
+            flux_batch,
+            candidates,
+            bounded_exploration_freeze=freeze,
+        )
+    else:
+        if freeze is not None:
+            raise contracts.ContractError(
+                "ordinary one-shot Pixal inputs contain an unexpected "
+                "bounded exploration freeze"
+            )
+        expected_evidence = pixal_inputs._flux_one_shot_evidence(
+            flux_batch, candidates
+        )
+    if contracts.canonical_json(upstream_evidence) != contracts.canonical_json(
+        expected_evidence
+    ):
+        raise contracts.ContractError(
+            "Pixal input evidence differs from the audited FLUX batch"
+        )
+    return path, payload, expected_evidence
+
+
+def _pixal_selected_flux_rows(
+    payload: Mapping[str, Any],
+    flux_rows: Sequence[dict[str, Any]],
+    *,
+    bounded_exploration: bool,
+) -> list[dict[str, Any]]:
+    by_instance = {row["instance_id"]: row for row in flux_rows}
+    selected = []
+    for job in payload["jobs"]:
+        controlled = job["controlled_request"]
+        instance_id = controlled["instance_id"]
+        row = by_instance.get(instance_id)
+        if row is None:
+            raise contracts.ContractError(
+                "Pixal inputs select a candidate outside the audited FLUX batch"
+            )
+        expected = {
+            "execution_job_id": row["execution_job_id"],
+            "request_sha256": row["request_sha256"],
+            "profile_schema_id": row["profile_schema_id"],
+            "generation_seed": row["generation_seed"],
+        }
+        if (
+            any(controlled.get(key) != value for key, value in expected.items())
+            or job.get("reference", {}).get("source", {}).get("sha256")
+            != row["candidate_sha256"]
+        ):
+            raise contracts.ContractError(
+                "Pixal input job differs from its audited FLUX candidate"
+            )
+        selected.append(row)
+    if not bounded_exploration and {
+        row["instance_id"] for row in selected
+    } != set(by_instance):
+        raise contracts.ContractError(
+            "ordinary one-shot Pixal inputs do not cover every FLUX request"
+        )
+    return selected
+
+
 def build_audit(
-    flux_batch_path: Path, pixal_batch_path: Path | None = None
+    flux_batch_path: Path,
+    pixal_batch_path: Path | None = None,
+    pixal_inputs_path: Path | None = None,
 ) -> dict[str, Any]:
     path = Path(flux_batch_path).resolve()
     _root, batch, candidates = review.load_flux_batch(path)
-    evidence = pixal_inputs._flux_one_shot_evidence(batch, candidates)
+    bounded_exploration = (
+        batch.get("selection", {}).get("bounded_exploration") is not None
+    )
+    if bounded_exploration and pixal_inputs_path is None:
+        raise contracts.ContractError(
+            "bounded FLUX audit requires --pixal-inputs so its frozen "
+            "selection is reauthenticated"
+        )
+    authenticated_pixal_inputs = None
+    if pixal_inputs_path is None:
+        evidence = pixal_inputs._flux_one_shot_evidence(batch, candidates)
+        pixal_payload = None
+    else:
+        (
+            authenticated_pixal_inputs,
+            pixal_payload,
+            evidence,
+        ) = _authenticate_pixal_inputs(
+            pixal_inputs_path,
+            flux_batch=batch,
+            candidates=candidates,
+            bounded_exploration=bounded_exploration,
+        )
     rows = []
     for instance_id, candidate in sorted(candidates.items()):
         manifest = candidate["manifest"]
@@ -159,11 +268,18 @@ def build_audit(
                 ]["sha256"],
             }
         )
+    pixal_coverage_rows = rows
+    if pixal_payload is not None:
+        pixal_coverage_rows = _pixal_selected_flux_rows(
+            pixal_payload,
+            rows,
+            bounded_exploration=bounded_exploration,
+        )
     audit: dict[str, Any] = {
         "schema": SCHEMA,
         "status": (
             "passed_native_policy"
-            if evidence["mode"] == "native_policy_enforced_before_inference"
+            if evidence["profile_qualification_authorized"]
             else "passed_legacy_batch_only_profile_qualification_blocked"
         ),
         "flux_batch": {
@@ -187,8 +303,20 @@ def build_audit(
         },
         "formal_dataset_registration_authorized": False,
     }
+    if authenticated_pixal_inputs is not None:
+        audit["pixal_inputs"] = {
+            "path": str(authenticated_pixal_inputs),
+            "sha256": _sha256_file(authenticated_pixal_inputs),
+            "manifest_sha256": pixal_payload["manifest_sha256"],
+        }
+        if bounded_exploration:
+            audit["automatic_checks"][
+                "bounded_exploration_freeze_reauthenticated_by_pixal_input_loader"
+            ] = True
     if pixal_batch_path is not None:
-        audit["pixal_batch"] = _audit_pixal_batch(pixal_batch_path, rows)
+        audit["pixal_batch"] = _audit_pixal_batch(
+            pixal_batch_path, pixal_coverage_rows
+        )
         audit["automatic_checks"]["one_recorded_pixal_invocation_per_request"] = True
     audit["audit_sha256"] = contracts.manifest_sha256(audit)
     return audit
@@ -197,6 +325,7 @@ def build_audit(
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--flux-batch", required=True, type=Path)
+    parser.add_argument("--pixal-inputs", type=Path)
     parser.add_argument("--pixal-batch", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     return parser
@@ -205,7 +334,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_argument_parser().parse_args(argv)
     try:
-        audit = build_audit(args.flux_batch, args.pixal_batch)
+        audit = build_audit(
+            args.flux_batch,
+            pixal_batch_path=args.pixal_batch,
+            pixal_inputs_path=args.pixal_inputs,
+        )
         contracts.write_json_no_replace(args.output.resolve(), audit)
     except (contracts.ContractError, OSError, ValueError) as error:
         print(f"CONTROLLED_ANIMAL_ONE_SHOT_AUDIT_FAILED {error}", file=sys.stderr)

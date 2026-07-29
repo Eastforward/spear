@@ -410,7 +410,9 @@ def _reauthenticate_isnet_execution(execution: Mapping[str, Any]) -> None:
 
 
 def _flux_one_shot_evidence(
-    flux_batch: Mapping[str, Any], candidates: Mapping[str, Mapping[str, Any]]
+    flux_batch: Mapping[str, Any],
+    candidates: Mapping[str, Mapping[str, Any]],
+    bounded_exploration_freeze: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Authenticate native policy evidence or explicitly label a legacy batch.
 
@@ -420,6 +422,12 @@ def _flux_one_shot_evidence(
     labelled legacy and cannot qualify a profile by itself.
     """
 
+    declaration = flux_batch.get("selection", {}).get("bounded_exploration")
+    if (declaration is None) != (bounded_exploration_freeze is None):
+        raise contracts.ContractError(
+            "bounded exploration cannot authorize downstream work before an "
+            "authenticated exact-hash freeze"
+        )
     record = flux_batch.get("one_shot_execution")
     if record is not None:
         try:
@@ -430,12 +438,28 @@ def _flux_one_shot_evidence(
                 )
         except one_shot.PolicyError as error:
             raise contracts.ContractError(str(error)) from error
-        evidence = {
-            "mode": "native_policy_enforced_before_inference",
-            "policy": one_shot.policy_record(),
-            "flux_batch_sha256": flux_batch["batch_sha256"],
-            "profile_qualification_authorized": True,
-        }
+        if bounded_exploration_freeze is None:
+            evidence = {
+                "mode": "native_policy_enforced_before_inference",
+                "policy": one_shot.policy_record(),
+                "flux_batch_sha256": flux_batch["batch_sha256"],
+                "profile_qualification_authorized": True,
+            }
+        else:
+            evidence = {
+                "mode": "native_bounded_exploration_frozen",
+                "policy": one_shot.policy_record(),
+                "bounded_exploration_policy": copy.deepcopy(
+                    bounded_exploration_freeze["policy"]
+                ),
+                "flux_batch_sha256": flux_batch["batch_sha256"],
+                "freeze_receipt_sha256s": sorted(
+                    receipt["freeze_receipt_sha256"]
+                    for receipt in bounded_exploration_freeze["freeze_receipts"]
+                    if receipt["state"] == "frozen"
+                ),
+                "profile_qualification_authorized": True,
+            }
         one_shot.validate_upstream_flux_evidence(evidence)
         return evidence
 
@@ -485,6 +509,368 @@ def load_review_batch(path: Path):
     ):
         raise contracts.ContractError("2D review batch contract/hash is invalid")
     return payload
+
+
+def _load_authenticated_review_payloads(
+    review_batch_path: Path,
+    review_batch: Mapping[str, Any],
+    *,
+    expected_review_schema: str,
+    bounded_exploration: bool = False,
+) -> dict[str, dict[str, Any]]:
+    review_root = Path(review_batch_path).resolve().parent
+    review_index = review_batch.get("reviews")
+    if not isinstance(review_index, list):
+        raise contracts.ContractError("2D review index is invalid")
+    payloads = {}
+    for item in review_index:
+        if not isinstance(item, Mapping):
+            raise contracts.ContractError("2D review index item is invalid")
+        instance_id = item.get("instance_id")
+        record = item.get("review")
+        if (
+            not isinstance(instance_id, str)
+            or not instance_id
+            or instance_id in payloads
+            or not isinstance(record, Mapping)
+            or set(record) != {"path", "sha256", "size_bytes"}
+        ):
+            raise contracts.ContractError(
+                "2D review index contains invalid/duplicate identities"
+            )
+        relative = Path(record["path"])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise contracts.ContractError("2D review artifact path is unsafe")
+        path = (review_root / relative).resolve()
+        try:
+            path.relative_to(review_root)
+        except ValueError as error:
+            raise contracts.ContractError(
+                "2D review artifact escaped its batch root"
+            ) from error
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.stat().st_size != record["size_bytes"]
+            or _sha256_file(path) != record["sha256"]
+        ):
+            raise contracts.ContractError("2D review artifact changed")
+        payload = contracts.load_json(path)
+        if (
+            payload.get("schema") != expected_review_schema
+            or payload.get("instance_id") != instance_id
+            or (
+                item.get("profile_schema_id") is not None
+                and payload.get("profile_schema_id")
+                != item.get("profile_schema_id")
+            )
+            or (
+                item.get("decision") is not None
+                and payload.get("decision") != item.get("decision")
+            )
+            or payload.get("candidate", {}).get("sha256")
+            != item.get("candidate_sha256")
+            or payload.get("review_sha256")
+            != _hash_without(payload, "review_sha256")
+        ):
+            raise contracts.ContractError("2D review record contract/hash is invalid")
+        if bounded_exploration:
+            _validate_bounded_review_payload(payload)
+        payloads[instance_id] = payload
+    declared_count = review_batch.get("candidate_count")
+    if declared_count is not None and len(payloads) != declared_count:
+        raise contracts.ContractError("2D review candidate count changed")
+    return payloads
+
+
+def _validate_bounded_review_payload(payload: Mapping[str, Any]) -> None:
+    fields = {
+        "schema",
+        "instance_id",
+        "request_sha256",
+        "profile_schema_id",
+        "sampled_attributes",
+        "candidate",
+        "candidate_manifest",
+        "reviewer",
+        "decision",
+        "checks",
+        "notes",
+        "downstream_gate",
+        "review_sha256",
+    }
+    check_fields = {
+        "species_breed",
+        "anatomy",
+        "pose_and_limb_separation",
+        "background",
+    }
+    checks = payload.get("checks")
+    if (
+        set(payload) != fields
+        or payload.get("schema") != review.REVIEW_SCHEMA
+        or payload.get("decision") not in {"approved_for_pixal3d", "rejected"}
+        or not isinstance(payload.get("reviewer"), str)
+        or not payload["reviewer"].strip()
+        or not isinstance(payload.get("notes"), str)
+        or not isinstance(checks, Mapping)
+        or set(checks) != check_fields | {"sampled_attributes", "hard_gates"}
+    ):
+        raise contracts.ContractError(
+            "bounded exploration review exact contract is invalid"
+        )
+    attribute_checks = checks["sampled_attributes"]
+    hard_gates = checks["hard_gates"]
+    if (
+        any(checks[field] not in {"passed", "rejected"} for field in check_fields)
+        or not isinstance(attribute_checks, Mapping)
+        or any(
+            value not in review.ATTRIBUTE_STATUSES
+            for value in attribute_checks.values()
+        )
+        or any(
+            value == "deferred_to_3d_physical_scale" and name != "size"
+            for name, value in attribute_checks.items()
+        )
+        or not isinstance(hard_gates, Mapping)
+        or set(hard_gates) != review.HARD_GATE_FIELDS
+        or any(value not in review.HARD_GATE_STATUSES for value in hard_gates.values())
+    ):
+        raise contracts.ContractError(
+            "bounded exploration review checks/hard gates are invalid"
+        )
+    rejected = (
+        any(checks[field] == "rejected" for field in check_fields)
+        or "rejected" in attribute_checks.values()
+        or "rejected" in hard_gates.values()
+    )
+    approved = payload["decision"] == "approved_for_pixal3d"
+    if (
+        approved == rejected
+        or (
+            approved
+            and (
+                any(value != "passed" for value in hard_gates.values())
+                or payload.get("downstream_gate")
+                != "frozen_exact_candidate_for_segmentation_and_pixal3d"
+            )
+        )
+        or (
+            not approved
+            and payload.get("downstream_gate") != "blocked_rejected"
+        )
+    ):
+        raise contracts.ContractError(
+            "bounded exploration review decision/hard gates disagree"
+        )
+
+
+def _validate_bounded_exploration_freezes(
+    *,
+    review_batch: Mapping[str, Any],
+    flux_batch: Mapping[str, Any],
+    candidates: Mapping[str, Mapping[str, Any]],
+    approved_reviews: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    declaration = flux_batch.get("selection", {}).get("bounded_exploration")
+    frozen = review_batch.get("bounded_exploration")
+    if declaration is None and frozen is None:
+        return None
+    if (
+        not isinstance(declaration, Mapping)
+        or not isinstance(frozen, Mapping)
+        or set(declaration) != {"policy", "groups"}
+        or set(frozen) != {"policy", "freeze_receipts"}
+        or not isinstance(declaration.get("groups"), list)
+        or not isinstance(frozen.get("freeze_receipts"), list)
+        or len(declaration["groups"]) != len(frozen["freeze_receipts"])
+    ):
+        raise contracts.ContractError(
+            "bounded exploration declaration/freeze is incomplete"
+        )
+    try:
+        declared_policy = one_shot.validate_bounded_exploration_policy_record(
+            declaration["policy"]
+        )
+        frozen_policy = one_shot.validate_bounded_exploration_policy_record(
+            frozen["policy"]
+        )
+        if contracts.canonical_json(declared_policy) != contracts.canonical_json(
+            frozen_policy
+        ):
+            raise contracts.ContractError(
+                "bounded exploration policy changed before Pixal3D"
+            )
+        validated_groups = [
+            one_shot.validate_bounded_exploration_group(group)
+            for group in declaration["groups"]
+        ]
+        group_hashes = [
+            group["exploration_group_sha256"] for group in validated_groups
+        ]
+        profile_ids = [group["profile_schema_id"] for group in validated_groups]
+        if (
+            len(set(group_hashes)) != len(group_hashes)
+            or len(set(profile_ids)) != len(profile_ids)
+        ):
+            raise contracts.ContractError(
+                "bounded exploration declaration repeats a group/profile"
+            )
+        groups = {
+            group["exploration_group_sha256"]: group
+            for group in validated_groups
+        }
+        receipts = {}
+        review_index = review_batch["reviews"]
+        review_by_instance = {
+            item["instance_id"]: item for item in review_index
+        }
+        if len(review_by_instance) != len(review_index):
+            raise contracts.ContractError(
+                "bounded exploration review index repeats an instance"
+            )
+        receipt_hashes = []
+        for receipt in frozen["freeze_receipts"]:
+            group = groups.get(receipt.get("exploration_group_sha256"))
+            if group is None:
+                raise contracts.ContractError(
+                    "bounded exploration freeze has no declared group"
+                )
+            group_reviews = [
+                item
+                for item in review_index
+                if item["profile_schema_id"] == group["profile_schema_id"]
+            ]
+            validated = one_shot.validate_bounded_exploration_freeze(
+                receipt,
+                group=group,
+                candidate_reviews=group_reviews,
+                flux_batch_sha256=flux_batch["batch_sha256"],
+            )
+            if validated["exploration_group_sha256"] in receipts:
+                raise contracts.ContractError(
+                    "bounded exploration freeze repeats a group receipt"
+                )
+            receipt_hashes.append(validated["freeze_receipt_sha256"])
+            receipts[validated["exploration_group_sha256"]] = validated
+    except one_shot.PolicyError as error:
+        raise contracts.ContractError(str(error)) from error
+    if len(set(receipt_hashes)) != len(receipt_hashes):
+        raise contracts.ContractError(
+            "bounded exploration freeze repeats a receipt hash"
+        )
+    if set(receipts) != set(groups):
+        raise contracts.ContractError("bounded exploration freeze coverage changed")
+    for receipt in receipts.values():
+        for outcome in receipt["candidate_outcomes"]:
+            instance_id = outcome["instance_id"]
+            candidate = candidates.get(instance_id)
+            review_item = review_by_instance.get(instance_id)
+            if (
+                candidate is None
+                or review_item is None
+                or candidate["index"]["candidate"]["sha256"]
+                != outcome["candidate_sha256"]
+                or review_item["candidate_sha256"]
+                != outcome["candidate_sha256"]
+                or review_item["decision"] != outcome["decision"]
+                or review_item["review"]["sha256"] != outcome["review_sha256"]
+            ):
+                raise contracts.ContractError(
+                    "bounded exploration reviewed candidate set changed before "
+                    "Pixal3D"
+                )
+    selected = {
+        receipt["selected_instance_id"]: receipt["selected_candidate_sha256"]
+        for receipt in receipts.values()
+        if receipt["state"] == "frozen"
+    }
+    if set(selected) != set(approved_reviews):
+        raise contracts.ContractError(
+            "Pixal3D approvals differ from frozen exploration selections"
+        )
+    for instance_id, candidate_sha256 in selected.items():
+        candidate = candidates.get(instance_id)
+        if (
+            candidate is None
+            or candidate["index"]["candidate"]["sha256"] != candidate_sha256
+            or approved_reviews[instance_id]["candidate"]["sha256"]
+            != candidate_sha256
+        ):
+            raise contracts.ContractError(
+                "frozen exploration candidate hash changed before Pixal3D"
+            )
+    return {
+        "policy": frozen_policy,
+        "review_batch_sha256": review_batch["review_batch_sha256"],
+        "freeze_receipts": [
+            receipts[key] for key in sorted(receipts)
+        ],
+    }
+
+
+def _validate_bounded_exploration_declaration(
+    *,
+    flux_batch: Mapping[str, Any],
+    preflight: Mapping[str, Any],
+    controlled_jobs: Mapping[str, Mapping[str, Any]],
+) -> None:
+    declaration = flux_batch.get("selection", {}).get("bounded_exploration")
+    if declaration is None:
+        return
+    source_bundle = preflight.get("source_bundle")
+    routes = preflight.get("routes")
+    groups = declaration.get("groups") if isinstance(declaration, Mapping) else None
+    if (
+        not isinstance(source_bundle, Mapping)
+        or not isinstance(routes, Mapping)
+        or not isinstance(groups, list)
+    ):
+        raise contracts.ContractError(
+            "bounded exploration preflight/declaration is invalid"
+        )
+    try:
+        validated_groups = [
+            one_shot.validate_bounded_exploration_group(group)
+            for group in groups
+        ]
+    except one_shot.PolicyError as error:
+        raise contracts.ContractError(str(error)) from error
+    declared_profiles = {
+        group.get("profile_schema_id")
+        for group in validated_groups
+    }
+    animal_jobs = routes.get("flux2_pixal3d_animal_v1")
+    if not isinstance(animal_jobs, list):
+        raise contracts.ContractError(
+            "bounded exploration preflight animal jobs are invalid"
+        )
+    declared_profile_jobs = [
+        job
+        for job in animal_jobs
+        if isinstance(job, Mapping)
+        and job.get("profile_schema_id") in declared_profiles
+    ]
+    declared_profile_instances = {
+        job.get("consumer_requests", [{}])[0].get("instance_id")
+        for job in declared_profile_jobs
+        if isinstance(job.get("consumer_requests"), list)
+        and len(job["consumer_requests"]) == 1
+        and isinstance(job["consumer_requests"][0], Mapping)
+    }
+    if declared_profile_instances != set(controlled_jobs):
+        raise contracts.ContractError(
+            "bounded exploration omitted a preflight job from a declared profile"
+        )
+    try:
+        one_shot.validate_bounded_exploration_declaration(
+            declaration,
+            execution_preflight_sha256=preflight.get("preflight_sha256"),
+            request_batch_sha256=source_bundle.get("request_batch_sha256"),
+            jobs=declared_profile_jobs,
+        )
+    except one_shot.PolicyError as error:
+        raise contracts.ContractError(str(error)) from error
 
 
 def _require_sha256(value: Any, label: str) -> str:
@@ -774,44 +1160,50 @@ def prepare_pixal_inputs(
         != expected_review_domain
     ):
         raise contracts.ContractError("2D review domain differs from FLUX route")
-    upstream_one_shot = _flux_one_shot_evidence(flux_batch, candidates)
     if flux_batch["batch_sha256"] != review_batch["flux2_batch"]["batch_sha256"]:
         raise contracts.ContractError("review and FLUX.2 batch hashes differ")
-    approved_reviews = {}
-    review_root = Path(review_batch_path).resolve().parent
     expected_review_schema = (
         review.STATIC_REVIEW_SCHEMA
         if route == "flux2_pixal3d_static_v1"
         else review.REVIEW_SCHEMA
     )
-    for item in review_batch["reviews"]:
-        record = item["review"]
-        path = (review_root / record["path"]).resolve()
-        if (
-            path.is_symlink()
-            or not path.is_file()
-            or path.stat().st_size != record["size_bytes"]
-            or _sha256_file(path) != record["sha256"]
-        ):
-            raise contracts.ContractError("2D review artifact changed")
-        payload = contracts.load_json(path)
-        if (
-            payload.get("schema") != expected_review_schema
-            or payload.get("instance_id") != item["instance_id"]
-            or payload.get("candidate", {}).get("sha256") != item["candidate_sha256"]
-            or payload.get("review_sha256") != _hash_without(payload, "review_sha256")
-        ):
-            raise contracts.ContractError("2D review record contract/hash is invalid")
-        if payload["decision"] == "approved_for_pixal3d":
-            approved_reviews[payload["instance_id"]] = payload
+    review_payloads = _load_authenticated_review_payloads(
+        review_batch_path,
+        review_batch,
+        expected_review_schema=expected_review_schema,
+        bounded_exploration=(
+            flux_batch.get("selection", {}).get("bounded_exploration")
+            is not None
+        ),
+    )
+    approved_reviews = {
+        instance_id: payload
+        for instance_id, payload in review_payloads.items()
+        if payload["decision"] == "approved_for_pixal3d"
+    }
     if len(approved_reviews) != review_batch["approved_count"]:
         raise contracts.ContractError("approved 2D review count changed")
     if not approved_reviews:
         raise contracts.ContractError("no approved candidates for Pixal3D")
-
     preflight = _load_authenticated_preflight(flux_batch)
     route, route_contract, controlled_jobs = _authenticated_route_jobs(
         flux_batch, preflight, candidates
+    )
+    _validate_bounded_exploration_declaration(
+        flux_batch=flux_batch,
+        preflight=preflight,
+        controlled_jobs=controlled_jobs,
+    )
+    bounded_exploration_freeze = _validate_bounded_exploration_freezes(
+        review_batch=review_batch,
+        flux_batch=flux_batch,
+        candidates=candidates,
+        approved_reviews=approved_reviews,
+    )
+    upstream_one_shot = _flux_one_shot_evidence(
+        flux_batch,
+        candidates,
+        bounded_exploration_freeze=bounded_exploration_freeze,
     )
     output_root = Path(output_root).absolute()
     pixal_output_root = Path(pixal_output_root).absolute()
@@ -1019,6 +1411,13 @@ def prepare_pixal_inputs(
                 "overall": "passed",
             },
         }
+        if bounded_exploration_freeze is not None:
+            pixal_payload["bounded_exploration_freeze"] = copy.deepcopy(
+                bounded_exploration_freeze
+            )
+            pixal_payload["automatic_checks"][
+                "bounded_exploration_freeze_reauthenticated"
+            ] = True
         pixal_payload["manifest_sha256"] = _json_sha256(pixal_payload)
         contracts.write_json_no_replace(staging / "pixal_inputs_manifest.json", pixal_payload)
         material_execution.native._seal_readonly_tree(staging)

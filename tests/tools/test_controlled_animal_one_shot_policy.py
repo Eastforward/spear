@@ -140,3 +140,154 @@ def test_legacy_evidence_cannot_claim_profile_qualification():
     evidence["profile_qualification_authorized"] = True
     with pytest.raises(policy.PolicyError, match="legacy one-shot evidence"):
         policy.validate_upstream_flux_evidence(evidence)
+
+
+def _exploration_jobs(count=3):
+    return [
+        {
+            "execution_job_id": f"animal_{index:02d}",
+            "profile_schema_id": "dog_short_leg_v1",
+            "profile_sha256": "1" * 64,
+            "consumer_requests": [
+                {
+                    "instance_id": f"dog_short_leg_{index:02d}",
+                    "request_sha256": f"{index + 2:x}" * 64,
+                }
+            ],
+        }
+        for index in range(count)
+    ]
+
+
+def _exploration_group(count=3):
+    return policy.build_bounded_exploration_group(
+        profile_schema_id="dog_short_leg_v1",
+        profile_sha256="1" * 64,
+        execution_preflight_sha256="a" * 64,
+        request_batch_sha256="b" * 64,
+        jobs=_exploration_jobs(count),
+    )
+
+
+def _exploration_reviews(decisions):
+    return [
+        {
+            "instance_id": f"dog_short_leg_{index:02d}",
+            "profile_schema_id": "dog_short_leg_v1",
+            "candidate_sha256": f"{index + 8:x}" * 64,
+            "decision": decision,
+            "review": {"sha256": f"{index + 11:x}" * 64},
+        }
+        for index, decision in enumerate(decisions)
+    ]
+
+
+def test_bounded_exploration_group_is_predeclared_and_hash_authenticated():
+    group = _exploration_group()
+    assert group["declared_candidate_count"] == 3
+    assert [item["ordinal"] for item in group["candidates"]] == [0, 1, 2]
+
+    expanded = copy.deepcopy(group)
+    expanded["declared_candidate_count"] = 4
+    with pytest.raises(policy.PolicyError, match="identity/count"):
+        policy.validate_bounded_exploration_group(expanded)
+
+    changed = copy.deepcopy(group)
+    changed["candidates"][0]["instance_id"] = "replacement_after_preview"
+    with pytest.raises(policy.PolicyError, match="group hash changed"):
+        policy.validate_bounded_exploration_group(changed)
+
+
+def test_bounded_exploration_declaration_rebuilds_exact_preflight_groups():
+    jobs = _exploration_jobs()
+    declaration = {
+        "policy": policy.bounded_exploration_policy_record(),
+        "groups": [_exploration_group()],
+    }
+    assert policy.validate_bounded_exploration_declaration(
+        declaration,
+        execution_preflight_sha256="a" * 64,
+        request_batch_sha256="b" * 64,
+        jobs=jobs,
+    ) == declaration
+
+    changed_jobs = copy.deepcopy(jobs)
+    changed_jobs[0]["execution_job_id"] = "replacement"
+    changed = {
+        "policy": policy.bounded_exploration_policy_record(),
+        "groups": [
+            policy.build_bounded_exploration_group(
+                profile_schema_id="dog_short_leg_v1",
+                profile_sha256="1" * 64,
+                execution_preflight_sha256="a" * 64,
+                request_batch_sha256="b" * 64,
+                jobs=changed_jobs,
+            )
+        ],
+    }
+    with pytest.raises(
+        policy.PolicyError, match="differs from authenticated preflight jobs"
+    ):
+        policy.validate_bounded_exploration_declaration(
+            changed,
+            execution_preflight_sha256="a" * 64,
+            request_batch_sha256="b" * 64,
+            jobs=jobs,
+        )
+
+
+def test_bounded_exploration_freezes_exactly_one_reviewed_hash():
+    group = _exploration_group()
+    reviews = _exploration_reviews(
+        ["rejected", "approved_for_pixal3d", "rejected"]
+    )
+    receipt = policy.build_bounded_exploration_freeze(
+        group=group,
+        candidate_reviews=reviews,
+        flux_batch_sha256="f" * 64,
+    )
+
+    assert receipt["state"] == "frozen"
+    assert receipt["selected_instance_id"] == "dog_short_leg_01"
+    assert receipt["selected_candidate_sha256"] == "9" * 64
+    assert receipt["rejected_candidate_count"] == 2
+    assert [item["decision"] for item in receipt["candidate_outcomes"]] == [
+        "rejected",
+        "approved_for_pixal3d",
+        "rejected",
+    ]
+
+    changed = copy.deepcopy(receipt)
+    changed["selected_instance_id"] = "dog_short_leg_02"
+    with pytest.raises(policy.PolicyError, match="counts/state changed"):
+        policy.validate_bounded_exploration_freeze(
+            changed,
+            group=group,
+            candidate_reviews=reviews,
+            flux_batch_sha256="f" * 64,
+        )
+
+    changed = copy.deepcopy(receipt)
+    changed["candidate_outcomes"][0]["candidate_sha256"] = "e" * 64
+    with pytest.raises(policy.PolicyError, match="freeze receipt hash changed"):
+        policy.validate_bounded_exploration_freeze_record(changed)
+
+
+def test_bounded_exploration_exhausts_zero_and_rejects_multiple_approvals():
+    group = _exploration_group()
+    exhausted = policy.build_bounded_exploration_freeze(
+        group=group,
+        candidate_reviews=_exploration_reviews(["rejected"] * 3),
+        flux_batch_sha256="f" * 64,
+    )
+    assert exhausted["state"] == "exploration_exhausted"
+    assert exhausted["selected_instance_id"] is None
+
+    with pytest.raises(policy.PolicyError, match="at most one approved"):
+        policy.build_bounded_exploration_freeze(
+            group=group,
+            candidate_reviews=_exploration_reviews(
+                ["approved_for_pixal3d", "approved_for_pixal3d", "rejected"]
+            ),
+            flux_batch_sha256="f" * 64,
+        )
