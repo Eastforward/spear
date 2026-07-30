@@ -372,9 +372,19 @@ def _load_registry(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if path.is_symlink() or not path.is_file():
         raise contracts.ContractError(f"source registry is missing: {path}")
     payload = contracts.load_json(path)
+    registry_schema = payload.get("schema") if isinstance(payload, dict) else None
+    if registry_schema == source_registry.DERIVED_REGISTRY_SCHEMA:
+        raise contracts.ContractError(
+            "derived registry v3 requires target-native TokenRig and cannot "
+            "enter the fixed Quaternius rig-swap path"
+        )
     if (
         not isinstance(payload, dict)
-        or payload.get("schema") != source_registry.REGISTRY_SCHEMA
+        or registry_schema
+        not in {
+            source_registry.REGISTRY_SCHEMA,
+            source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
+        }
         or payload.get("registry_sha256") != _hash_without(payload, "registry_sha256")
         or payload.get("automatic_checks", {}).get("overall") != "passed"
         or payload.get("source_asset_count") != len(payload.get("source_assets", []))
@@ -404,7 +414,8 @@ def _load_registry(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         ):
             raise contracts.ContractError(f"source_asset_v2 identity changed: {asset_id}")
 
-        raw_record = source.get("artifacts", {}).get("pixal_raw_glb", {})
+        artifacts = source.get("artifacts", {})
+        raw_record = artifacts.get("pixal_raw_glb", {})
         if raw_record.get("root_id") != "spear_repo":
             raise contracts.ContractError(f"Pixal GLB root changed: {asset_id}")
         raw_path = (SPEAR_ROOT / raw_record.get("path", "")).resolve()
@@ -424,6 +435,45 @@ def _load_registry(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             or raw_stats.get("animations") != 0
         ):
             raise contracts.ContractError(f"Pixal raw GLB readback failed: {asset_id}")
+        derived_registry = (
+            registry_schema
+            == source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA
+        )
+        geometry_role = (
+            "derived_repaired_glb" if derived_registry else "pixal_raw_glb"
+        )
+        geometry_record = artifacts.get(geometry_role, {})
+        if geometry_record.get("root_id") != "spear_repo":
+            raise contracts.ContractError(
+                f"selected source geometry root changed: {asset_id}"
+            )
+        geometry_path = (
+            SPEAR_ROOT / geometry_record.get("path", "")
+        ).resolve()
+        try:
+            geometry_path.relative_to(SPEAR_ROOT.resolve())
+        except ValueError as error:
+            raise contracts.ContractError(
+                "selected source geometry escaped SPEAR root"
+            ) from error
+        _verify_file(
+            geometry_path,
+            geometry_record,
+            label=f"selected {geometry_role}",
+        )
+        geometry_stats = audit_mesh_efficiency.mesh_stats(geometry_path)
+        if (
+            not geometry_stats
+            or not geometry_stats.get("exists")
+            or geometry_stats.get("triangles", 0) <= 0
+            or geometry_stats.get("materials", 0) <= 0
+            or geometry_stats.get("textures", 0) <= 0
+            or geometry_stats.get("skins") != 0
+            or geometry_stats.get("animations") != 0
+        ):
+            raise contracts.ContractError(
+                f"selected source geometry GLB readback failed: {asset_id}"
+            )
         jobs.append(
             {
                 "asset_id": asset_id,
@@ -438,6 +488,14 @@ def _load_registry(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
                 "raw_stats": {
                     name: value
                     for name, value in raw_stats.items()
+                    if name not in {"path", "exists"}
+                },
+                "geometry_role": geometry_role,
+                "geometry_path": geometry_path,
+                "geometry_record": geometry_record,
+                "geometry_stats": {
+                    name: value
+                    for name, value in geometry_stats.items()
                     if name not in {"path", "exists"}
                 },
                 "rig": _rig_spec(source),
@@ -515,6 +573,7 @@ def build_commands(
         if bind_output is not None
         else job_root / "rigged/animated_100000_double_sided.glb"
     )
+    source_geometry = Path(job.get("geometry_path", job["raw_path"]))
     lod_command = [
         str(BLENDER),
         "-b",
@@ -522,7 +581,7 @@ def build_commands(
         str(LOD_SCRIPT),
         "--",
         "--source",
-        str(job["raw_path"]),
+        str(source_geometry),
         "--output",
         str(lod),
         "--metadata",
@@ -903,6 +962,12 @@ def _run_job(
             "sha256": job["source_asset_sha256"],
         },
         "pixal_raw_glb": copy.deepcopy(job["raw_record"]),
+        "selected_source_geometry": {
+            "role": job.get("geometry_role", "pixal_raw_glb"),
+            "artifact": copy.deepcopy(
+                job.get("geometry_record", job["raw_record"])
+            ),
+        },
         "source_rig": {
             "species": job["rig"]["species"],
             "profile_id": job["rig"]["profile_id"],
@@ -912,6 +977,9 @@ def _run_job(
             "sha256": job["rig"]["sha256"],
         },
         "raw_mesh_readback": job["raw_stats"],
+        "source_geometry_readback": job.get(
+            "geometry_stats", job["raw_stats"]
+        ),
         "direction_gate": _direction_gate_record(job),
     }
     if locked_paw:
@@ -928,7 +996,7 @@ def _run_job(
     try:
         paths["prebind_geometry_audit"].parent.mkdir(parents=True, exist_ok=True)
         geometry_record = audit_quadruped_i23d_geometry.audit(
-            Path(job["raw_path"]), asset_id
+            Path(job.get("geometry_path", job["raw_path"])), asset_id
         )
         paths["prebind_geometry_audit"].write_text(
             json.dumps(
@@ -964,7 +1032,9 @@ def _run_job(
         _rewrite_runtime_metadata(
             paths["lod_metadata"],
             public_runtime,
-            source_sha256=job["raw_record"]["sha256"],
+            source_sha256=job.get(
+                "geometry_record", job["raw_record"]
+            )["sha256"],
         )
         assert_lod_matches_direction_review(
             paths["lod_glb"], job["direction_decision"]
@@ -980,7 +1050,7 @@ def _run_job(
         timings = {"lod": lod_timing, "binding": bind_timing}
         if locked_paw:
             _prelock_lod, _prelock_rigged = validate_lod_and_binding(
-                job["raw_stats"],
+                job.get("geometry_stats", job["raw_stats"]),
                 paths["lod_glb"],
                 paths["rigged_prelock_glb"],
                 target_faces,
@@ -1046,7 +1116,10 @@ def _run_job(
                 )
             )
         lod_stats, rigged_stats = validate_lod_and_binding(
-            job["raw_stats"], paths["lod_glb"], paths["rigged_glb"], target_faces
+            job.get("geometry_stats", job["raw_stats"]),
+            paths["lod_glb"],
+            paths["rigged_glb"],
+            target_faces,
         )
         return {
             **base,
@@ -1250,6 +1323,7 @@ def run_batch(
                 "all_source_registries_reauthenticated": True,
                 "all_source_asset_v2_records_reauthenticated": True,
                 "all_pixal_raw_glbs_reauthenticated": True,
+                "all_selected_source_glbs_reauthenticated": True,
                 "all_direction_decisions_reauthenticated": passed > 0,
                 "all_regenerated_lods_match_reviewed_lods": passed > 0,
                 "all_successful_sources_passed_prebind_geometry_gate": passed > 0,

@@ -48,6 +48,21 @@ def test_build_commands_can_keep_prelock_binding_as_evidence(tmp_path):
     assert bind[bind.index("--output") + 1] == str(prelock)
 
 
+def test_build_commands_use_selected_derived_geometry(tmp_path):
+    job = _job(tmp_path)
+    derived = tmp_path / "derived_repaired.glb"
+    job["geometry_path"] = derived
+
+    lod, _bind = runner.build_commands(
+        job,
+        tmp_path / "job",
+        target_faces=100_000,
+    )
+
+    assert lod[lod.index("--source") + 1] == str(derived)
+    assert str(job["raw_path"]) not in lod
+
+
 def test_locked_paw_profile_pins_approved_motion_carrier_and_commands(tmp_path):
     spec = runner._locked_paw_motion_spec("quadruped_dog_locked_paws_v2")
     target = tmp_path / "prelock.glb"
@@ -252,6 +267,167 @@ def test_run_batch_rejects_unsafe_worker_counts(tmp_path, workers):
 def test_load_jobs_requires_a_registry():
     with pytest.raises(contracts.ContractError, match="registry"):
         runner.load_jobs([])
+
+
+def _source_registry_fixture(
+    tmp_path,
+    monkeypatch,
+    *,
+    schema,
+    include_derived=True,
+):
+    monkeypatch.setattr(runner, "SPEAR_ROOT", tmp_path)
+    raw = tmp_path / "raw.glb"
+    raw.write_bytes(b"raw Pixel3D GLB")
+    derived = tmp_path / "derived.glb"
+    derived.write_bytes(b"bounded derived GLB")
+
+    def artifact(path):
+        return {
+            "root_id": "spear_repo",
+            "path": path.relative_to(tmp_path).as_posix(),
+            "sha256": runner._sha256_file(path),
+            "size_bytes": path.stat().st_size,
+        }
+
+    asset_id = "dog_fixture_123456789abc"
+    artifacts = {"pixal_raw_glb": artifact(raw)}
+    if include_derived:
+        artifacts["derived_repaired_glb"] = artifact(derived)
+    source = {
+        "schema": contracts.SOURCE_ASSET_SCHEMA,
+        "asset_id": asset_id,
+        "asset_class": "animal",
+        "profile_schema_id": "dog_fixture_v1",
+        "request_sha256": "a" * 64,
+        "sampled_attributes": {"coat_color": "red"},
+        "target_physical_profile": {"control_attribute": "size"},
+        "taxonomy": {"species": "dog"},
+        "rig": {},
+        "qa": {"static_mesh": "passed", "binding": "pending"},
+        "artifacts": artifacts,
+    }
+    registry_root = tmp_path / "registry"
+    source_path = registry_root / "assets" / asset_id / "source_asset_v2.json"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text(json.dumps(source), encoding="utf-8")
+    source_record = {
+        "path": source_path.relative_to(registry_root).as_posix(),
+        "sha256": runner._sha256_file(source_path),
+        "size_bytes": source_path.stat().st_size,
+    }
+    registry = {
+        "schema": schema,
+        "source_asset_count": 1,
+        "source_assets": [
+            {
+                "asset_id": asset_id,
+                "profile_schema_id": source["profile_schema_id"],
+                "request_sha256": source["request_sha256"],
+                "sampled_attributes": source["sampled_attributes"],
+                "source_asset": source_record,
+            }
+        ],
+        "automatic_checks": {"overall": "passed"},
+    }
+    registry["registry_sha256"] = runner._hash_without(
+        registry, "registry_sha256"
+    )
+    registry_path = registry_root / "registry_manifest.json"
+    registry_path.write_text(json.dumps(registry), encoding="utf-8")
+    monkeypatch.setattr(
+        runner,
+        "_rig_spec",
+        lambda _source: {
+            "profile_id": "fixture",
+            "skeleton_family": "fixture",
+            "path": tmp_path / "rig.glb",
+            "sha256": "b" * 64,
+            "species": "dog",
+        },
+    )
+    monkeypatch.setattr(
+        runner.audit_mesh_efficiency,
+        "mesh_stats",
+        lambda path: {
+            "path": str(path),
+            "exists": True,
+            "triangles": 20,
+            "materials": 1,
+            "textures": 2,
+            "skins": 0,
+            "animations": 0,
+        },
+    )
+    return registry_path, raw, derived
+
+
+def test_lod_binding_reader_selects_derived_repaired_geometry(
+    tmp_path,
+    monkeypatch,
+):
+    registry, raw, derived = _source_registry_fixture(
+        tmp_path,
+        monkeypatch,
+        schema=runner.source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
+    )
+
+    _payload, jobs = runner._load_registry(registry)
+
+    assert jobs[0]["raw_path"] == raw
+    assert jobs[0]["geometry_path"] == derived
+    assert jobs[0]["geometry_role"] == "derived_repaired_glb"
+
+
+def test_lod_binding_reader_rejects_derived_registry_without_repaired_geometry(
+    tmp_path,
+    monkeypatch,
+):
+    registry, _raw, _derived = _source_registry_fixture(
+        tmp_path,
+        monkeypatch,
+        schema=runner.source_registry.LEGACY_DERIVED_REGISTRY_SCHEMA,
+        include_derived=False,
+    )
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="selected source geometry root changed",
+    ):
+        runner._load_registry(registry)
+
+
+def test_lod_binding_reader_rejects_v3_before_fixed_quaternius_swap(
+    tmp_path,
+    monkeypatch,
+):
+    registry, _raw, _derived = _source_registry_fixture(
+        tmp_path,
+        monkeypatch,
+        schema=runner.source_registry.DERIVED_REGISTRY_SCHEMA,
+    )
+
+    with pytest.raises(
+        contracts.ContractError,
+        match="target-native TokenRig.*fixed Quaternius",
+    ):
+        runner._load_registry(registry)
+
+
+def test_lod_binding_reader_keeps_raw_registry_on_raw_pixal_geometry(
+    tmp_path,
+    monkeypatch,
+):
+    registry, raw, _derived = _source_registry_fixture(
+        tmp_path,
+        monkeypatch,
+        schema=runner.source_registry.REGISTRY_SCHEMA,
+    )
+
+    _payload, jobs = runner._load_registry(registry)
+
+    assert jobs[0]["geometry_path"] == raw
+    assert jobs[0]["geometry_role"] == "pixal_raw_glb"
 
 
 def _write_approved_direction_decision(
