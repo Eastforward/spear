@@ -1,22 +1,22 @@
 {
   "schema": "avengine_attribute_profile_v1",
   "profile_schema_id": "dog_pembroke_welsh_corgi_four_limb_rest_side_clay_v1",
-  "profile_revision": "2026_07_27_v4_tail_stump_four_distinct_paws_guide",
+  "profile_revision": "2026_07_27_v5_localized_tail_stump_edit_from_v4",
   "asset_class": "animal",
-  "lineage_group_id": "quaternius_dog_short_leg_tail_stump_7d4ea944",
+  "lineage_group_id": "flux2_corgi_v4_tail_edit_source_a3c6553a",
   "state_classification": "research_candidate",
   "taxonomy": {
     "species": "dog",
     "breed": "pembroke_welsh_corgi"
   },
   "base_template": {
-    "template_id": "quaternius_dog_short_leg_tail_stump_side_clay_v3",
+    "template_id": "flux2_corgi_v4_tail_edit_source_a3c6553a",
     "kind": "reference_image",
     "artifact": {
       "root_id": "spear_repo",
-      "path": "data/controlled_source_attributes_v1/references/animal/quaternius_dog_short_leg_tail_stump_side_clay_v3/frame_0000.png",
-      "sha256": "7d4ea944cd70c84ddec379092e29e7a4dcbe3886c8ce6d84b7ea6b50c47b5ab7",
-      "size_bytes": 1033946
+      "path": "data/controlled_source_attributes_v1/references/animal/flux2_corgi_v4_tail_edit_source_a3c6553a/frame_0000.png",
+      "sha256": "a3c6553a01a3b390346a34db18feab0f1c22e775d8645d37a8a6e730d9461047",
+      "size_bytes": 1140794
     },
     "provenance_status": "verified",
     "usage_scope": "research_candidate"
@@ -42,7 +42,7 @@
   "forbidden_combinations": [],
   "generation_contract": {
     "route": "flux2_pixal3d_animal_v1",
-    "prompt_template_id": "quadruped_four_limb_rest_side_i2i_v3_tail_stump_four_distinct_paws",
+    "prompt_template_id": "quadruped_authoritative_image_local_tail_stump_edit_v1",
     "base_acquisition_policy": {
       "policy_id": "animal_one_shot_no_seed_lottery_v1",
       "acquisition_unit": "one_frozen_base_asset",
@@ -50,9 +50,9 @@
       "downstream_instance_route": "stable_animal_template_v1",
       "profile_validation": "all_predeclared_requests_count_zero_hidden_failures"
     },
-    "positive_template": "Transform the uniform clay pose guide into one {size} {life_stage} {breed} {species} with a {body_build} anatomically normal body, a coherent {coat_color} {coat_length} coat with a {coat_pattern} pattern, {ear_shape} ears, and a {tail_shape} tail.",
-    "pose_guard_prompt": "The input is an untextured uniform-clay pose guide, not an appearance reference. Replace every visible clay surface, including the neck, torso, near-side limbs, far-side limbs, paws, head, ears, and tiny tail-root stump, with one coherent photorealistic breed-appropriate coat. Preserve the exact authored neutral rigging stance, silhouette, and joint locations from the input. Preserve the guide's low-set short-legged proportions and its tiny tail-root stump; do not lengthen the legs, raise the torso, or invent a free tail shaft. The tail silhouette must end inside the guide's tiny stump envelope immediately behind the rump. Treat that envelope as a hard occupancy boundary: every background pixel beyond the guide stump tip must remain plain background, never fur or tail. This is a strict orthographic lateral silhouette: the camera optical axis is perpendicular to the animal's sagittal plane, the animal faces exactly image-right, and the full torso centerline is parallel to the image plane. Show the side of the rib cage, never the front of the chest or a rear-quarter view. The nose, neck, spine, pelvis, and tail base form one image-horizontal longitudinal direction without depth recession. Show exactly one eye. The head and neck must align with the torso; the animal must not look toward or away from the camera and must not tilt its head. Show exactly four distinct lower-limb and paw silhouettes, one for each anatomical leg, and preserve the authored opposite fore-aft offsets of the far-side front and hind limb chains. Those offsets exist only along the image horizontal axis, never by turning the torso toward the camera. Keep a clearly visible background gap between every near-side and far-side paw and lower leg from paw tip through the hock or wrist; never collapse, overlap, cross, merge, or hide any of those four silhouettes. Do not convert the compact offsets into a walking stride or show-dog stack. Keep all four paws planted on the same level ground plane. Preserve full-body framing and use a plain background. This is a static rigging reference, not an action pose. Keep the stump attached only at its anatomical tail base. It may form one tiny rounded or triangular protrusion immediately behind the rump, but it must have no visible free shaft, curl, plume, or continuation toward the hind legs. The stump must remain clear of both hind legs and every paw.",
-    "negative_prompt": "three-quarter view, front-quarter view, rear-quarter view, perspective view, visible front of chest, foreshortened torso, camera yaw, torso yaw, twisted torso, twisted spine, depth-receding spine, curved body axis, two visible eyes, head turned toward camera, head turned away from camera, tilted head, walking, running, gait stride, lifted paw, crouching, sitting, lying down, uneven ground, mismatched paw height, medium-length legs, normal-height legs, long legs, high-set torso, crossed legs, overlapping legs, overlapping paws, collapsed limb offsets, merged legs, merged paws, hidden legs, hidden paws, fewer than four lower limbs, fewer than four paws, indistinct fourth paw, splayed legs, cropped body, fused tail, extra limbs, gray clay patch, untextured patch, plastic patch, collar, scarf, accessory, background geometry, text, tail beyond guide stump, elongated tail stump, visible free tail shaft, tail projecting behind rump, upright tail, curled tail, long tail, full-length tail, long bushy tail, plumed tail, tail touching hind leg, tail overlapping leg, fused tail and leg, tail wrapped around leg, tail obscuring paw, tail merged with foot",
+    "positive_template": "Perform exactly one localized anatomical correction on the supplied image of one {size} {life_stage} {breed} {species} with a {body_build} anatomically normal body, a coherent {coat_color} {coat_length} coat with a {coat_pattern} pattern, and {ear_shape} ears: replace only the substantial free tail with one {tail_shape} tail.",
+    "pose_guard_prompt": "The supplied v4 image is the authoritative pixel-level identity, appearance, anatomy, pose, camera, lighting, framing, and background reference. It is not a clay guide and must not be globally redrawn, restyled, or reposed. Preserve the same individual dog's head, ears, single visible eye, muzzle, expression, red-and-white coat colours and markings, fur detail, neck, chest, long low torso, short-legged proportions, four complete legs, four distinct planted paws, ground line, shadow, exact lateral camera, scale, and canvas placement as closely as diffusion permits. Keep all four existing limb and paw silhouettes anatomically connected and individually visible; do not move, merge, hide, add, or remove any limb or paw. The only authorized edit is the tail region at the rear rump. Erase the substantial red-and-white free tail shaft and its white tip that project down and backward from the rump. Fill the vacated tail area with the same plain grey background texture and lighting as its immediate surroundings. Retain exactly one tiny attached red-fur tail-root stump at the anatomical tail base. The stump may be a small rounded or triangular nub immediately behind the rump, but it must terminate before any visible free shaft begins. It must have no white tip, no curl, no plume, no downward or rearward continuation, and no tail-shaped shadow. Keep a clear plain-background gap between the entire stump and both hind-leg silhouettes and every paw. Do not modify any non-tail anatomy, coat marking, pose, camera, ground, shadow outside the erased-tail region, or background outside the erased-tail region.",
+    "negative_prompt": "global redraw, different dog, changed breed identity, changed face, changed ears, changed eye, changed muzzle, changed expression, changed coat colour, changed white markings, changed fur style, changed torso, changed body length, changed leg length, changed paw position, changed pose, changed camera, changed framing, changed scale, changed lighting, changed ground line, changed shadow outside tail edit region, three-quarter view, front-quarter view, rear-quarter view, perspective view, camera yaw, torso yaw, twisted torso, curved spine, two visible eyes, head turn, walking, running, gait stride, lifted paw, crouching, sitting, lying down, uneven ground, crossed legs, overlapping legs, overlapping paws, merged legs, merged paws, hidden leg, hidden paw, extra limb, missing limb, fewer than four complete legs, fewer than four distinct paws, cropped body, open belly, extra tail, second tail, substantial tail, elongated stump, visible free tail shaft, white tail tip, tail projecting downward, tail projecting backward, upright tail, curled tail, full-length tail, bushy tail, plumed tail, tail touching hind leg, tail overlapping leg, fused tail and leg, tail wrapped around leg, tail obscuring paw, tail merged with foot, collar, scarf, accessory, background object, text",
     "value_labels": {
       "species": {
         "dog": "dog"

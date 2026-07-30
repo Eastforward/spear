@@ -771,6 +771,32 @@ def test_animal_sampling_is_deterministic_balanced_and_compiles_one_prompt():
     schema.validate_instance_request(request, profile)
 
 
+def test_current_sampler_does_not_compile_free_tail_guard_for_a_stump():
+    profile = animal_profile()
+    profile["fixed_attributes"]["tail_shape"] = "stump"
+    profile["generation_contract"]["value_labels"]["tail_shape"] = {
+        "stump": "compact tail-root stump"
+    }
+
+    current = schema.sample_instance_requests(
+        profile,
+        count=1,
+        batch_seed=43,
+    )[0]
+    historical_v2 = schema.sample_instance_requests(
+        profile,
+        count=1,
+        batch_seed=43,
+        sampler_algorithm=schema.UNIVERSAL_TAIL_GUARD_SAMPLER_ALGORITHM,
+    )[0]
+
+    assert current["sampler"]["algorithm"] == "balanced_quota_sampler_v3"
+    assert "free tail visibly separated" not in current["generation_plan"]["prompt"]
+    assert "free tail visibly separated" in historical_v2["generation_plan"]["prompt"]
+    schema.validate_instance_request(current, profile)
+    schema.validate_instance_request(historical_v2, profile)
+
+
 def test_human_request_selects_fixed_rocketbox_and_compiles_material_plan():
     profile = human_profile()
 
@@ -921,7 +947,7 @@ def test_legacy_v1_batches_accept_both_historical_tail_prompt_variants():
     assert schema.validate_request_batch(guarded, [profile]) == guarded
     assert historical["sampler"]["algorithm"] == "balanced_quota_sampler_v1"
     assert guarded["sampler"]["algorithm"] == "balanced_quota_sampler_v1"
-    assert current["sampler"]["algorithm"] == "balanced_quota_sampler_v2"
+    assert current["sampler"]["algorithm"] == "balanced_quota_sampler_v3"
     assert "free tail visibly separated" not in historical["requests"][0][
         "generation_plan"
     ]["prompt"]

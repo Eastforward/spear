@@ -1,0 +1,47 @@
+{
+  "candidate": {
+    "path": "/data/datasets/avengine_workspaces/AVEngine/external/SPEAR/tmp/new_animal_assets/pembroke_welsh_corgi_20260727_04/flux/candidates/animal_9769ea67c19ff42c/candidate.png",
+    "sha256": "a3c6553a01a3b390346a34db18feab0f1c22e775d8645d37a8a6e730d9461047",
+    "size_bytes": 1140794
+  },
+  "candidate_manifest": {
+    "path": "/data/datasets/avengine_workspaces/AVEngine/external/SPEAR/tmp/new_animal_assets/pembroke_welsh_corgi_20260727_04/flux/candidates/animal_9769ea67c19ff42c/candidate_manifest.json",
+    "sha256": "7ee874d5ac7d3ab2653b2983e958c80769bf01cc1d68f082a982ee5aafa6d622",
+    "size_bytes": 12127
+  },
+  "checks": {
+    "anatomy": "passed",
+    "background": "passed",
+    "hard_gates": {
+      "anatomically_connected_limbs": "passed",
+      "closed_body_surface": "passed",
+      "complete_extremities": "passed",
+      "photorealistic_pbr_style": "passed",
+      "pose_and_camera_preserved": "passed",
+      "single_subject": "passed",
+      "species_correct_tail": "rejected",
+      "target_attribute_only": "passed"
+    },
+    "pose_and_limb_separation": "passed",
+    "sampled_attributes": {
+      "body_build": "passed",
+      "coat_color": "passed",
+      "size": "deferred_to_3d_physical_scale"
+    },
+    "species_breed": "passed"
+  },
+  "decision": "rejected",
+  "downstream_gate": "blocked_rejected",
+  "instance_id": "dog_pembroke_welsh_corgi_four_limb_rest_side_clay_9769ea67c19f",
+  "notes": "Fail-closed objective rejection: four planted paws and the low-set short-legged body remain visible, but FLUX expanded the tail-root-stump guide into a substantial free tail segment ending in a white tip. The free tail also contacts or overlaps the rear-limb silhouette instead of remaining inside the tiny stump envelope. No owner review or Pixal3D execution is authorized.",
+  "profile_schema_id": "dog_pembroke_welsh_corgi_four_limb_rest_side_clay_v1",
+  "request_sha256": "9769ea67c19ff42cf3ab8f665320625d27a3515675aa7d067c90eaa88b0ec9ab",
+  "review_sha256": "56a6c6ba9bff37da55e98e320117899da0e9ea21fdf4125a024e4a9ad9446244",
+  "reviewer": "codex_objective_precheck_20260727_v4",
+  "sampled_attributes": {
+    "body_build": "standard",
+    "coat_color": "red",
+    "size": "medium"
+  },
+  "schema": "avengine_controlled_animal_2d_review_v1"
+}

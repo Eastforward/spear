@@ -1,0 +1,72 @@
+{
+  "schema": "avengine_controlled_reference_provenance_v1",
+  "reference_id": "flux2_corgi_v4_tail_edit_source_a3c6553a",
+  "state_classification": "research_candidate",
+  "reference": {
+    "path": "data/controlled_source_attributes_v1/references/animal/flux2_corgi_v4_tail_edit_source_a3c6553a/frame_0000.png",
+    "sha256": "a3c6553a01a3b390346a34db18feab0f1c22e775d8645d37a8a6e730d9461047",
+    "size_bytes": 1140794,
+    "canvas": [
+      1024,
+      1024
+    ]
+  },
+  "source_candidate_manifest": {
+    "path": "data/controlled_source_attributes_v1/references/animal/flux2_corgi_v4_tail_edit_source_a3c6553a/source_candidate_manifest.json",
+    "sha256": "7ee874d5ac7d3ab2653b2983e958c80769bf01cc1d68f082a982ee5aafa6d622",
+    "size_bytes": 12127,
+    "manifest_sha256": "390edf554498d9845f3a2a03f8730bde18026ca0f953e670e61aaebf0fe10196",
+    "request_sha256": "9769ea67c19ff42cf3ab8f665320625d27a3515675aa7d067c90eaa88b0ec9ab"
+  },
+  "source_objective_rejection": {
+    "path": "data/controlled_source_attributes_v1/references/animal/flux2_corgi_v4_tail_edit_source_a3c6553a/source_objective_rejection.json",
+    "sha256": "dcf9a00a0c86314d5c4d7884ca40ae24d968984100bff906d03228a702bebf44",
+    "size_bytes": 2299,
+    "decision": "rejected",
+    "failed_hard_gates": [
+      "species_correct_tail"
+    ],
+    "reason": "The image preserves Corgi identity, low-set short-legged proportions, four complete planted paws, lateral camera, coat and background, but has a substantial red-and-white free tail whose silhouette reaches the rear leg instead of a tail-root stump."
+  },
+  "source_pose_guide": {
+    "root_id": "spear_repo",
+    "path": "data/controlled_source_attributes_v1/references/animal/quaternius_dog_short_leg_tail_stump_side_clay_v3/frame_0000.png",
+    "sha256": "7d4ea944cd70c84ddec379092e29e7a4dcbe3886c8ce6d84b7ea6b50c47b5ab7",
+    "size_bytes": 1033946,
+    "license": "CC0-1.0"
+  },
+  "generation": {
+    "model": "black-forest-labs/FLUX.2-klein-4B",
+    "revision": "e7b7dc27f91deacad38e78976d1f2b499d76a294",
+    "seed": 8248597625431610484,
+    "width": 1024,
+    "height": 1024,
+    "num_inference_steps": 28,
+    "guidance_scale": 1,
+    "flux_invocations": 1
+  },
+  "license_snapshots": [
+    {
+      "root_id": "models_root",
+      "path": "hub/models--black-forest-labs--FLUX.2-klein-4B/snapshots/e7b7dc27f91deacad38e78976d1f2b499d76a294/LICENSE.md",
+      "sha256": "ca02bc51900ab07789d1b70283329e7137f5af98f5161c23a1c81fc38a4af1fe",
+      "size_bytes": 52,
+      "scope": "FLUX.2 model and generated reference"
+    },
+    {
+      "root_id": "avengine_repo",
+      "path": "assets/mesh_library/README.md",
+      "sha256": "5887c71ec9a300997bee4445def8f4fb9014ea4e09b36522c1efb9b8eb3a5aef",
+      "size_bytes": 1347,
+      "declared_license": "CC0-1.0",
+      "scope": "Quaternius dog pose guide"
+    }
+  ],
+  "usage": {
+    "purpose": "pixel-level identity, coat, anatomy, pose, camera, lighting, framing and background authority for one localized tail-root-stump correction",
+    "allowed_edit_scope": "erase only the substantial free tail shaft and white tip, restore the vacated plain background, and retain one tiny attached red-fur tail-root stump clear of both hind legs and all paws",
+    "source_is_not_2d_approved": true,
+    "source_may_not_bypass_new_2d_gate": true,
+    "formal_dataset_registration_authorized": false
+  }
+}

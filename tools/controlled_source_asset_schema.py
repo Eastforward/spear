@@ -35,12 +35,18 @@ DATASET_SCHEMA = "avengine_controlled_source_dataset_v1"
 
 # V1 was used both before and after the tail-separation prompt guard was added
 # on 2026-07-15 without a version bump.  Validation must reproduce both exact
-# historical variants; all newly compiled batches use V2, which requires the
-# guard and removes that ambiguity.
+# historical variants. V2 requires the original guard for every non-absent
+# tail. V3 keeps that history reproducible while applying the free-tail guard
+# only to tail shapes that actually have a free segment.
 LEGACY_SAMPLER_ALGORITHM = "balanced_quota_sampler_v1"
-SAMPLER_ALGORITHM = "balanced_quota_sampler_v2"
+UNIVERSAL_TAIL_GUARD_SAMPLER_ALGORITHM = "balanced_quota_sampler_v2"
+SAMPLER_ALGORITHM = "balanced_quota_sampler_v3"
 SUPPORTED_SAMPLER_ALGORITHMS = frozenset(
-    {LEGACY_SAMPLER_ALGORITHM, SAMPLER_ALGORITHM}
+    {
+        LEGACY_SAMPLER_ALGORITHM,
+        UNIVERSAL_TAIL_GUARD_SAMPLER_ALGORITHM,
+        SAMPLER_ALGORITHM,
+    }
 )
 
 # This guard is compiled by code for every tailed animal.  It is deliberately
@@ -60,6 +66,17 @@ TAILED_ANIMAL_SEPARATION_NEGATIVE_PROMPT = (
     "tail touching hind leg, tail overlapping leg, fused tail and leg, "
     "tail wrapped around leg, tail obscuring paw, tail obscuring hoof, "
     "tail merged with foot"
+)
+NON_FREE_TAIL_SHAPES = frozenset(
+    {
+        "absent",
+        "bobtail",
+        "none",
+        "nub",
+        "stump",
+        "tailless",
+        "tail_root_stump",
+    }
 )
 MORPHOTYPE_TRAIT_VALUES = {
     "leg_length_class": frozenset({"short", "standard"}),
@@ -1445,6 +1462,7 @@ def _compile_animal_generation_plan(
     generation_seed: int,
     *,
     tail_separation_guard: bool,
+    free_tail_only_guard: bool,
 ) -> dict[str, Any]:
     contract = profile["generation_contract"]
     combined = _combined_attribute_values(profile, sampled)
@@ -1475,10 +1493,17 @@ def _compile_animal_generation_plan(
             prompt = f"{prompt} {' '.join(prompt_fragments)}"
             negative_prompt = f"{negative_prompt}, {', '.join(negative_fragments)}"
     tail_shape = combined.get("tail_shape")
+    tail_has_free_segment = (
+        tail_shape is not None
+        and str(tail_shape).lower() not in NON_FREE_TAIL_SHAPES
+    )
     if (
         tail_separation_guard
         and tail_shape is not None
-        and str(tail_shape).lower() not in {"none", "tailless", "absent"}
+        and (
+            tail_has_free_segment
+            or not free_tail_only_guard
+        )
     ):
         if "free tail visibly separated from both hind legs" not in prompt:
             prompt = f"{prompt} {TAILED_ANIMAL_SEPARATION_PROMPT}"
@@ -1673,9 +1698,9 @@ def build_instance_request(
         raise ContractError("sample_ordinal must be a non-negative integer")
     if sampler_algorithm not in SUPPORTED_SAMPLER_ALGORITHMS:
         raise ContractError("unsupported request sampler algorithm")
-    if sampler_algorithm == SAMPLER_ALGORITHM and not tail_separation_guard:
+    if sampler_algorithm != LEGACY_SAMPLER_ALGORITHM and not tail_separation_guard:
         raise ContractError(
-            "balanced_quota_sampler_v2 requires the tail-separation prompt guard"
+            f"{sampler_algorithm} requires the tail-separation prompt guard"
         )
     generation_seed = _derive_generation_seed(
         batch_seed, validated["profile_schema_id"], sample_ordinal
@@ -1686,6 +1711,7 @@ def build_instance_request(
             sampled,
             generation_seed,
             tail_separation_guard=tail_separation_guard,
+            free_tail_only_guard=(sampler_algorithm == SAMPLER_ALGORITHM),
         )
     elif validated["asset_class"] == "static_object":
         plan = _compile_static_generation_plan(validated, sampled, generation_seed)

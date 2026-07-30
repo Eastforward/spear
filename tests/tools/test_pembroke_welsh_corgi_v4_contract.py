@@ -45,30 +45,15 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def test_corgi_v4_is_a_new_frozen_method_reference_not_a_seed_retry():
-    profile = contracts.validate_attribute_profile(_load(PROFILE_PATH))
+def test_corgi_v4_frozen_method_reference_remains_hash_bound():
     provenance = _load(REFERENCE_ROOT / "provenance.json")
-    reference = profile["base_template"]["artifact"]
+    reference = provenance["reference"]
     reference_path = ROOT / reference["path"]
 
-    assert profile["profile_revision"] == (
-        "2026_07_27_v4_tail_stump_four_distinct_paws_guide"
-    )
-    assert profile["lineage_group_id"] == (
-        "quaternius_dog_short_leg_tail_stump_7d4ea944"
-    )
-    assert profile["base_template"]["template_id"] == (
-        "quaternius_dog_short_leg_tail_stump_side_clay_v3"
-    )
     assert reference_path == REFERENCE_ROOT / "frame_0000.png"
     assert _sha256(reference_path) == reference["sha256"]
     assert reference_path.stat().st_size == reference["size_bytes"]
-    assert provenance["reference"] == {
-        "path": reference["path"],
-        "sha256": reference["sha256"],
-        "size_bytes": reference["size_bytes"],
-        "canvas": [1024, 1024],
-    }
+    assert reference["canvas"] == [1024, 1024]
     assert provenance["method_revision"]["kind"] == (
         "new_render_only_morphotype_method_revision"
     )
@@ -84,23 +69,19 @@ def test_corgi_v4_is_a_new_frozen_method_reference_not_a_seed_retry():
 
 
 def test_corgi_v4_uses_generic_non_degenerate_tail_stump_and_four_paw_guards():
-    profile = contracts.validate_attribute_profile(_load(PROFILE_PATH))
+    provenance = _load(REFERENCE_ROOT / "provenance.json")
     guide = load_morphotype_guide_profile(GUIDE_PATH)
-    guard = profile["generation_contract"]["pose_guard_prompt"].lower()
-    negative = profile["generation_contract"]["negative_prompt"].lower()
     implementation = GUIDE_IMPLEMENTATION.read_text(encoding="utf-8").lower()
 
     assert guide.leg_length_ratio == 0.65
     assert guide.tail_length_ratio == 0.05
-    assert profile["fixed_attributes"]["tail_shape"] == "stump"
-    assert "tiny tail-root stump" in guard
-    assert "hard occupancy boundary" in guard
-    assert "no visible free shaft" in guard
-    assert "exactly four distinct lower-limb and paw silhouettes" in guard
-    assert "visible free tail shaft" in negative
-    assert "tail beyond guide stump" in negative
-    assert "fewer than four lower limbs" in negative
-    assert "indistinct fourth paw" in negative
+    assert provenance["morphotype_guide"]["tail_length_ratio"] == 0.05
+    assert provenance["visual_inspection"]["checks"][
+        "tail_is_root_stump_without_visible_free_shaft"
+    ] == "passed"
+    assert provenance["visual_inspection"]["checks"][
+        "exactly_four_distinct_lower_limb_and_paw_silhouettes"
+    ] == "passed"
     assert "corgi" not in implementation
 
 

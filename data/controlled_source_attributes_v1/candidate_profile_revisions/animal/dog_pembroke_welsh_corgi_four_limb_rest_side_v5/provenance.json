@@ -1,0 +1,96 @@
+{
+  "schema": "avengine_controlled_profile_method_revision_provenance_v1",
+  "profile": {
+    "path": "data/controlled_source_attributes_v1/candidate_profiles/animal/dog_pembroke_welsh_corgi_four_limb_rest_side_clay_v1.json",
+    "sha256": "698a7f7e026aabd8928ca9d75be863c53c377df8b34901a1f958f9bcfc320748",
+    "size_bytes": 8206,
+    "profile_schema_id": "dog_pembroke_welsh_corgi_four_limb_rest_side_clay_v1",
+    "profile_revision": "2026_07_27_v5_localized_tail_stump_edit_from_v4",
+    "profile_sha256": "ed332dd871806c7b8bdc73d8d18fdff0d06046330008758f2562953d6a822e47"
+  },
+  "method_revision": {
+    "kind": "new_localized_tail_only_i2i_method_revision",
+    "supersedes_profile_revision": "2026_07_27_v4_tail_stump_four_distinct_paws_guide",
+    "superseded_profile_file_sha256": "584d00e666f8911e9cb90610295fc9e4225b0011c848c6eb2bc0d8a4e1b68c55",
+    "superseded_profile_sha256": "f555da8e6b51af221df0011e4b1a319d250ae869bbd13526e74ffd35a9180b69",
+    "reason": "The v4 image already preserves the desired Pembroke Welsh Corgi identity, red-and-white coat, long low body, short legs, four complete planted paws, exact lateral pose and camera. Its sole objective hard-gate failure is a substantial free tail reaching the rear-leg silhouette. The v4 request also inherited the historical generic free-tail sentence despite declaring tail_shape=stump. V5 changes the method, not merely the seed: it uses the exact v4 image as pixel-level authority, authorizes only a localized tail removal and stump reconstruction, and compiles stump under the generic non-free-tail path.",
+    "this_is_not_a_seed_retry": true,
+    "same_candidate_retry_allowed": false,
+    "same_generation_seed_retry_allowed": false,
+    "candidate_ranking_allowed": false,
+    "next_execution_requires_new_profile_bound_request": true,
+    "forbidden_replay_request_sha256": "9769ea67c19ff42cf3ab8f665320625d27a3515675aa7d067c90eaa88b0ec9ab",
+    "forbidden_replay_candidate_sha256": "a3c6553a01a3b390346a34db18feab0f1c22e775d8645d37a8a6e730d9461047",
+    "forbidden_replay_generation_seed": 8248597625431610484
+  },
+  "triggering_failure": {
+    "instance_id": "dog_pembroke_welsh_corgi_four_limb_rest_side_clay_9769ea67c19f",
+    "request_sha256": "9769ea67c19ff42cf3ab8f665320625d27a3515675aa7d067c90eaa88b0ec9ab",
+    "candidate_sha256": "a3c6553a01a3b390346a34db18feab0f1c22e775d8645d37a8a6e730d9461047",
+    "generation_seed": 8248597625431610484,
+    "objective_rejection": {
+      "path": "data/controlled_source_attributes_v1/references/animal/flux2_corgi_v4_tail_edit_source_a3c6553a/source_objective_rejection.json",
+      "sha256": "dcf9a00a0c86314d5c4d7884ca40ae24d968984100bff906d03228a702bebf44",
+      "size_bytes": 2299,
+      "decision": "rejected",
+      "failed_hard_gate": "species_correct_tail"
+    }
+  },
+  "generic_sampler_revision": {
+    "implementation": {
+      "path": "tools/controlled_source_asset_schema.py",
+      "sha256": "dc761c394030409abe6484c9ac3f13cdf015596a1a831a22c69e401c8ba11720",
+      "size_bytes": 117950
+    },
+    "algorithm": "balanced_quota_sampler_v3",
+    "supersedes_for_new_requests": "balanced_quota_sampler_v2",
+    "historical_v2_validation_preserved": true,
+    "rule": "The tail/hind-leg separation guard is appended only when tail_shape describes a free tail segment. Absent, tailless, none, stump, bobtail, nub and tail_root_stump do not receive a contradictory free-tail instruction.",
+    "breed_specific_branch_added": false
+  },
+  "localized_edit_contract": {
+    "input_authority": {
+      "path": "data/controlled_source_attributes_v1/references/animal/flux2_corgi_v4_tail_edit_source_a3c6553a/frame_0000.png",
+      "sha256": "a3c6553a01a3b390346a34db18feab0f1c22e775d8645d37a8a6e730d9461047",
+      "size_bytes": 1140794
+    },
+    "preserve": [
+      "same individual and breed identity",
+      "head, ears, eye, muzzle and expression",
+      "red-and-white coat colours, markings and fur detail",
+      "long low torso and short-legged proportions",
+      "four complete connected legs and four distinct planted paws",
+      "exact lateral pose, camera, framing, scale and ground line",
+      "lighting, shadow and background outside the tail-edit region"
+    ],
+    "only_authorized_change": "Erase the substantial red-and-white free tail and white tip, restore the vacated plain grey background, and retain one tiny red-fur tail-root stump with no free shaft and a plain-background gap to both hind legs and every paw.",
+    "hard_gate_after_generation": "full controlled animal 2D v2 hard gates on the exact candidate hash",
+    "pixal_before_2d_approval_allowed": false
+  },
+  "execution_freeze": {
+    "batch_seed": 2026072705,
+    "derived_profile_batch_seed": 284168863811492500,
+    "generation_seed": 7530445765198762053,
+    "instance_id": "dog_pembroke_welsh_corgi_four_limb_rest_side_clay_eefcb6c0bec2",
+    "request_sha256": "eefcb6c0bec28e52211f1f4d271d5ae2ce5fef3c5b13501da9d509f4235b87db",
+    "request_batch_sha256": "ce058916fc7a3747e2f6696726d1dc757fabc15670e345e8637d95454fce3c29",
+    "preflight": {
+      "path": "tmp/new_animal_assets/pembroke_welsh_corgi_20260727_05/preflight/execution_preflight.json",
+      "sha256": "34bc08db996d15e420e5a3bb6d6803100a1ffff18c35c4be1f27d89663deeb2d",
+      "size_bytes": 12031,
+      "preflight_sha256": "e603f29892edcd3aa59904eb0b6acc5ed0646e13ff802aca6907edfd28640336"
+    },
+    "model": {
+      "name": "black-forest-labs/FLUX.2-klein-4B",
+      "revision": "e7b7dc27f91deacad38e78976d1f2b499d76a294",
+      "local_files_only": true
+    },
+    "gpu": 3,
+    "flux_invocations": 1,
+    "flux_images": 1,
+    "seed_retry_allowed": false,
+    "candidate_ranking_allowed": false,
+    "output_root": "tmp/new_animal_assets/pembroke_welsh_corgi_20260727_05/flux"
+  },
+  "formal_dataset_registration_authorized": false
+}

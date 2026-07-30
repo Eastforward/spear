@@ -1,0 +1,96 @@
+{
+  "automatic_checks": {
+    "candidate_ranking_forbidden": true,
+    "canvas_1024_rgb": true,
+    "one_flux_image": true,
+    "one_flux_invocation": true,
+    "overall": "pending_2d_review",
+    "reference_hash_before_after_stable": true,
+    "seed_retry_forbidden": true,
+    "visual_attributes_verified": false
+  },
+  "downstream_gate": {
+    "next_stage": "foreground_segmentation_then_pixal3d",
+    "required_review": "approved_for_exact_candidate_sha256",
+    "status": "blocked_pending_2d_review"
+  },
+  "execution_job_id": "animal_9769ea67c19ff42c",
+  "execution_preflight_sha256": "732db7f5e6d7d26c794484b0c9891e1ec6fb3e88221d3bcd76d98b53e077f429",
+  "fixed_attributes": {
+    "coat_length": "short",
+    "coat_pattern": "white_marked",
+    "ear_shape": "upright",
+    "life_stage": "adult",
+    "tail_shape": "stump"
+  },
+  "formal_dataset_registration_authorized": false,
+  "generation": {
+    "effective_prompt": "Transform the uniform clay pose guide into one small-to-medium-sized short-legged adult Pembroke Welsh Corgi dog with a standard long-bodied low-set anatomically normal body, a coherent red short coat with a white-marked (white blaze, chest, and lower legs) pattern, large upright rounded-tip ears, and a compact natural stump tail. The input is an untextured uniform-clay pose guide, not an appearance reference. Replace every visible clay surface, including the neck, torso, near-side limbs, far-side limbs, paws, head, ears, and tiny tail-root stump, with one coherent photorealistic breed-appropriate coat. Preserve the exact authored neutral rigging stance, silhouette, and joint locations from the input. Preserve the guide's low-set short-legged proportions and its tiny tail-root stump; do not lengthen the legs, raise the torso, or invent a free tail shaft. The tail silhouette must end inside the guide's tiny stump envelope immediately behind the rump. Treat that envelope as a hard occupancy boundary: every background pixel beyond the guide stump tip must remain plain background, never fur or tail. This is a strict orthographic lateral silhouette: the camera optical axis is perpendicular to the animal's sagittal plane, the animal faces exactly image-right, and the full torso centerline is parallel to the image plane. Show the side of the rib cage, never the front of the chest or a rear-quarter view. The nose, neck, spine, pelvis, and tail base form one image-horizontal longitudinal direction without depth recession. Show exactly one eye. The head and neck must align with the torso; the animal must not look toward or away from the camera and must not tilt its head. Show exactly four distinct lower-limb and paw silhouettes, one for each anatomical leg, and preserve the authored opposite fore-aft offsets of the far-side front and hind limb chains. Those offsets exist only along the image horizontal axis, never by turning the torso toward the camera. Keep a clearly visible background gap between every near-side and far-side paw and lower leg from paw tip through the hock or wrist; never collapse, overlap, cross, merge, or hide any of those four silhouettes. Do not convert the compact offsets into a walking stride or show-dog stack. Keep all four paws planted on the same level ground plane. Preserve full-body framing and use a plain background. This is a static rigging reference, not an action pose. Keep the stump attached only at its anatomical tail base. It may form one tiny rounded or triangular protrusion immediately behind the rump, but it must have no visible free shaft, curl, plume, or continuation toward the hind legs. The stump must remain clear of both hind legs and every paw. Keep the tail attached only at its anatomical base. From just beyond the base through the tip, keep the free tail visibly separated from both hind legs and every paw or hoof, with a clear plain-background gap. The tail may hang naturally or extend gently backward and does not need to point upward. No part of the free tail may touch, cross, overlap, wrap around, or merge with a leg or foot. Avoid: three-quarter view, front-quarter view, rear-quarter view, perspective view, visible front of chest, foreshortened torso, camera yaw, torso yaw, twisted torso, twisted spine, depth-receding spine, curved body axis, two visible eyes, head turned toward camera, head turned away from camera, tilted head, walking, running, gait stride, lifted paw, crouching, sitting, lying down, uneven ground, mismatched paw height, medium-length legs, normal-height legs, long legs, high-set torso, crossed legs, overlapping legs, overlapping paws, collapsed limb offsets, merged legs, merged paws, hidden legs, hidden paws, fewer than four lower limbs, fewer than four paws, indistinct fourth paw, splayed legs, cropped body, fused tail, extra limbs, gray clay patch, untextured patch, plastic patch, collar, scarf, accessory, background geometry, text, tail beyond guide stump, elongated tail stump, visible free tail shaft, tail projecting behind rump, upright tail, curled tail, long tail, full-length tail, long bushy tail, plumed tail, tail touching hind leg, tail overlapping leg, fused tail and leg, tail wrapped around leg, tail obscuring paw, tail merged with foot.",
+    "flux_invocations": 1,
+    "model": {
+      "local_files_only": true,
+      "name": "black-forest-labs/FLUX.2-klein-4B",
+      "revision": "e7b7dc27f91deacad38e78976d1f2b499d76a294",
+      "root": "/data/models/hub/models--black-forest-labs--FLUX.2-klein-4B"
+    },
+    "negative_prompt": "three-quarter view, front-quarter view, rear-quarter view, perspective view, visible front of chest, foreshortened torso, camera yaw, torso yaw, twisted torso, twisted spine, depth-receding spine, curved body axis, two visible eyes, head turned toward camera, head turned away from camera, tilted head, walking, running, gait stride, lifted paw, crouching, sitting, lying down, uneven ground, mismatched paw height, medium-length legs, normal-height legs, long legs, high-set torso, crossed legs, overlapping legs, overlapping paws, collapsed limb offsets, merged legs, merged paws, hidden legs, hidden paws, fewer than four lower limbs, fewer than four paws, indistinct fourth paw, splayed legs, cropped body, fused tail, extra limbs, gray clay patch, untextured patch, plastic patch, collar, scarf, accessory, background geometry, text, tail beyond guide stump, elongated tail stump, visible free tail shaft, tail projecting behind rump, upright tail, curled tail, long tail, full-length tail, long bushy tail, plumed tail, tail touching hind leg, tail overlapping leg, fused tail and leg, tail wrapped around leg, tail obscuring paw, tail merged with foot",
+    "parameters": {
+      "guidance_scale": 1.0,
+      "height": 1024,
+      "max_sequence_length": 512,
+      "num_inference_steps": 28,
+      "output_mode": "rgb_pending_segmentation",
+      "width": 1024
+    },
+    "prompt": "Transform the uniform clay pose guide into one small-to-medium-sized short-legged adult Pembroke Welsh Corgi dog with a standard long-bodied low-set anatomically normal body, a coherent red short coat with a white-marked (white blaze, chest, and lower legs) pattern, large upright rounded-tip ears, and a compact natural stump tail. The input is an untextured uniform-clay pose guide, not an appearance reference. Replace every visible clay surface, including the neck, torso, near-side limbs, far-side limbs, paws, head, ears, and tiny tail-root stump, with one coherent photorealistic breed-appropriate coat. Preserve the exact authored neutral rigging stance, silhouette, and joint locations from the input. Preserve the guide's low-set short-legged proportions and its tiny tail-root stump; do not lengthen the legs, raise the torso, or invent a free tail shaft. The tail silhouette must end inside the guide's tiny stump envelope immediately behind the rump. Treat that envelope as a hard occupancy boundary: every background pixel beyond the guide stump tip must remain plain background, never fur or tail. This is a strict orthographic lateral silhouette: the camera optical axis is perpendicular to the animal's sagittal plane, the animal faces exactly image-right, and the full torso centerline is parallel to the image plane. Show the side of the rib cage, never the front of the chest or a rear-quarter view. The nose, neck, spine, pelvis, and tail base form one image-horizontal longitudinal direction without depth recession. Show exactly one eye. The head and neck must align with the torso; the animal must not look toward or away from the camera and must not tilt its head. Show exactly four distinct lower-limb and paw silhouettes, one for each anatomical leg, and preserve the authored opposite fore-aft offsets of the far-side front and hind limb chains. Those offsets exist only along the image horizontal axis, never by turning the torso toward the camera. Keep a clearly visible background gap between every near-side and far-side paw and lower leg from paw tip through the hock or wrist; never collapse, overlap, cross, merge, or hide any of those four silhouettes. Do not convert the compact offsets into a walking stride or show-dog stack. Keep all four paws planted on the same level ground plane. Preserve full-body framing and use a plain background. This is a static rigging reference, not an action pose. Keep the stump attached only at its anatomical tail base. It may form one tiny rounded or triangular protrusion immediately behind the rump, but it must have no visible free shaft, curl, plume, or continuation toward the hind legs. The stump must remain clear of both hind legs and every paw. Keep the tail attached only at its anatomical base. From just beyond the base through the tip, keep the free tail visibly separated from both hind legs and every paw or hoof, with a clear plain-background gap. The tail may hang naturally or extend gently backward and does not need to point upward. No part of the free tail may touch, cross, overlap, wrap around, or merge with a leg or foot.",
+    "seed": 8248597625431610484
+  },
+  "input": {
+    "path": "candidates/animal_9769ea67c19ff42c/source.png",
+    "sha256": "7d4ea944cd70c84ddec379092e29e7a4dcbe3886c8ce6d84b7ea6b50c47b5ab7",
+    "size_bytes": 1033946
+  },
+  "instance_id": "dog_pembroke_welsh_corgi_four_limb_rest_side_clay_9769ea67c19f",
+  "lineage_group_id": "quaternius_dog_short_leg_tail_stump_7d4ea944",
+  "manifest_sha256": "390edf554498d9845f3a2a03f8730bde18026ca0f953e670e61aaebf0fe10196",
+  "one_shot_execution": {
+    "candidate_ranking_allowed": false,
+    "failure_action": "preserve_evidence_and_reject_instance",
+    "invocation_ordinal": 0,
+    "invocations_allowed": 1,
+    "policy": {
+      "path": "/data/jzy/code/AVEngine/external/SPEAR/data/controlled_source_attributes_v1/contracts/animal_one_shot_no_seed_lottery_v1.json",
+      "policy_id": "animal_one_shot_no_seed_lottery_v1",
+      "policy_schema": "avengine_controlled_animal_one_shot_policy_v1",
+      "schema": "avengine_controlled_animal_one_shot_policy_record_v1",
+      "sha256": "66f2cba8c213c39cf57483fc7768d4e1c737ad03059dd9dedfee55fdf26eafcc"
+    },
+    "seed_retry_allowed": false,
+    "stage": "flux2"
+  },
+  "output": {
+    "path": "candidates/animal_9769ea67c19ff42c/candidate.png",
+    "sha256": "a3c6553a01a3b390346a34db18feab0f1c22e775d8645d37a8a6e730d9461047",
+    "size_bytes": 1140794
+  },
+  "profile_schema_id": "dog_pembroke_welsh_corgi_four_limb_rest_side_clay_v1",
+  "profile_sha256": "f555da8e6b51af221df0011e4b1a319d250ae869bbd13526e74ffd35a9180b69",
+  "request_sha256": "9769ea67c19ff42cf3ab8f665320625d27a3515675aa7d067c90eaa88b0ec9ab",
+  "sampled_attributes": {
+    "body_build": "standard",
+    "coat_color": "red",
+    "size": "medium"
+  },
+  "schema": "avengine_controlled_animal_flux2_candidate_v1",
+  "state_classification": "research_candidate",
+  "status": "pending_2d_review",
+  "taxonomy": {
+    "breed": "pembroke_welsh_corgi",
+    "species": "dog"
+  },
+  "timings": {
+    "inference_and_publish_seconds": 59.36943415598944,
+    "model_reused": true,
+    "persistent_worker_model_load_seconds": 504.60135126602836
+  }
+}
