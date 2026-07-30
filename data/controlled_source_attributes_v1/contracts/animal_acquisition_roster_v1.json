@@ -1,0 +1,216 @@
+{
+  "schema": "avengine_animal_acquisition_roster_v1",
+  "roster_id": "animal_acquisition_roster_v1",
+  "purpose": "single_declaration_point_for_every_animal_sound_source_on_the_hardened_route",
+  "usage": "Adding an animal sound source is a row here plus its dry-sound rights record. Traits select the route, budget and gates through animal_morphotype_traits_v1; no production Python is edited per breed.",
+  "trait_contract_id": "animal_morphotype_traits_v1",
+  "entries": [
+    {
+      "asset_key": "dog_shiba_inu",
+      "taxonomy": {"species": "dog", "breed": "shiba_inu"},
+      "wave": "T1",
+      "acquisition_state": "shipped",
+      "shoulder_height_cm": 39,
+      "traits": {"leg_length_class": "standard", "coat_class": "short", "tail_class": "curled", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "small"},
+      "acoustic": {"audioset_classes": ["Dog", "Bark", "Growl", "Whimper", "Howl", "Pant"], "event_classes": ["dog_bark", "dog_growl", "dog_whine", "dog_howl"]}
+    },
+    {
+      "asset_key": "dog_pembroke_welsh_corgi",
+      "taxonomy": {"species": "dog", "breed": "pembroke_welsh_corgi"},
+      "wave": "T1",
+      "acquisition_state": "shipped",
+      "shoulder_height_cm": 28,
+      "traits": {"leg_length_class": "short", "coat_class": "short", "tail_class": "absent_or_stump", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "small"},
+      "acoustic": {"audioset_classes": ["Dog", "Bark", "Growl", "Whimper", "Howl", "Pant"], "event_classes": ["dog_bark", "dog_growl", "dog_whine", "dog_howl"]}
+    },
+    {
+      "asset_key": "dog_labrador_retriever",
+      "taxonomy": {"species": "dog", "breed": "labrador_retriever"},
+      "wave": "T1",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 57,
+      "traits": {"leg_length_class": "standard", "coat_class": "short", "tail_class": "medium_thick", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "medium"},
+      "acoustic": {"audioset_classes": ["Dog", "Bark", "Growl", "Whimper", "Howl", "Pant"], "event_classes": ["dog_bark", "dog_growl", "dog_whine", "dog_howl"]}
+    },
+    {
+      "asset_key": "dog_beagle",
+      "taxonomy": {"species": "dog", "breed": "beagle"},
+      "wave": "T1",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 38,
+      "traits": {"leg_length_class": "standard", "coat_class": "short", "tail_class": "short_thick", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "small"},
+      "acoustic": {"audioset_classes": ["Dog", "Bark", "Howl", "Bay"], "event_classes": ["dog_bark", "dog_howl"]}
+    },
+    {
+      "asset_key": "dog_jack_russell_terrier",
+      "taxonomy": {"species": "dog", "breed": "jack_russell_terrier"},
+      "wave": "T2",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 30,
+      "traits": {"leg_length_class": "standard", "coat_class": "short", "tail_class": "short_thick", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "small"},
+      "acoustic": {"audioset_classes": ["Dog", "Bark", "Yip"], "event_classes": ["dog_bark", "dog_whine"]}
+    },
+    {
+      "asset_key": "dog_german_shepherd",
+      "taxonomy": {"species": "dog", "breed": "german_shepherd"},
+      "wave": "T2",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 60,
+      "traits": {"leg_length_class": "standard", "coat_class": "medium", "tail_class": "long_plumed", "muzzle_class": "long_narrow", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "large"},
+      "acoustic": {"audioset_classes": ["Dog", "Bark", "Growl", "Howl"], "event_classes": ["dog_bark", "dog_growl", "dog_howl"]}
+    },
+    {
+      "asset_key": "dog_siberian_husky",
+      "taxonomy": {"species": "dog", "breed": "siberian_husky"},
+      "wave": "T2",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 56,
+      "traits": {"leg_length_class": "standard", "coat_class": "medium", "tail_class": "long_plumed", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "medium"},
+      "acoustic": {"audioset_classes": ["Dog", "Howl", "Bark", "Whimper"], "event_classes": ["dog_howl", "dog_bark", "dog_whine"]}
+    },
+    {
+      "asset_key": "dog_border_collie",
+      "taxonomy": {"species": "dog", "breed": "border_collie"},
+      "wave": "T2",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 52,
+      "traits": {"leg_length_class": "standard", "coat_class": "medium", "tail_class": "long_plumed", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "medium"},
+      "acoustic": {"audioset_classes": ["Dog", "Bark", "Whimper"], "event_classes": ["dog_bark", "dog_whine"]}
+    },
+    {
+      "asset_key": "dog_chihuahua",
+      "taxonomy": {"species": "dog", "breed": "chihuahua"},
+      "wave": "T2",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 20,
+      "traits": {"leg_length_class": "standard", "coat_class": "short", "tail_class": "long_thin", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "toy"},
+      "acoustic": {"audioset_classes": ["Dog", "Bark", "Yip", "Whimper"], "event_classes": ["dog_bark", "dog_whine"]}
+    },
+    {
+      "asset_key": "dog_french_bulldog",
+      "taxonomy": {"species": "dog", "breed": "french_bulldog"},
+      "wave": "T3",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 30,
+      "traits": {"leg_length_class": "standard", "coat_class": "short", "tail_class": "absent_or_stump", "muzzle_class": "brachycephalic", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "small"},
+      "acoustic": {"audioset_classes": ["Dog", "Bark", "Pant", "Growl"], "event_classes": ["dog_bark", "dog_growl"]}
+    },
+    {
+      "asset_key": "dog_golden_retriever",
+      "taxonomy": {"species": "dog", "breed": "golden_retriever"},
+      "wave": "T3",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 56,
+      "traits": {"leg_length_class": "standard", "coat_class": "medium", "tail_class": "long_plumed", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "medium"},
+      "acoustic": {"audioset_classes": ["Dog", "Bark", "Whimper", "Pant"], "event_classes": ["dog_bark", "dog_whine"]}
+    },
+    {
+      "asset_key": "dog_poodle",
+      "taxonomy": {"species": "dog", "breed": "poodle"},
+      "wave": "T3",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 45,
+      "traits": {"leg_length_class": "standard", "coat_class": "curly", "tail_class": "medium_thick", "muzzle_class": "long_narrow", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "medium"},
+      "acoustic": {"audioset_classes": ["Dog", "Bark", "Yip"], "event_classes": ["dog_bark", "dog_whine"]}
+    },
+    {
+      "asset_key": "dog_pomeranian",
+      "taxonomy": {"species": "dog", "breed": "pomeranian"},
+      "wave": "T3",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 20,
+      "traits": {"leg_length_class": "standard", "coat_class": "long_fluffy", "tail_class": "long_plumed", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "toy"},
+      "acoustic": {"audioset_classes": ["Dog", "Bark", "Yip"], "event_classes": ["dog_bark", "dog_whine"]}
+    },
+    {
+      "asset_key": "dog_dachshund",
+      "taxonomy": {"species": "dog", "breed": "dachshund"},
+      "wave": "T4",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 22,
+      "traits": {"leg_length_class": "short", "coat_class": "short", "tail_class": "long_thin", "muzzle_class": "long_narrow", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "small"},
+      "acoustic": {"audioset_classes": ["Dog", "Bark", "Howl"], "event_classes": ["dog_bark", "dog_howl"]}
+    },
+    {
+      "asset_key": "cat_british_shorthair",
+      "taxonomy": {"species": "cat", "breed": "british_shorthair"},
+      "wave": "T1",
+      "acquisition_state": "shipped",
+      "shoulder_height_cm": 30,
+      "traits": {"leg_length_class": "standard", "coat_class": "short", "tail_class": "medium_thick", "muzzle_class": "brachycephalic", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "small"},
+      "acoustic": {"audioset_classes": ["Cat", "Meow", "Purr", "Hiss"], "event_classes": ["cat_meow", "cat_purr", "cat_hiss"]}
+    },
+    {
+      "asset_key": "cat_american_shorthair_tabby",
+      "taxonomy": {"species": "cat", "breed": "american_shorthair_tabby"},
+      "wave": "T2",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 28,
+      "traits": {"leg_length_class": "standard", "coat_class": "short", "tail_class": "medium_thick", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "small"},
+      "acoustic": {"audioset_classes": ["Cat", "Meow", "Purr", "Caterwaul"], "event_classes": ["cat_meow", "cat_purr"]}
+    },
+    {
+      "asset_key": "cat_russian_blue",
+      "taxonomy": {"species": "cat", "breed": "russian_blue"},
+      "wave": "T2",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 26,
+      "traits": {"leg_length_class": "standard", "coat_class": "short", "tail_class": "medium_thick", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "small"},
+      "acoustic": {"audioset_classes": ["Cat", "Meow", "Purr"], "event_classes": ["cat_meow", "cat_purr"]}
+    },
+    {
+      "asset_key": "cat_sphynx",
+      "taxonomy": {"species": "cat", "breed": "sphynx"},
+      "wave": "T2",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 26,
+      "traits": {"leg_length_class": "standard", "coat_class": "hairless", "tail_class": "long_thin", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "small"},
+      "acoustic": {"audioset_classes": ["Cat", "Meow", "Purr"], "event_classes": ["cat_meow", "cat_purr"]}
+    },
+    {
+      "asset_key": "cat_siamese",
+      "taxonomy": {"species": "cat", "breed": "siamese"},
+      "wave": "T2",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 27,
+      "traits": {"leg_length_class": "standard", "coat_class": "short", "tail_class": "long_thin", "muzzle_class": "long_narrow", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "small"},
+      "acoustic": {"audioset_classes": ["Cat", "Meow", "Caterwaul"], "event_classes": ["cat_meow", "cat_hiss"]}
+    },
+    {
+      "asset_key": "cat_ragdoll",
+      "taxonomy": {"species": "cat", "breed": "ragdoll"},
+      "wave": "T3",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 32,
+      "traits": {"leg_length_class": "standard", "coat_class": "long_fluffy", "tail_class": "long_plumed", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "large"},
+      "acoustic": {"audioset_classes": ["Cat", "Meow", "Purr"], "event_classes": ["cat_meow", "cat_purr"]}
+    },
+    {
+      "asset_key": "cat_maine_coon",
+      "taxonomy": {"species": "cat", "breed": "maine_coon"},
+      "wave": "T3",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 35,
+      "traits": {"leg_length_class": "standard", "coat_class": "long_fluffy", "tail_class": "long_plumed", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "walk_quadruped", "size_class": "large"},
+      "acoustic": {"audioset_classes": ["Cat", "Meow", "Purr", "Caterwaul"], "event_classes": ["cat_meow", "cat_purr"]}
+    },
+    {
+      "asset_key": "rabbit_domestic",
+      "taxonomy": {"species": "rabbit", "breed": "domestic"},
+      "wave": "T4",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 20,
+      "traits": {"leg_length_class": "standard", "coat_class": "medium", "tail_class": "absent_or_stump", "muzzle_class": "standard", "rest_pose_family": "four_feet_planted", "gait_family": "hop", "size_class": "small"},
+      "acoustic": {"audioset_classes": ["Rabbit", "Thump"], "event_classes": ["rabbit_thump"]}
+    },
+    {
+      "asset_key": "ferret_domestic",
+      "taxonomy": {"species": "ferret", "breed": "domestic"},
+      "wave": "T4",
+      "acquisition_state": "queued",
+      "shoulder_height_cm": 12,
+      "traits": {"leg_length_class": "short", "coat_class": "short", "tail_class": "long_plumed", "muzzle_class": "long_narrow", "rest_pose_family": "four_feet_planted", "gait_family": "amble", "size_class": "toy"},
+      "acoustic": {"audioset_classes": ["Ferret"], "event_classes": ["ferret_dook"]}
+    }
+  ]
+}

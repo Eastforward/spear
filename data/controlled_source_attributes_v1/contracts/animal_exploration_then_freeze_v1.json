@@ -1,0 +1,68 @@
+{
+  "schema": "avengine_controlled_animal_exploration_then_freeze_policy_v1",
+  "policy_id": "animal_exploration_then_freeze_v1",
+  "purpose": "bound_and_record_the_seed_search_that_already_happens_instead_of_hiding_it_in_workspace_names",
+  "relationship_to_one_shot_policy": {
+    "one_shot_policy_id": "animal_one_shot_no_seed_lottery_v1",
+    "weakens_it": false,
+    "semantics": "Exploration selects a SEED and produces a declaration, never a shippable asset. The shipped bytes are always produced afterwards by the untouched one-shot route, which still runs one invocation with one declared seed and no retry. This policy therefore adds provenance that the previous regime lacked: the size of the search and the criterion that ended it are recorded machine-readably instead of being implied by a directory suffix."
+  },
+  "exploration_phase": {
+    "candidate_set_declared_before_generation": true,
+    "seed_ladder": {
+      "algorithm": "sha256_plan_id_ordinal_ladder_v1",
+      "definition": "seed_i = int(sha256(f'{plan_id}:{i}').hexdigest()[:15], 16) for i in range(seed_count)",
+      "operator_chosen_seeds_allowed": false,
+      "rationale": "The operator chooses the plan id and the count, never an individual seed. The candidate set is then a pure function of the declaration, so 'kept rolling until it worked' is excluded by construction."
+    },
+    "seed_count_source": "animal_morphotype_traits_v1.tier_policy",
+    "seed_count_maximum": 10,
+    "output_usage_scope": "exploration_only_not_shippable",
+    "outputs_may_enter_production_route": false,
+    "all_candidates_recorded": true,
+    "unselected_candidates_require_recorded_reason": true
+  },
+  "selection": {
+    "selected_candidate_count": 1,
+    "criterion_required": true,
+    "criterion_must_reference_declared_gates": true,
+    "criterion_vocabulary": [
+      "eight_hard_gate_precheck",
+      "limb_separation_precheck",
+      "tail_singularity_precheck",
+      "silhouette_fidelity_precheck",
+      "limb_chain_continuity_precheck",
+      "emitter_anchor_precheck",
+      "owner_2d_decision"
+    ],
+    "exhausted_action": "record_exploration_exhausted_and_escalate_to_owner",
+    "exhausted_retry_requires_new_plan_id": true
+  },
+  "freeze_phase": {
+    "emits": "frozen_one_shot_request_declaration",
+    "frozen_request_inherits_one_shot_policy": true,
+    "frozen_request_seed_source": "selected_exploration_ladder_index",
+    "production_regeneration_required": true,
+    "reproducibility_verification": {
+      "compare": "sha256_of_regenerated_image_against_selected_exploration_candidate",
+      "pass_state": "bitwise_reproduced",
+      "mismatch_action": "fail_closed",
+      "downgrade_state": "seed_recorded_bitwise_unverified",
+      "downgrade_requires_explicit_flag": true,
+      "downgrade_must_be_recorded_in_the_frozen_declaration": true
+    }
+  },
+  "ledger": {
+    "records_per_asset": [
+      "plan_id",
+      "seed_count",
+      "risk_tier",
+      "candidate_sha256_list",
+      "selected_index",
+      "selection_criterion",
+      "unselected_reasons",
+      "reproducibility_state"
+    ],
+    "hidden_failures_allowed": false
+  }
+}

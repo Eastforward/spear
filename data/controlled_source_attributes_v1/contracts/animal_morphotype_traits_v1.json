@@ -1,0 +1,241 @@
+{
+  "schema": "avengine_animal_morphotype_trait_contract_v1",
+  "contract_id": "animal_morphotype_traits_v1",
+  "purpose": "route_and_budget_selection_from_declared_traits_never_from_breed_name",
+  "rationale": "Shiba, British Shorthair and Corgi each shipped on a prompt template named after the breed. The knowledge each one paid for (limb-separation corridors, tail singularity, local anatomical edit) was therefore not inherited by the next breed. This contract re-keys that knowledge onto declared morphotype traits so a Dachshund inherits the Corgi route and a Persian inherits the long-coat route without new production code.",
+  "tier_policy": {
+    "risk_total": "sum_of_reconstruction_risk_and_motion_donor_risk_over_declared_traits",
+    "tiers": [
+      {"tier": "low", "maximum_risk_total": 1, "exploration_seed_count": 3, "preview_only_triage_required": false},
+      {"tier": "medium", "maximum_risk_total": 3, "exploration_seed_count": 6, "preview_only_triage_required": true},
+      {"tier": "high", "maximum_risk_total": 99, "exploration_seed_count": 10, "preview_only_triage_required": true}
+    ],
+    "owner_budget_decision_required_when": {
+      "motion_donor_risk_total_at_least": 3,
+      "semantics": "not_a_ban_the_attempt_is_allowed_once_the_budget_is_declared"
+    }
+  },
+  "axes": {
+    "leg_length_class": {
+      "required": true,
+      "values": {
+        "short": {
+          "reconstruction_risk": 2,
+          "motion_donor_risk": 1,
+          "declared_view_yaw_deg": [10, 15],
+          "pose_guard_fragments": [
+            "Short-legged breed. Stagger the limbs longitudinally instead of stacking them: place the far front leg substantially toward the head of the near front leg, and the far hind leg forward of the near hind leg, keeping all four feet planted on one level ground line. This longitudinal offset, not a wider stance, is what lets a single-view reconstruction separate the limb pairs.",
+            "Keep continuous negative-space corridors around every limb THROUGH the upper attachments: the armpit and groin gaps must read as background, and clean arches must remain under the abdomen. A closed under-chest region is the failure this pose exists to prevent.",
+            "A slight 10 to 15 degree off-lateral view is permitted, and preferred over a strict lateral view, when it is what reveals all four limbs. Record the declared view yaw so heading estimation can cross-check it."
+          ],
+          "negative_prompt_terms": [
+            "abdominal membrane", "underside sheet", "under-chest membrane",
+            "double-lobed chest", "central dangling paw", "central paw",
+            "overlapping limbs", "fused paws", "crossed legs", "tangent contact",
+            "merged legs", "merged paws", "fused upper limbs", "fused limb roots",
+            "vertically aligned paired legs", "collapsed limb offsets",
+            "shadow interpreted as geometry", "webbed limbs", "single fused leg mass"
+          ],
+          "required_gates": [
+            "limb_separation_precheck",
+            "membrane_component_audit",
+            "declared_view_yaw_recorded"
+          ],
+          "evidence": "pembroke_welsh_corgi attempts 11-13 (2026-07-28). Attempt 13's receipt names the defect exactly -- 'a Pixel3D under-chest membrane failure' -- and its fix is the longitudinal limb stagger plus corridors 'through upper attachments', not a wider stance. Attempt 11 established that a 10-15 degree off-lateral view is the right trade. That language is quoted here because it was paid for three times and previously survived only in a workspace directory name."
+        },
+        "standard": {
+          "reconstruction_risk": 0,
+          "motion_donor_risk": 0,
+          "pose_guard_fragments": [],
+          "negative_prompt_terms": ["merged legs", "merged paws"],
+          "required_gates": ["membrane_component_audit"],
+          "evidence": "shiba_inu, labrador, border_collie shipped on the medium-dog donor without leg-proportion trouble."
+        },
+        "long": {
+          "reconstruction_risk": 1,
+          "motion_donor_risk": 2,
+          "pose_guard_fragments": [
+            "This breed is long-legged and slender-limbed. Keep each limb a single continuous tapered chain from shoulder or hip to paw, with no break, no doubled outline and no detached lower segment."
+          ],
+          "negative_prompt_terms": ["truncated limb chain", "detached lower limb", "doubled limb outline", "thin ungulate legs"],
+          "required_gates": ["membrane_component_audit", "limb_chain_continuity_precheck"],
+          "evidence": "horse r5-r7 and donkey rejections: thin far-from-donor legs fail retarget and deformation repeatedly."
+        }
+      }
+    },
+    "coat_class": {
+      "required": true,
+      "values": {
+        "hairless": {
+          "reconstruction_risk": 0,
+          "motion_donor_risk": 0,
+          "pose_guard_fragments": ["Render bare skin with visible surface folds; the limb and torso silhouette must stay crisp."],
+          "negative_prompt_terms": ["fur", "hair tufts"],
+          "required_gates": [],
+          "evidence": "sphynx-class morphotypes are the most reconstruction-friendly case; no failure history."
+        },
+        "short": {
+          "reconstruction_risk": 0,
+          "motion_donor_risk": 0,
+          "pose_guard_fragments": [],
+          "negative_prompt_terms": [],
+          "required_gates": [],
+          "evidence": "shiba_inu, british_shorthair, corgi all shipped with short coats."
+        },
+        "medium": {
+          "reconstruction_risk": 1,
+          "motion_donor_risk": 0,
+          "pose_guard_fragments": ["Keep the coat close to the body so the true limb and torso silhouette stays readable; do not let coat volume bridge the gap between two limbs."],
+          "negative_prompt_terms": ["coat bridging between legs", "silhouette hidden by fur"],
+          "required_gates": ["membrane_component_audit"],
+          "evidence": "border_collie feathering required the weight repair pass at amplitude 1.0."
+        },
+        "long_fluffy": {
+          "reconstruction_risk": 2,
+          "motion_donor_risk": 0,
+          "pose_guard_fragments": [
+            "Long-coated breed: the coat must follow the body, never form a skirt or curtain that closes the gap between limbs or between a limb and the tail. The four limbs and the ground gap under the belly must remain individually visible through the coat.",
+            "Do not render airborne, spiky or flyaway hair strands; the coat surface must be one closed continuous shell."
+          ],
+          "negative_prompt_terms": [
+            "fur skirt", "coat curtain between legs", "flyaway hair strands", "spiky fur geometry",
+            "fragmented silhouette", "hair planes", "coat bridging between legs"
+          ],
+          "required_gates": ["limb_separation_precheck", "membrane_component_audit", "silhouette_fidelity_precheck"],
+          "evidence": "Persian cat and sheep static-QA rejections: long fur reconstructs as planar/spiky geometry and fragments the silhouette."
+        },
+        "curly": {
+          "reconstruction_risk": 2,
+          "motion_donor_risk": 0,
+          "pose_guard_fragments": [
+            "Curly-coated breed: render the curl as low-relief surface texture on a closed body shell, not as separate protruding tufts. The limb silhouette must stay readable through the curl."
+          ],
+          "negative_prompt_terms": ["protruding curl tufts", "separated curl clumps", "spiky fur geometry", "fragmented silhouette"],
+          "required_gates": ["membrane_component_audit", "silhouette_fidelity_precheck"],
+          "evidence": "poodle-class curl reconstruction is untried on this route; scored with the long-coat failure class until a data point exists."
+        }
+      }
+    },
+    "tail_class": {
+      "required": true,
+      "values": {
+        "absent_or_stump": {
+          "reconstruction_risk": 1,
+          "motion_donor_risk": 0,
+          "free_tail_segment": false,
+          "pose_guard_fragments": ["The tail is a short stump at the tail base only. Render exactly one stump; no free tail segment extends beyond the hindquarter silhouette."],
+          "negative_prompt_terms": ["long tail", "free tail segment", "two tails", "extra tail"],
+          "required_gates": ["tail_singularity_precheck"],
+          "evidence": "pembroke_welsh_corgi: the clay guide silhouette beat the breed text and produced a long tail; the stump had to be authored as a localized correction."
+        },
+        "curled": {
+          "reconstruction_risk": 1,
+          "motion_donor_risk": 0,
+          "free_tail_segment": true,
+          "pose_guard_fragments": ["Render exactly one curled tail carried over the back. The curl must not touch or overlap the spine, hindquarter or either hind leg; keep a plain-background gap inside the curl."],
+          "negative_prompt_terms": ["two tails", "extra tail", "tail merged with back", "tail overlapping hind leg", "filled tail curl"],
+          "required_gates": ["tail_singularity_precheck"],
+          "evidence": "shiba_inu shipped with a curled tail; the inner curl gap is what keeps the curl from reconstructing as a solid fin."
+        },
+        "short_thick": {
+          "reconstruction_risk": 0,
+          "motion_donor_risk": 0,
+          "free_tail_segment": true,
+          "pose_guard_fragments": ["Render exactly one tail."],
+          "negative_prompt_terms": ["two tails", "extra tail"],
+          "required_gates": ["tail_singularity_precheck"],
+          "evidence": "no failure history."
+        },
+        "medium_thick": {
+          "reconstruction_risk": 1,
+          "motion_donor_risk": 0,
+          "free_tail_segment": true,
+          "pose_guard_fragments": ["Render exactly one tail, attached at exactly one point on the hindquarter. A second tail, a forked tail or a floating tail segment is a hard rejection."],
+          "negative_prompt_terms": ["two tails", "extra tail", "forked tail", "floating tail", "detached tail segment", "duplicated tail"],
+          "required_gates": ["tail_singularity_precheck"],
+          "evidence": "british_shorthair one-shot produced TWO TAILS (2026-07-27); the same defect class appeared in three separate 2D batches."
+        },
+        "long_thin": {
+          "reconstruction_risk": 2,
+          "motion_donor_risk": 0,
+          "free_tail_segment": true,
+          "pose_guard_fragments": ["Render exactly one thin tail, attached at exactly one point on the hindquarter, as one continuous tapered chain to the tip. A second tail, a forked tail, a broken tail or a floating tail segment is a hard rejection."],
+          "negative_prompt_terms": ["two tails", "extra tail", "forked tail", "floating tail", "detached tail segment", "duplicated tail", "broken tail", "tail merged with hind leg"],
+          "required_gates": ["tail_singularity_precheck"],
+          "evidence": "thin protruding features are the strongest duplicate/detach class in the retained failure history (two-tail and floating-tail rejections in three batches)."
+        },
+        "long_plumed": {
+          "reconstruction_risk": 2,
+          "motion_donor_risk": 0,
+          "free_tail_segment": true,
+          "pose_guard_fragments": ["Render exactly one plumed tail as one closed continuous surface attached at exactly one point on the hindquarter. The plume must not merge with the hind legs, the hindquarter coat or the ground."],
+          "negative_prompt_terms": ["two tails", "extra tail", "floating tail", "duplicated tail", "tail merged with hind leg", "tail merged with coat", "hair planes"],
+          "required_gates": ["tail_singularity_precheck", "silhouette_fidelity_precheck"],
+          "evidence": "combines the thin-protruding-feature and long-coat failure classes."
+        }
+      }
+    },
+    "muzzle_class": {
+      "required": true,
+      "values": {
+        "standard": {"reconstruction_risk": 0, "motion_donor_risk": 0, "pose_guard_fragments": [], "negative_prompt_terms": [], "required_gates": [], "evidence": "baseline."},
+        "brachycephalic": {
+          "reconstruction_risk": 1,
+          "motion_donor_risk": 0,
+          "pose_guard_fragments": ["Flat-faced breed: keep the muzzle short but keep the nose tip, the mouth line and the eyes as distinct readable features on a closed head surface."],
+          "negative_prompt_terms": ["collapsed face", "featureless muzzle", "fused nose and mouth"],
+          "required_gates": ["emitter_anchor_precheck"],
+          "evidence": "french bulldog class is untried; the muzzle emitter anchor is measured from the nose tip, so a collapsed muzzle costs the emitter measurement."
+        },
+        "long_narrow": {
+          "reconstruction_risk": 0,
+          "motion_donor_risk": 0,
+          "pose_guard_fragments": ["Long-muzzled breed: render the muzzle as one continuous tapered form with a clearly separated lower jaw line."],
+          "negative_prompt_terms": ["fused jaw", "featureless muzzle"],
+          "required_gates": ["emitter_anchor_precheck"],
+          "evidence": "no failure history; scored for emitter-anchor sensitivity only."
+        }
+      }
+    },
+    "rest_pose_family": {
+      "required": true,
+      "values": {
+        "four_feet_planted": {"reconstruction_risk": 0, "motion_donor_risk": 0, "pose_guard_fragments": [], "negative_prompt_terms": [], "required_gates": [], "evidence": "the only rest pose the walking donor accepts without a motion-family decision."},
+        "seated_upright": {
+          "reconstruction_risk": 1,
+          "motion_donor_risk": 3,
+          "pose_guard_fragments": [],
+          "negative_prompt_terms": [],
+          "required_gates": ["motion_family_decision"],
+          "evidence": "the seated chipmunk was rejected as incompatible with the walking rig; a seated rest pose needs an explicit motion-family decision before GPU spend."
+        }
+      }
+    },
+    "gait_family": {
+      "required": true,
+      "values": {
+        "walk_quadruped": {"reconstruction_risk": 0, "motion_donor_risk": 0, "pose_guard_fragments": [], "negative_prompt_terms": [], "required_gates": [], "evidence": "matches quaternius_universal_quadruped_v1."},
+        "amble": {"reconstruction_risk": 0, "motion_donor_risk": 2, "pose_guard_fragments": [], "negative_prompt_terms": [], "required_gates": ["gait_semantics_review"], "evidence": "donor mismatch predicts gait-audit failure even when the static mesh passes."},
+        "hop": {"reconstruction_risk": 0, "motion_donor_risk": 3, "pose_guard_fragments": [], "negative_prompt_terms": [], "required_gates": ["motion_family_decision"], "evidence": "rabbit-class hop is not a walking gait; the roster defers these until a motion-family decision exists."}
+      }
+    },
+    "size_class": {
+      "required": true,
+      "values": {
+        "toy": {"reconstruction_risk": 0, "motion_donor_risk": 1, "pose_guard_fragments": [], "negative_prompt_terms": [], "required_gates": [], "evidence": "small absolute scale widens the relative tolerance on leveling and emitter measurement."},
+        "small": {"reconstruction_risk": 0, "motion_donor_risk": 0, "pose_guard_fragments": [], "negative_prompt_terms": [], "required_gates": [], "evidence": "baseline."},
+        "medium": {"reconstruction_risk": 0, "motion_donor_risk": 0, "pose_guard_fragments": [], "negative_prompt_terms": [], "required_gates": [], "evidence": "donor-matched."},
+        "large": {"reconstruction_risk": 0, "motion_donor_risk": 1, "pose_guard_fragments": [], "negative_prompt_terms": [], "required_gates": [], "evidence": "large body plans drift from the medium-dog donor proportions."}
+      }
+    }
+  },
+  "composition_order": [
+    "leg_length_class",
+    "coat_class",
+    "tail_class",
+    "muzzle_class",
+    "rest_pose_family",
+    "gait_family",
+    "size_class"
+  ]
+}
