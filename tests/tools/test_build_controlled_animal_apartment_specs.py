@@ -58,6 +58,8 @@ def test_cat_scale_uses_sampled_physical_ratio_and_idle_is_stationary():
     assert walking["audio_sha256"] == walking["audio_contract"]["sha256"]
     assert walking["audio_source_channels"] == 1
     assert walking["sampled_attributes"]["size"] == "small"
+    assert walking["target_physical_profile"] == attempt["target_physical_profile"]
+    assert idle["target_physical_profile"] == attempt["target_physical_profile"]
     assert walking["ground_snap_max_abs_correction_cm"] == 25.0
     assert idle["wanted_anim"] == "Idle"
     assert idle["ground_snap_max_abs_correction_cm"] == 25.0

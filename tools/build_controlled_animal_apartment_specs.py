@@ -228,6 +228,7 @@ def build_pair(
             "breed": profile["breed"],
             "profile_schema_id": attempt["profile_schema_id"],
             "sampled_attributes": copy.deepcopy(attempt["sampled_attributes"]),
+            "target_physical_profile": copy.deepcopy(physical),
             "kind": "moving",
             "wanted_anim": "Walking",
             "actor_scale": actor_scale,
