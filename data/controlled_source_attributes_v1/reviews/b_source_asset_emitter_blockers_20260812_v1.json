@@ -1,0 +1,20 @@
+{
+  "schema": "b_source_asset_emitter_blockers_v1",
+  "generated_at_utc": "2026-08-11T19:53:08.050641+00:00",
+  "state_classification": "research_candidate",
+  "formal_registration_authorized": false,
+  "animal_muzzle": {
+    "affected_candidates": 31,
+    "status": "blocked_by_blender_access",
+    "accepted_project_method": "tools/blender_build_generated_animal_instance_ofat.py:derive_muzzle_emitter",
+    "acceptance_requirement": "project-compatible Blender REST evaluated mesh coordinates",
+    "ordinary_python_trimesh_fallback": "rejected_as_acceptance_evidence",
+    "position": null
+  },
+  "human_mouth": {
+    "affected_candidates": 3,
+    "status": "not_closed",
+    "position": null,
+    "note": "No accepted project mouth-emitter evidence has been established in the current handoff."
+  }
+}

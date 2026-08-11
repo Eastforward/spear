@@ -1,0 +1,51 @@
+{
+  "schema": "b_source_asset_phase1_canary_review_v1",
+  "generated_at_utc": "2026-08-11T19:53:08.050641+00:00",
+  "state_classification": "research_candidate",
+  "formal_registration_authorized": false,
+  "visual_library": {
+    "total": 34,
+    "humans": 3,
+    "animals": 31,
+    "animal_final_contract": {
+      "actions": [
+        "Walking",
+        "Idle"
+      ],
+      "front_axis": "positive_x",
+      "up_axis": "not_recorded"
+    },
+    "historical_animals_migrated": 22
+  },
+  "sound_library": {
+    "total": 30,
+    "male_speech": 10,
+    "dog": 10,
+    "cat": 10,
+    "load_decode": "30/30 passed",
+    "human_listening": "30/30 passed"
+  },
+  "human_status": {
+    "count": 3,
+    "binding": "3/3 passed",
+    "idle_walking": "3/3 passed",
+    "static_mesh": "3/3 passed",
+    "ue_ready_runtime_handoff": "3/3 passed",
+    "ue_import_readback": "3/3 pending",
+    "apartment_media": "3/3 pending",
+    "mouth_emitter": "3/3 not_closed"
+  },
+  "animal_status": {
+    "count": 31,
+    "idle_walking": "31/31 passed",
+    "ue_import_readback": "31/31 passed",
+    "apartment_media": "31/31 passed",
+    "muzzle_emitter": "31/31 not accepted"
+  },
+  "known_constraints": [
+    "Historical validation is migrated evidence, not a new rerun.",
+    "Emitter positions are not accepted until project-compatible measurement is available.",
+    "Rights review_required and provisional physical-profile provenance remain research-candidate constraints where recorded.",
+    "No candidate is promoted to a formal dataset asset."
+  ]
+}

@@ -1,0 +1,2685 @@
+{
+  "schema": "b_source_asset_candidate_registry_v1",
+  "generated_at_utc": "2026-08-11T19:53:08.050641+00:00",
+  "scope": "B-role people/animal source candidate library",
+  "state_classification": "research_candidate",
+  "formal_dataset_registration_authorized": false,
+  "sound_library": "data/controlled_source_attributes_v1/b_source_asset_sound_library_v1.json",
+  "summary": {
+    "visual_candidates": 34,
+    "humans": 3,
+    "animals": 31
+  },
+  "records": [
+    {
+      "asset_id": "rocketbox_adults_male_adult_01_material_377f35d6d606",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "human",
+        "species": "human",
+        "gender": "male",
+        "life_stage": "adult",
+        "appearance": {
+          "accessories": "base_locked",
+          "bottom_geometry": "shorts",
+          "eyewear": "absent",
+          "footwear_geometry": "shoes",
+          "gender": "male",
+          "headwear": "absent",
+          "life_stage": "adult",
+          "species": "human",
+          "top_color": "blue",
+          "top_geometry": "plaid_short_sleeve_shirt"
+        },
+        "actions": [
+          "Walking",
+          "Standing_Idle"
+        ],
+        "front_axis": "negative_y",
+        "emitter": {
+          "type": "mouth",
+          "position": null,
+          "status": "not_closed"
+        }
+      },
+      "variant": {
+        "top_color": "blue"
+      },
+      "compatible_sound_categories": [
+        "male_speech"
+      ],
+      "compatible_sound_ids": [
+        "4750_12478_000002_000001",
+        "4750_12478_000003_000000",
+        "4750_12478_000004_000001",
+        "4750_12478_000006_000001",
+        "4750_12478_000006_000002",
+        "4750_12478_000008_000001",
+        "4750_12478_000009_000004",
+        "4750_12478_000012_000003",
+        "4750_12478_000012_000005",
+        "4750_12478_000012_000007"
+      ],
+      "historical_qa": {
+        "apartment_media": "pending",
+        "audio": "pending",
+        "binding": "passed",
+        "idle": "passed",
+        "reference_2d": "not_applicable",
+        "static_mesh": "passed",
+        "ue_import_readback": "pending",
+        "walking": "passed"
+      },
+      "migration_status": "phase1_selected",
+      "rights": {
+        "blockers": [],
+        "licenses": [
+          {
+            "path": "LICENSE.md",
+            "root_id": "rocketbox_0943055",
+            "sha256": "17474e386e0b9e1a700cc3d06b2b0882a2c376d9c6b49c7f8274409b8f8d2352",
+            "size_bytes": 1066
+          }
+        ],
+        "status": "cleared"
+      },
+      "current_validation": {
+        "visual": {
+          "binding": "passed",
+          "idle": "passed",
+          "walking": "passed",
+          "static_mesh": "passed",
+          "ue_ready_runtime_handoff": "passed",
+          "ue_import_readback": "pending",
+          "apartment_media": "pending",
+          "provenance": "historical_migration_plus_current_audit"
+        },
+        "emitter": {
+          "type": "mouth",
+          "position": null,
+          "status": "not_closed"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "rocketbox_adults_male_adult_01_material_3545531baa29",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "human",
+        "species": "human",
+        "gender": "male",
+        "life_stage": "adult",
+        "appearance": {
+          "accessories": "base_locked",
+          "bottom_geometry": "shorts",
+          "eyewear": "absent",
+          "footwear_geometry": "shoes",
+          "gender": "male",
+          "headwear": "absent",
+          "life_stage": "adult",
+          "species": "human",
+          "top_color": "green",
+          "top_geometry": "plaid_short_sleeve_shirt"
+        },
+        "actions": [
+          "Walking",
+          "Standing_Idle"
+        ],
+        "front_axis": "negative_y",
+        "emitter": {
+          "type": "mouth",
+          "position": null,
+          "status": "not_closed"
+        }
+      },
+      "variant": {
+        "top_color": "green"
+      },
+      "compatible_sound_categories": [
+        "male_speech"
+      ],
+      "compatible_sound_ids": [
+        "4750_12478_000002_000001",
+        "4750_12478_000003_000000",
+        "4750_12478_000004_000001",
+        "4750_12478_000006_000001",
+        "4750_12478_000006_000002",
+        "4750_12478_000008_000001",
+        "4750_12478_000009_000004",
+        "4750_12478_000012_000003",
+        "4750_12478_000012_000005",
+        "4750_12478_000012_000007"
+      ],
+      "historical_qa": {
+        "apartment_media": "pending",
+        "audio": "pending",
+        "binding": "passed",
+        "idle": "passed",
+        "reference_2d": "not_applicable",
+        "static_mesh": "passed",
+        "ue_import_readback": "pending",
+        "walking": "passed"
+      },
+      "migration_status": "phase1_selected",
+      "rights": {
+        "blockers": [],
+        "licenses": [
+          {
+            "path": "LICENSE.md",
+            "root_id": "rocketbox_0943055",
+            "sha256": "17474e386e0b9e1a700cc3d06b2b0882a2c376d9c6b49c7f8274409b8f8d2352",
+            "size_bytes": 1066
+          }
+        ],
+        "status": "cleared"
+      },
+      "current_validation": {
+        "visual": {
+          "binding": "passed",
+          "idle": "passed",
+          "walking": "passed",
+          "static_mesh": "passed",
+          "ue_ready_runtime_handoff": "passed",
+          "ue_import_readback": "pending",
+          "apartment_media": "pending",
+          "provenance": "historical_migration_plus_current_audit"
+        },
+        "emitter": {
+          "type": "mouth",
+          "position": null,
+          "status": "not_closed"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "rocketbox_adults_male_adult_01_material_1bb56ccf860c",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "human",
+        "species": "human",
+        "gender": "male",
+        "life_stage": "adult",
+        "appearance": {
+          "accessories": "base_locked",
+          "bottom_geometry": "shorts",
+          "eyewear": "absent",
+          "footwear_geometry": "shoes",
+          "gender": "male",
+          "headwear": "absent",
+          "life_stage": "adult",
+          "species": "human",
+          "top_color": "burgundy",
+          "top_geometry": "plaid_short_sleeve_shirt"
+        },
+        "actions": [
+          "Walking",
+          "Standing_Idle"
+        ],
+        "front_axis": "negative_y",
+        "emitter": {
+          "type": "mouth",
+          "position": null,
+          "status": "not_closed"
+        }
+      },
+      "variant": {
+        "top_color": "burgundy"
+      },
+      "compatible_sound_categories": [
+        "male_speech"
+      ],
+      "compatible_sound_ids": [
+        "4750_12478_000002_000001",
+        "4750_12478_000003_000000",
+        "4750_12478_000004_000001",
+        "4750_12478_000006_000001",
+        "4750_12478_000006_000002",
+        "4750_12478_000008_000001",
+        "4750_12478_000009_000004",
+        "4750_12478_000012_000003",
+        "4750_12478_000012_000005",
+        "4750_12478_000012_000007"
+      ],
+      "historical_qa": {
+        "apartment_media": "pending",
+        "audio": "pending",
+        "binding": "passed",
+        "idle": "passed",
+        "reference_2d": "not_applicable",
+        "static_mesh": "passed",
+        "ue_import_readback": "pending",
+        "walking": "passed"
+      },
+      "migration_status": "phase1_selected",
+      "rights": {
+        "blockers": [],
+        "licenses": [
+          {
+            "path": "LICENSE.md",
+            "root_id": "rocketbox_0943055",
+            "sha256": "17474e386e0b9e1a700cc3d06b2b0882a2c376d9c6b49c7f8274409b8f8d2352",
+            "size_bytes": 1066
+          }
+        ],
+        "status": "cleared"
+      },
+      "current_validation": {
+        "visual": {
+          "binding": "passed",
+          "idle": "passed",
+          "walking": "passed",
+          "static_mesh": "passed",
+          "ue_ready_runtime_handoff": "passed",
+          "ue_import_readback": "pending",
+          "apartment_media": "pending",
+          "provenance": "historical_migration_plus_current_audit"
+        },
+        "emitter": {
+          "type": "mouth",
+          "position": null,
+          "status": "not_closed"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "cat_siamese_bindpose_06763a77c463",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "cat",
+        "breed": "siamese",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "cat_meow",
+        "cat_purr"
+      ],
+      "compatible_sound_ids": [
+        "clotho_26104_cat_meow",
+        "clotho_185439_cat_meow",
+        "clotho_145046_cat_meow",
+        "clotho_264311_cat_meow",
+        "clotho_194850_cat_purr",
+        "clotho_83989_cat_purr",
+        "clotho_259614_cat_purr",
+        "clotho_28694_cat_meow",
+        "clotho_259618_cat_purr",
+        "clotho_196254_cat_purr"
+      ],
+      "historical_qa": {},
+      "migration_status": "phase1_machine_evidence_migrated",
+      "rights": {},
+      "current_validation": {
+        "visual": {
+          "actions": "passed",
+          "direction": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          },
+          "historical_direction_discrepancy": {
+            "prior_registry_front_axis": "negative-x",
+            "final_dataset_front_axis": "positive_x",
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          },
+          "historical_action_representation": {
+            "prior_registry_actions": [
+              "Idle",
+              "Walking"
+            ],
+            "final_dataset_actions": [
+              "Walking",
+              "Idle"
+            ],
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "cat_siamese_bindpose_0e9b1ebde772",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "cat",
+        "breed": "siamese",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "cat_meow",
+        "cat_purr"
+      ],
+      "compatible_sound_ids": [
+        "clotho_26104_cat_meow",
+        "clotho_185439_cat_meow",
+        "clotho_145046_cat_meow",
+        "clotho_264311_cat_meow",
+        "clotho_194850_cat_purr",
+        "clotho_83989_cat_purr",
+        "clotho_259614_cat_purr",
+        "clotho_28694_cat_meow",
+        "clotho_259618_cat_purr",
+        "clotho_196254_cat_purr"
+      ],
+      "historical_qa": {},
+      "migration_status": "phase1_machine_evidence_migrated",
+      "rights": {},
+      "current_validation": {
+        "visual": {
+          "actions": "passed",
+          "direction": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          },
+          "historical_direction_discrepancy": {
+            "prior_registry_front_axis": "negative-x",
+            "final_dataset_front_axis": "positive_x",
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          },
+          "historical_action_representation": {
+            "prior_registry_actions": [
+              "Idle",
+              "Walking"
+            ],
+            "final_dataset_actions": [
+              "Walking",
+              "Idle"
+            ],
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "cat_siamese_bindpose_3a6ef0949afd",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "cat",
+        "breed": "siamese",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "cat_meow",
+        "cat_purr"
+      ],
+      "compatible_sound_ids": [
+        "clotho_26104_cat_meow",
+        "clotho_185439_cat_meow",
+        "clotho_145046_cat_meow",
+        "clotho_264311_cat_meow",
+        "clotho_194850_cat_purr",
+        "clotho_83989_cat_purr",
+        "clotho_259614_cat_purr",
+        "clotho_28694_cat_meow",
+        "clotho_259618_cat_purr",
+        "clotho_196254_cat_purr"
+      ],
+      "historical_qa": {},
+      "migration_status": "phase1_machine_evidence_migrated",
+      "rights": {},
+      "current_validation": {
+        "visual": {
+          "actions": "passed",
+          "direction": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          },
+          "historical_direction_discrepancy": {
+            "prior_registry_front_axis": "negative-x",
+            "final_dataset_front_axis": "positive_x",
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          },
+          "historical_action_representation": {
+            "prior_registry_actions": [
+              "Idle",
+              "Walking"
+            ],
+            "final_dataset_actions": [
+              "Walking",
+              "Idle"
+            ],
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_beagle_0a76614d1794",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "beagle",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {},
+      "migration_status": "phase1_machine_evidence_migrated",
+      "rights": {},
+      "current_validation": {
+        "visual": {
+          "actions": "passed",
+          "direction": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          },
+          "historical_direction_discrepancy": {
+            "prior_registry_front_axis": "negative-x",
+            "final_dataset_front_axis": "positive_x",
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          },
+          "historical_action_representation": {
+            "prior_registry_actions": [
+              "Idle",
+              "Walking"
+            ],
+            "final_dataset_actions": [
+              "Walking",
+              "Idle"
+            ],
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_beagle_832f8beb7390",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "beagle",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {},
+      "migration_status": "phase1_machine_evidence_migrated",
+      "rights": {},
+      "current_validation": {
+        "visual": {
+          "actions": "passed",
+          "direction": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          },
+          "historical_direction_discrepancy": {
+            "prior_registry_front_axis": "negative-x",
+            "final_dataset_front_axis": "positive_x",
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          },
+          "historical_action_representation": {
+            "prior_registry_actions": [
+              "Idle",
+              "Walking"
+            ],
+            "final_dataset_actions": [
+              "Walking",
+              "Idle"
+            ],
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_beagle_d66c6da023a6",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "beagle",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {},
+      "migration_status": "phase1_machine_evidence_migrated",
+      "rights": {},
+      "current_validation": {
+        "visual": {
+          "actions": "passed",
+          "direction": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          },
+          "historical_direction_discrepancy": {
+            "prior_registry_front_axis": "negative-x",
+            "final_dataset_front_axis": "positive_x",
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          },
+          "historical_action_representation": {
+            "prior_registry_actions": [
+              "Idle",
+              "Walking"
+            ],
+            "final_dataset_actions": [
+              "Walking",
+              "Idle"
+            ],
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_golden_retriever_16a0565ce2c2",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "golden_retriever",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {},
+      "migration_status": "phase1_machine_evidence_migrated",
+      "rights": {},
+      "current_validation": {
+        "visual": {
+          "actions": "passed",
+          "direction": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          },
+          "historical_direction_discrepancy": {
+            "prior_registry_front_axis": "negative-x",
+            "final_dataset_front_axis": "positive_x",
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          },
+          "historical_action_representation": {
+            "prior_registry_actions": [
+              "Idle",
+              "Walking"
+            ],
+            "final_dataset_actions": [
+              "Walking",
+              "Idle"
+            ],
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_golden_retriever_1be26dd2187a",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "golden_retriever",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {},
+      "migration_status": "phase1_machine_evidence_migrated",
+      "rights": {},
+      "current_validation": {
+        "visual": {
+          "actions": "passed",
+          "direction": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          },
+          "historical_direction_discrepancy": {
+            "prior_registry_front_axis": "negative-x",
+            "final_dataset_front_axis": "positive_x",
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          },
+          "historical_action_representation": {
+            "prior_registry_actions": [
+              "Idle",
+              "Walking"
+            ],
+            "final_dataset_actions": [
+              "Walking",
+              "Idle"
+            ],
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_golden_retriever_3676250e8701",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "golden_retriever",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {},
+      "migration_status": "phase1_machine_evidence_migrated",
+      "rights": {},
+      "current_validation": {
+        "visual": {
+          "actions": "passed",
+          "direction": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          },
+          "historical_direction_discrepancy": {
+            "prior_registry_front_axis": "negative-x",
+            "final_dataset_front_axis": "positive_x",
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          },
+          "historical_action_representation": {
+            "prior_registry_actions": [
+              "Idle",
+              "Walking"
+            ],
+            "final_dataset_actions": [
+              "Walking",
+              "Idle"
+            ],
+            "resolution": "final_dataset_contract_used_for_registry_v5"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "cat_siamese_bindpose_565ca04a74cf",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "cat",
+        "breed": "siamese",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "cat_meow",
+        "cat_purr"
+      ],
+      "compatible_sound_ids": [
+        "clotho_26104_cat_meow",
+        "clotho_185439_cat_meow",
+        "clotho_145046_cat_meow",
+        "clotho_264311_cat_meow",
+        "clotho_194850_cat_purr",
+        "clotho_83989_cat_purr",
+        "clotho_259614_cat_purr",
+        "clotho_28694_cat_meow",
+        "clotho_259618_cat_purr",
+        "clotho_196254_cat_purr"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "cat_siamese_bindpose_647467e01b24",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "cat",
+        "breed": "siamese",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "cat_meow",
+        "cat_purr"
+      ],
+      "compatible_sound_ids": [
+        "clotho_26104_cat_meow",
+        "clotho_185439_cat_meow",
+        "clotho_145046_cat_meow",
+        "clotho_264311_cat_meow",
+        "clotho_194850_cat_purr",
+        "clotho_83989_cat_purr",
+        "clotho_259614_cat_purr",
+        "clotho_28694_cat_meow",
+        "clotho_259618_cat_purr",
+        "clotho_196254_cat_purr"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "cat_tabby_bindpose_1a888b9782a1",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "cat",
+        "breed": "tabby",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "cat_meow",
+        "cat_purr"
+      ],
+      "compatible_sound_ids": [
+        "clotho_26104_cat_meow",
+        "clotho_185439_cat_meow",
+        "clotho_145046_cat_meow",
+        "clotho_264311_cat_meow",
+        "clotho_194850_cat_purr",
+        "clotho_83989_cat_purr",
+        "clotho_259614_cat_purr",
+        "clotho_28694_cat_meow",
+        "clotho_259618_cat_purr",
+        "clotho_196254_cat_purr"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "cat_tabby_bindpose_49976f5ff481",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "cat",
+        "breed": "tabby",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "cat_meow",
+        "cat_purr"
+      ],
+      "compatible_sound_ids": [
+        "clotho_26104_cat_meow",
+        "clotho_185439_cat_meow",
+        "clotho_145046_cat_meow",
+        "clotho_264311_cat_meow",
+        "clotho_194850_cat_purr",
+        "clotho_83989_cat_purr",
+        "clotho_259614_cat_purr",
+        "clotho_28694_cat_meow",
+        "clotho_259618_cat_purr",
+        "clotho_196254_cat_purr"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "cat_tabby_bindpose_52573fcf5c40",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "cat",
+        "breed": "tabby",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "cat_meow",
+        "cat_purr"
+      ],
+      "compatible_sound_ids": [
+        "clotho_26104_cat_meow",
+        "clotho_185439_cat_meow",
+        "clotho_145046_cat_meow",
+        "clotho_264311_cat_meow",
+        "clotho_194850_cat_purr",
+        "clotho_83989_cat_purr",
+        "clotho_259614_cat_purr",
+        "clotho_28694_cat_meow",
+        "clotho_259618_cat_purr",
+        "clotho_196254_cat_purr"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_beagle_6ec85e21cb1a",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "beagle",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_beagle_89025fb62895",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "beagle",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_beagle_d7f41615d79a",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "beagle",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_beagle_e115e64f642d",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "beagle",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_beagle_ea05ea06451c",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "beagle",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_golden_retriever_1b9f983d088f",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "golden_retriever",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_golden_retriever_75d932515a16",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "golden_retriever",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_golden_retriever_9c4b2a916669",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "golden_retriever",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_golden_retriever_e0d4e598839c",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "golden_retriever",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_golden_retriever_fb2b8b434096",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "golden_retriever",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_golden_retriever_fde797385c48",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "golden_retriever",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_pug_470318272ad1",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "pug",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_pug_76e7f639b73c",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "pug",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_pug_8206c63c6dd3",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "pug",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_pug_b633907db4fb",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "pug",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_pug_e40ada53c463",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "pug",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    },
+    {
+      "asset_id": "dog_pug_ebc5b721a61e",
+      "state_classification": "research_candidate",
+      "entity": {
+        "type": "animal",
+        "species": "dog",
+        "breed": "pug",
+        "actions": [
+          "Walking",
+          "Idle"
+        ],
+        "front_axis": "positive_x",
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        }
+      },
+      "variant": null,
+      "compatible_sound_categories": [
+        "dog_bark",
+        "dog_growl"
+      ],
+      "compatible_sound_ids": [
+        "clotho_361429_dog_growl",
+        "clotho_204773_dog_growl",
+        "clotho_246227_dog_growl",
+        "clotho_245115_dog_bark",
+        "clotho_72261_dog_bark",
+        "clotho_337101_dog_bark",
+        "clotho_46867_dog_bark",
+        "clotho_125791_dog_bark",
+        "clotho_85362_dog_bark",
+        "clotho_350623_dog_bark"
+      ],
+      "historical_qa": {
+        "idle": "passed",
+        "walking": "passed",
+        "ue_import_readback": "passed",
+        "apartment_media": "passed"
+      },
+      "migration_status": "historical_visual_migrated",
+      "rights": {
+        "status": "review_required"
+      },
+      "current_validation": {
+        "visual": {
+          "idle": "passed",
+          "walking": "passed",
+          "ue_import_readback": "passed",
+          "apartment_media": "passed",
+          "physical_measurement_status": "measured",
+          "reference_provenance_status": "provisional",
+          "provenance": "historical_migration",
+          "direction_contract": {
+            "actions": [
+              "Walking",
+              "Idle"
+            ],
+            "front_axis": "positive_x",
+            "up_axis": null,
+            "status": "passed"
+          }
+        },
+        "emitter": {
+          "type": "muzzle",
+          "position": null,
+          "status": "blocked_by_blender_access"
+        },
+        "compatible_audio_library": {
+          "status": "passed"
+        }
+      },
+      "formal_registration_authorized": false
+    }
+  ]
+}
