@@ -1,0 +1,34 @@
+{
+  "schema": "b_source_asset_human_runtime_blockers_v1",
+  "generated_at_utc": "2026-08-17T08:20:33.341087+00:00",
+  "state_classification": "research_candidate",
+  "formal_registration_authorized": false,
+  "affected_candidates": 3,
+  "ue_import_readback": {
+    "status": "blocked_by_pipeline_contract",
+    "current_candidate_status": "pending",
+    "reason": [
+      "tools/verify_rocketbox_batch_ue.py requires exactly 115 Rocketbox verification jobs",
+      "the verifier is built around base_avatar_id and *_original_ue_v1 manifests",
+      "the three B-role candidates are controlled-material variants rather than the 115-avatar original batch"
+    ],
+    "existing_evidence": {
+      "ue_ready_runtime_handoff": "3/3 passed",
+      "ue_normalization_automatic_checks": "3/3 passed"
+    }
+  },
+  "apartment_media": {
+    "status": "blocked_by_pipeline_contract_and_environment",
+    "current_candidate_status": "pending",
+    "reason": [
+      "tools/build_rocketbox_batch_apartment_specs.py requires rocketbox_human_inventory_v1",
+      "it requires rocketbox_batch_native_ue_import_v1 / *_original_ue_v1 input manifests",
+      "tools/run_rocketbox_batch_apartment_reviews.py defaults to non-portable external Python environments unavailable to the current user",
+      "the current controlled-material variants do not have the required original-batch UE import manifest contract"
+    ]
+  },
+  "policy": {
+    "do_not_promote_pending_to_passed": true,
+    "do_not_modify_shared_or_other_user_environments": true
+  }
+}

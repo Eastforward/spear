@@ -1,0 +1,38 @@
+{
+  "schema": "b_source_asset_audio_overlap_canary_v1",
+  "state_classification": "research_candidate",
+  "formal_registration_authorized": false,
+  "status": "passed",
+  "canary_type": "overlapping_audio_events",
+  "sound_ids": [
+    "clotho_350623_dog_bark",
+    "clotho_85362_dog_bark"
+  ],
+  "species": "dog",
+  "schedule": [
+    {
+      "sound_id": "clotho_350623_dog_bark",
+      "start_s": 0.5,
+      "end_s": 4.5
+    },
+    {
+      "sound_id": "clotho_85362_dog_bark",
+      "start_s": 1.0,
+      "end_s": 5.0
+    }
+  ],
+  "overlap": {
+    "start_s": 1.0,
+    "end_s": 4.5,
+    "duration_s": 3.5,
+    "status": "passed"
+  },
+  "output_validation": {
+    "decode_readback": "passed",
+    "sample_rate": 44100,
+    "channels": 1,
+    "duration_s": 5.0,
+    "sha256": "c98593388b33ed930aba15b6b2a085b25c8fbf10795addf9ba4617f010e974aa",
+    "binary_location_policy": "personal_workspace_not_git"
+  }
+}

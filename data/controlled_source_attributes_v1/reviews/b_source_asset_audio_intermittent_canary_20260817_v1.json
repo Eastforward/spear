@@ -1,0 +1,17 @@
+{
+  "schema": "b_source_asset_audio_intermittent_canary_v1",
+  "state_classification": "research_candidate",
+  "formal_registration_authorized": false,
+  "status": "passed",
+  "canary_type": "intermittent_audio_events",
+  "implementation": "tools/audio_event_schedule.py::prepare_animal_call",
+  "validation": {
+    "test_file": "tests/tools/test_audio_event_schedule.py",
+    "current_environment_result": "3 passed",
+    "verified_behavior": [
+      "short animal call repeated as multiple events",
+      "real silence gaps between adjacent events",
+      "long call played once and silence padded rather than tiled"
+    ]
+  }
+}

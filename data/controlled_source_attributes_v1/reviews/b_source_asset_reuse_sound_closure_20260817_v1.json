@@ -1,0 +1,40 @@
+{
+  "schema": "b_source_asset_reuse_sound_closure_v1",
+  "state_classification": "research_candidate",
+  "formal_registration_authorized": false,
+  "records": [
+    {
+      "requested_reuse": "british_shorthair_v2",
+      "status": "passed",
+      "asset_id": "cat_british_shorthair_0002",
+      "legacy_tag": "cat_british_shorthair_v2",
+      "registry_evidence": "data/source_assets_v1/cat/british_shorthair/cat_british_shorthair_0002/asset.json",
+      "compatible_sound_ids": [
+        "clotho_145046_cat_meow",
+        "clotho_185439_cat_meow",
+        "clotho_194850_cat_purr",
+        "clotho_196254_cat_purr",
+        "clotho_259614_cat_purr",
+        "clotho_259618_cat_purr",
+        "clotho_26104_cat_meow",
+        "clotho_264311_cat_meow",
+        "clotho_28694_cat_meow",
+        "clotho_83989_cat_purr"
+      ],
+      "compatible_sound_count": 10,
+      "sound_closure": "passed"
+    },
+    {
+      "requested_reuse": "corgi_v2",
+      "status": "reuse_asset_evidence_not_located",
+      "sound_closure": "not_claimed",
+      "reason": "No final reusable Corgi v2 asset ID was located in the tracked source-assets registry or final legacy approved search."
+    },
+    {
+      "requested_reuse": "shiba_v2",
+      "status": "reuse_asset_evidence_not_located",
+      "sound_closure": "not_claimed",
+      "reason": "Stable/shipped Shiba evidence exists, but no final reusable Shiba v2 asset ID was located in the tracked source-assets registry or final legacy approved search."
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "schema": "b_source_asset_status_20260817_v1",
+  "generated_at_utc": "2026-08-17T08:20:33.341087+00:00",
+  "state_classification": "research_candidate",
+  "formal_registration_authorized": false,
+  "delivered": {
+    "visual_candidates": 34,
+    "humans": 3,
+    "animals": 31,
+    "sound_candidates": 30,
+    "sound_references": 340,
+    "historical_animals_migrated": 22
+  },
+  "passed": {
+    "animal_idle_walking": "31/31",
+    "animal_ue_import_readback": "31/31",
+    "animal_apartment_media": "31/31",
+    "human_binding_idle_walking_static_mesh": "3/3",
+    "human_ue_ready_runtime_handoff": "3/3",
+    "audio_load_decode": "30/30",
+    "audio_human_listening": "30/30",
+    "audio_intermittent_canary": "passed; tests/tools/test_audio_event_schedule.py: 3 passed",
+    "audio_overlapping_canary": "passed; two dog sounds, 3.5 s actual overlap, decode readback passed",
+    "british_shorthair_v2_sound_closure": "passed; 10 compatible cat sound candidates"
+  },
+  "remaining_blockers": {
+    "animal_muzzle_emitter": "31/31 blocked_by_blender_access",
+    "human_mouth_emitter": "3/3 not_closed",
+    "human_ue_import_readback": "3/3 blocked_by_pipeline_contract",
+    "human_apartment_media": "3/3 blocked_by_pipeline_contract_and_environment",
+    "corgi_v2_reuse": "reuse_asset_evidence_not_located",
+    "shiba_v2_reuse": "reuse_asset_evidence_not_located"
+  }
+}
